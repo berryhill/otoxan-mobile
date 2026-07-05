@@ -33,7 +33,7 @@ class XanderVoiceClientException(message: String, cause: Throwable? = null) : IO
 class HttpXanderVoiceClient(
     private val endpointUrl: String,
     private val connectTimeoutMillis: Int = 10_000,
-    private val readTimeoutMillis: Int = 30_000
+    private val readTimeoutMillis: Int = 60_000
 ) : XanderVoiceClient {
     override suspend fun sendVoiceTurn(
         pcm16Mono16k: ByteArray,

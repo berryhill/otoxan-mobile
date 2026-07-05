@@ -23,6 +23,7 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_VOICE_PROVIDER",
                 "OTOXAN_DEBUG_TRANSCRIPT",
                 "OTOXAN_HERMES_BIN",
+                "OTOXAN_HERMES_CWD",
                 "OTOXAN_XANDER_TIMEOUT_SECONDS",
             )
         }
@@ -170,6 +171,26 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("real-speech-proven", result["pass1Status"])
         self.assertTrue(result["pass1Ready"])
         self.assertIn("pineapple", result["assistantText"].lower())
+
+    def test_xander_session_prompt_preserves_mobile_xander_voice_contract(self):
+        os.environ["OTOXAN_HERMES_BIN"] = "/bin/hermes-test"
+        os.environ["OTOXAN_HERMES_CWD"] = "/tmp"
+        route = voice_turn_server.RouteSummary("RB Meta 03YS", "TYPE_BLUETOOTH_SCO", "RB Meta 03YS", "TYPE_BLUETOOTH_SCO", True, "")
+        completed = voice_turn_server.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="I'm on the Ray-Ban route; the control loop is live.\n", stderr=""
+        )
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed) as run:
+            text = voice_turn_server._ask_xander_session("Xander, say pineapple if you heard me", route)
+
+        self.assertIn("control loop", text)
+        command = run.call_args.args[0]
+        prompt = command[command.index("-z") + 1]
+        self.assertIn("Otoxan controller operator", prompt)
+        self.assertIn("not as a generic assistant", prompt)
+        self.assertIn("builder-first", prompt)
+        self.assertIn("No filler", prompt)
+        self.assertIn("Matt said: Xander, say pineapple if you heard me", prompt)
+        self.assertIn("RB Meta 03YS", prompt)
 
     def test_cloud_provider_mode_is_rejected(self):
         os.environ["OTOXAN_VOICE_PROVIDER"] = "generic-cloud"
