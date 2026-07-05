@@ -102,13 +102,13 @@ class OtoxanViewModel(
                         error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, peak=$peak, likely silent or truncated")
                     }
                     val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
+                    releaseEvidence = releaseCommunicationRoute("Released communication route before assistant playback")
                     val backendTts = result.ttsPcm16Mono16k
                     if (backendTts != null && backendTts.isNotEmpty()) {
                         speechPlayback.playPcm16Mono16k(backendTts)
                     } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
                         speechPlayback.speakText(result.assistantText)
                     }
-                    releaseEvidence = releaseCommunicationRoute("Released communication route after voice turn")
                     VoiceTurnUiResult(
                         routeEvidence = routeEvidence,
                         releaseEvidence = releaseEvidence,
@@ -188,8 +188,8 @@ class OtoxanViewModel(
                 var releaseEvidence = RouteEvidence.default("Communication route release not reached")
                 try {
                     val evidence = audioRouter.inspectAndSelectWearable()
+                    releaseEvidence = releaseCommunicationRoute("Released communication route before proof tone playback")
                     speechPlayback.playProofTone()
-                    releaseEvidence = releaseCommunicationRoute("Released communication route after proof tone")
                     Pair(evidence, releaseEvidence)
                 } finally {
                     if (releaseEvidence.message == "Communication route release not reached") {

@@ -2,8 +2,11 @@ package com.otoxan.mobile.voice
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
+import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -16,6 +19,8 @@ import kotlin.math.max
 import kotlin.math.sin
 
 class SpeechPlayback(private val context: Context? = null) {
+    private val audioManager: AudioManager? = context?.getSystemService(AudioManager::class.java)
+
     fun playProofTone() {
         val sampleRate = SAMPLE_RATE_16K
         val seconds = 1
@@ -42,32 +47,29 @@ class SpeechPlayback(private val context: Context? = null) {
         )
         val bufferSize = max(pcm16Mono16k.size, minBuffer)
         val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
+            .setAudioAttributes(playbackAudioAttributes())
             .setAudioFormat(audioFormat)
             .setBufferSizeInBytes(bufferSize)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
 
         try {
-            track.setVolume(AudioTrack.getMaxVolume())
-            track.play()
-            var written = 0
-            while (written < pcm16Mono16k.size) {
-                val count = track.write(
-                    pcm16Mono16k,
-                    written,
-                    pcm16Mono16k.size - written,
-                    AudioTrack.WRITE_BLOCKING
-                )
-                if (count <= 0) error("AudioTrack.write failed with code $count")
-                written += count
+            withTransientPlaybackFocus {
+                track.setVolume(AudioTrack.getMaxVolume())
+                track.play()
+                var written = 0
+                while (written < pcm16Mono16k.size) {
+                    val count = track.write(
+                        pcm16Mono16k,
+                        written,
+                        pcm16Mono16k.size - written,
+                        AudioTrack.WRITE_BLOCKING
+                    )
+                    if (count <= 0) error("AudioTrack.write failed with code $count")
+                    written += count
+                }
+                waitForQueuedAudio(track, pcm16Mono16k.size / BYTES_PER_PCM16_MONO_FRAME)
             }
-            waitForQueuedAudio(track, pcm16Mono16k.size / BYTES_PER_PCM16_MONO_FRAME)
         } finally {
             runCatching { track.stop() }
             track.release()
@@ -90,46 +92,88 @@ class SpeechPlayback(private val context: Context? = null) {
             require(ready.await(2, TimeUnit.SECONDS)) { "TextToSpeech engine did not initialize" }
             require(initStatus == TextToSpeech.SUCCESS) { "TextToSpeech init failed with status $initStatus" }
             tts.language = Locale.US
-            tts.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
+            tts.setAudioAttributes(playbackAudioAttributes())
 
-            val done = CountDownLatch(1)
-            val utteranceId = "otoxan-${UUID.randomUUID()}"
-            var speakError: String? = null
-            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) = Unit
-                override fun onDone(utteranceId: String?) { done.countDown() }
+            withTransientPlaybackFocus {
+                val done = CountDownLatch(1)
+                val utteranceId = "otoxan-${UUID.randomUUID()}"
+                var speakError: String? = null
+                tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) = Unit
+                    override fun onDone(utteranceId: String?) { done.countDown() }
 
-                @Deprecated("Deprecated in Android API")
-                override fun onError(utteranceId: String?) {
-                    speakError = "TextToSpeech playback failed"
-                    done.countDown()
+                    @Deprecated("Deprecated in Android API")
+                    override fun onError(utteranceId: String?) {
+                        speakError = "TextToSpeech playback failed"
+                        done.countDown()
+                    }
+
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        speakError = "TextToSpeech playback failed with code $errorCode"
+                        done.countDown()
+                    }
+                })
+
+                val params = Bundle().apply {
+                    putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
                 }
-
-                override fun onError(utteranceId: String?, errorCode: Int) {
-                    speakError = "TextToSpeech playback failed with code $errorCode"
-                    done.countDown()
-                }
-            })
-
-            val params = Bundle().apply {
-                putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
+                val result = tts.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+                require(result == TextToSpeech.SUCCESS) { "TextToSpeech speak failed with status $result" }
+                val maxWaitSeconds = (cleanText.length / 12).coerceIn(3, 12).toLong()
+                require(done.await(maxWaitSeconds, TimeUnit.SECONDS)) { "TextToSpeech playback timed out" }
+                speakError?.let { error(it) }
             }
-            val result = tts.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
-            require(result == TextToSpeech.SUCCESS) { "TextToSpeech speak failed with status $result" }
-            val maxWaitSeconds = (cleanText.length / 12).coerceIn(3, 12).toLong()
-            require(done.await(maxWaitSeconds, TimeUnit.SECONDS)) { "TextToSpeech playback timed out" }
-            speakError?.let { error(it) }
         } finally {
             runCatching { tts.stop() }
             tts.shutdown()
         }
     }
+
+    private fun withTransientPlaybackFocus(block: () -> Unit) {
+        val manager = audioManager ?: return block()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(playbackAudioAttributes())
+                .setWillPauseWhenDucked(false)
+                .build()
+            try {
+                manager.requestAudioFocus(request)
+                block()
+            } finally {
+                manager.abandonAudioFocusRequest(request)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            try {
+                @Suppress("DEPRECATION")
+                manager.requestAudioFocus(
+                    null,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                )
+                block()
+            } finally {
+                @Suppress("DEPRECATION")
+                manager.abandonAudioFocus(null)
+            }
+        }
+    }
 }
+
+internal fun playbackAudioAttributes(): AudioAttributes = AudioAttributes.Builder()
+    .setUsage(playbackRoutePolicy().usage)
+    .setContentType(playbackRoutePolicy().contentType)
+    .build()
+
+internal data class PlaybackRoutePolicy(
+    val usage: Int,
+    val contentType: Int
+)
+
+internal fun playbackRoutePolicy(): PlaybackRoutePolicy = PlaybackRoutePolicy(
+    usage = AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY,
+    contentType = AudioAttributes.CONTENT_TYPE_SPEECH
+)
 
 private const val SAMPLE_RATE_16K = 16_000
 private const val BYTES_PER_PCM16_MONO_FRAME = 2
