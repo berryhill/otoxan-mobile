@@ -47,10 +47,39 @@ class AudioRouter(private val context: Context) {
 
     fun currentEvidence(): RouteEvidence = lastEvidence
 
-    fun clearRoute() {
-        audioManager.clearCommunicationDevice()
-        audioManager.mode = AudioManager.MODE_NORMAL
-        lastEvidence = RouteEvidence.default("Communication route cleared")
+    @Suppress("DEPRECATION")
+    fun clearRoute(): RouteEvidence {
+        val selectedBefore = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            audioManager.communicationDevice?.safeProductName()
+        } else {
+            null
+        }
+        val releaseSteps = mutableListOf<String>()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching { audioManager.clearCommunicationDevice() }
+                .onSuccess { releaseSteps += "clearCommunicationDevice" }
+                .onFailure { releaseSteps += "clearCommunicationDevice failed=${it.javaClass.simpleName}" }
+        }
+        runCatching { audioManager.stopBluetoothSco() }
+            .onSuccess { releaseSteps += "stopBluetoothSco" }
+            .onFailure { releaseSteps += "stopBluetoothSco failed=${it.javaClass.simpleName}" }
+        runCatching { audioManager.isBluetoothScoOn = false }
+            .onSuccess { releaseSteps += "bluetoothScoOff" }
+            .onFailure { releaseSteps += "bluetoothScoOff failed=${it.javaClass.simpleName}" }
+        runCatching { audioManager.mode = AudioManager.MODE_NORMAL }
+            .onSuccess { releaseSteps += "mode=MODE_NORMAL" }
+            .onFailure { releaseSteps += "mode reset failed=${it.javaClass.simpleName}" }
+
+        val selectedAfter = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            audioManager.communicationDevice?.safeProductName()
+        } else {
+            null
+        }
+        lastEvidence = RouteEvidence.default(
+            message = "Communication route released; before=${selectedBefore ?: "none"}; after=${selectedAfter ?: "none"}; ${releaseSteps.joinToString("; ")}"
+        )
+        return lastEvidence
     }
 
     private fun hasBluetoothConnectPermission(): Boolean {

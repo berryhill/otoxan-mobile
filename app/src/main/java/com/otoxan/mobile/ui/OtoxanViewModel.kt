@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.otoxan.mobile.BuildConfig
 import com.otoxan.mobile.voice.AudioRouter
 import com.otoxan.mobile.voice.MicCapture
+import com.otoxan.mobile.voice.RouteEvidence
 import com.otoxan.mobile.voice.SpeechPlayback
 import com.otoxan.mobile.voice.XanderVoiceClient
 import com.otoxan.mobile.voice.createXanderVoiceClient
@@ -203,17 +204,22 @@ class OtoxanViewModel(
     }
 
     fun clearRoute() {
-        audioRouter.clearRoute()
-        _uiState.update {
-            it.copy(
-                selectedInputName = "Unknown",
-                selectedInputType = "Unknown",
-                selectedOutputName = "Unknown",
-                selectedOutputType = "Unknown",
-                wearableRouteActive = false,
-                sessionState = VoiceSessionState.Idle,
-                lastEvidence = "Communication route cleared and audio mode restored"
-            )
+        _uiState.update { it.copy(sessionState = VoiceSessionState.CheckingRoute, lastError = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val evidence = runCatching { audioRouter.clearRoute() }
+                .getOrElse { error -> RouteEvidence.default("Communication route release failed: ${error.message ?: error::class.java.simpleName}") }
+            _uiState.update {
+                it.copy(
+                    selectedInputName = evidence.inputName,
+                    selectedInputType = evidence.inputType,
+                    selectedOutputName = evidence.outputName,
+                    selectedOutputType = evidence.outputType,
+                    wearableRouteActive = false,
+                    sessionState = VoiceSessionState.Idle,
+                    lastEvidence = evidence.message,
+                    lastError = null
+                )
+            }
         }
     }
 
