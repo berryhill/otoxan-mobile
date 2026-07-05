@@ -42,7 +42,7 @@ fun OtoxanScreen(
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "MVP 0: prove Ray-Ban Meta voice routing before assistant complexity.",
+            text = "MVP 1: tap to talk through the selected wearable audio route.",
             style = MaterialTheme.typography.bodyMedium
         )
 
@@ -61,7 +61,7 @@ fun OtoxanScreen(
             onClick = onRecordFiveSeconds,
             enabled = state.permissionState == PermissionState.Granted && state.wearableRouteActive
         ) {
-            Text("Record 5 second route proof")
+            Text("Talk to Xander")
         }
 
         Button(onClick = onPlayTest) {
@@ -69,7 +69,7 @@ fun OtoxanScreen(
         }
 
         EvidenceBlock("Transcript", state.transcript.ifBlank { "No sample captured yet" })
-        EvidenceBlock("Assistant seam", state.assistantResponse.ifBlank { "Backend seam is stubbed for MVP 0" })
+        EvidenceBlock("Assistant response", state.assistantResponse.ifBlank { "Configure XANDER_VOICE_ENDPOINT for a real backend turn" })
 
         state.lastError?.let { error ->
             EvidenceBlock("Error", error)

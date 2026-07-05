@@ -4,6 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val xanderVoiceEndpoint: String = providers.gradleProperty("XANDER_VOICE_ENDPOINT").orElse("").get()
+
 android {
     namespace = "com.otoxan.mobile"
     compileSdk = 36
@@ -14,6 +16,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "XANDER_VOICE_ENDPOINT", "\"${xanderVoiceEndpoint.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     compileOptions {
@@ -26,6 +29,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 }
@@ -40,5 +44,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

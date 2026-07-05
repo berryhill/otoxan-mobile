@@ -5,10 +5,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
+import com.otoxan.mobile.BuildConfig
 import com.otoxan.mobile.voice.AudioRouter
 import com.otoxan.mobile.voice.MicCapture
 import com.otoxan.mobile.voice.SpeechPlayback
-import com.otoxan.mobile.voice.StubXanderVoiceClient
+import com.otoxan.mobile.voice.XanderVoiceClient
+import com.otoxan.mobile.voice.createXanderVoiceClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +22,7 @@ class OtoxanViewModel(
     private val audioRouter: AudioRouter,
     private val micCapture: MicCapture,
     private val speechPlayback: SpeechPlayback,
-    private val xanderVoiceClient: StubXanderVoiceClient
+    private val xanderVoiceClient: XanderVoiceClient
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(OtoxanUiState())
     val uiState: StateFlow<OtoxanUiState> = _uiState.asStateFlow()
@@ -83,7 +85,9 @@ class OtoxanViewModel(
             val routeEvidence = audioRouter.currentEvidence()
             runCatching {
                 val pcm = micCapture.recordPcmForMillis(5_000)
-                xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
+                val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
+                result.ttsPcm16Mono16k?.let { speechPlayback.playPcm16Mono16k(it) }
+                result
             }.onSuccess { result ->
                 _uiState.update {
                     it.copy(
@@ -157,7 +161,7 @@ class OtoxanViewModel(
                     audioRouter = AudioRouter(appContext),
                     micCapture = MicCapture(),
                     speechPlayback = SpeechPlayback(),
-                    xanderVoiceClient = StubXanderVoiceClient()
+                    xanderVoiceClient = createXanderVoiceClient(BuildConfig.XANDER_VOICE_ENDPOINT)
                 ) as T
             }
         }
