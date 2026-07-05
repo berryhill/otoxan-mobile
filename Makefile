@@ -48,7 +48,7 @@ backend-openai:
 	OTOXAN_VOICE_PROVIDER=openai $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
 
 smoke-backend:
-	$(PYTHON) tools/smoke_voice_turn.py "$(VOICE_ENDPOINT)"
+	$(PYTHON) tools/smoke_voice_turn.py "$(VOICE_ENDPOINT)" --expect-provider "$${OTOXAN_EXPECT_PROVIDER:-}"
 
 clean:
 	$(GRADLE) clean

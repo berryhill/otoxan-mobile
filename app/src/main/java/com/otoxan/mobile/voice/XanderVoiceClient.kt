@@ -15,7 +15,8 @@ data class VoiceTurnResult(
     val transcript: String,
     val assistantText: String,
     val ttsPcm16Mono16k: ByteArray? = null,
-    val bytesReceived: Int? = null
+    val bytesReceived: Int? = null,
+    val provider: String? = null
 )
 
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -56,9 +57,10 @@ class HttpXanderVoiceClient(
                 transcript = responseBody.requiredJsonString("transcript"),
                 assistantText = responseBody.requiredJsonString("assistantText"),
                 ttsPcm16Mono16k = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let {
-                    Base64.getDecoder().decode(it)
+                    decodeTtsPcm(it)
                 },
-                bytesReceived = responseBody.optionalJsonInt("bytesReceived")
+                bytesReceived = responseBody.optionalJsonInt("bytesReceived"),
+                provider = responseBody.optionalJsonString("provider")
             )
         } catch (error: XanderVoiceClientException) {
             throw error
@@ -94,7 +96,8 @@ class StubXanderVoiceClient : XanderVoiceClient {
     ): VoiceTurnResult {
         return VoiceTurnResult(
             transcript = "Stub transcript: ${pcm16Mono16k.size} bytes captured through ${routeEvidence.inputName}",
-            assistantText = "No Xander endpoint configured. Set XANDER_VOICE_ENDPOINT to enable the backend turn."
+            assistantText = "No Xander endpoint configured. Rebuild with XANDER_VOICE_ENDPOINT to enable the backend turn.",
+            provider = "stub"
         )
     }
 }
@@ -122,6 +125,14 @@ private fun String.optionalJsonInt(fieldName: String): Int? {
     return regex.find(this)?.groupValues?.get(1)?.toIntOrNull()
 }
 
+private fun decodeTtsPcm(encoded: String): ByteArray {
+    return try {
+        Base64.getDecoder().decode(encoded)
+    } catch (error: IllegalArgumentException) {
+        throw XanderVoiceClientException("Xander voice response field 'ttsPcm16Mono16kBase64' is not valid base64", error)
+    }
+}
+
 private fun String.jsonEscape(): String = buildString {
     for (char in this@jsonEscape) {
         when (char) {
@@ -146,6 +157,19 @@ private fun String.jsonUnescape(): String = buildString {
                 't' -> append('\t')
                 '\\' -> append('\\')
                 '"' -> append('"')
+                'u' -> {
+                    val hexStart = index + 2
+                    val hexEnd = index + 6
+                    if (hexEnd <= this@jsonUnescape.length) {
+                        val codePoint = this@jsonUnescape.substring(hexStart, hexEnd).toIntOrNull(radix = 16)
+                        if (codePoint != null) {
+                            append(codePoint.toChar())
+                            index += 6
+                            continue
+                        }
+                    }
+                    append('u')
+                }
                 else -> append(escaped)
             }
             index += 2

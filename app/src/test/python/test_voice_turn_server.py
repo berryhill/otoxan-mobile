@@ -17,6 +17,7 @@ spec.loader.exec_module(voice_turn_server)
 class VoiceTurnServerTest(unittest.TestCase):
     def setUp(self):
         self._old_provider = os.environ.get("OTOXAN_VOICE_PROVIDER")
+        self._old_key = os.environ.get("OPENAI_API_KEY")
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
 
     def tearDown(self):
@@ -24,22 +25,27 @@ class VoiceTurnServerTest(unittest.TestCase):
             os.environ.pop("OTOXAN_VOICE_PROVIDER", None)
         else:
             os.environ["OTOXAN_VOICE_PROVIDER"] = self._old_provider
+        if self._old_key is None:
+            os.environ.pop("OPENAI_API_KEY", None)
+        else:
+            os.environ["OPENAI_API_KEY"] = self._old_key
+
+    def _payload(self):
+        return {
+            "format": "pcm_s16le_16khz_mono",
+            "pcm16Mono16kBase64": base64.b64encode(b"\x01\x02" * 160).decode("ascii"),
+            "routeEvidence": {
+                "inputName": "Ray-Ban Meta",
+                "inputType": "TYPE_BLE_HEADSET",
+                "outputName": "Ray-Ban Meta",
+                "outputType": "TYPE_BLE_HEADSET",
+                "wearableActive": True,
+                "message": "setCommunicationDevice=true",
+            },
+        }
 
     def test_handle_voice_turn_returns_mobile_contract(self):
-        result = voice_turn_server.handle_voice_turn(
-            {
-                "format": "pcm_s16le_16khz_mono",
-                "pcm16Mono16kBase64": base64.b64encode(b"\x01\x02" * 160).decode("ascii"),
-                "routeEvidence": {
-                    "inputName": "Ray-Ban Meta",
-                    "inputType": "TYPE_BLE_HEADSET",
-                    "outputName": "Ray-Ban Meta",
-                    "outputType": "TYPE_BLE_HEADSET",
-                    "wearableActive": True,
-                    "message": "setCommunicationDevice=true",
-                },
-            }
-        )
+        result = voice_turn_server.handle_voice_turn(self._payload())
 
         self.assertTrue(result["ok"])
         self.assertIn("Ray-Ban Meta", result["transcript"])
@@ -50,34 +56,43 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertGreater(len(base64.b64decode(result["ttsPcm16Mono16kBase64"])), 1000)
 
     def test_handle_voice_turn_requires_key_when_openai_forced(self):
-        old_key = os.environ.pop("OPENAI_API_KEY", None)
+        os.environ.pop("OPENAI_API_KEY", None)
         os.environ["OTOXAN_VOICE_PROVIDER"] = "openai"
-        try:
-            with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
-                voice_turn_server.handle_voice_turn(
-                    {
-                        "format": "pcm_s16le_16khz_mono",
-                        "pcm16Mono16kBase64": base64.b64encode(b"\x01\x02" * 160).decode("ascii"),
-                        "routeEvidence": {},
-                    }
-                )
-            self.assertEqual(500, raised.exception.status)
-            self.assertIn("OPENAI_API_KEY", str(raised.exception))
-        finally:
-            if old_key is not None:
-                os.environ["OPENAI_API_KEY"] = old_key
+        with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
+            voice_turn_server.handle_voice_turn(self._payload())
+        self.assertEqual(500, raised.exception.status)
+        self.assertIn("OPENAI_API_KEY", str(raised.exception))
 
     def test_handle_voice_turn_rejects_bad_audio(self):
+        payload = self._payload()
+        payload["pcm16Mono16kBase64"] = "not-base64"
         with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
-            voice_turn_server.handle_voice_turn(
-                {
-                    "format": "pcm_s16le_16khz_mono",
-                    "pcm16Mono16kBase64": "not-base64",
-                    "routeEvidence": {},
-                }
-            )
+            voice_turn_server.handle_voice_turn(payload)
         self.assertEqual(400, raised.exception.status)
         self.assertIn("valid base64", str(raised.exception))
+
+    def test_handle_voice_turn_requires_route_evidence_object(self):
+        base_payload = {
+            "format": "pcm_s16le_16khz_mono",
+            "pcm16Mono16kBase64": base64.b64encode(b"\x01\x02" * 160).decode("ascii"),
+        }
+        for route_value in (None, [], ""):
+            payload = dict(base_payload)
+            if route_value is not None:
+                payload["routeEvidence"] = route_value
+            with self.subTest(route_value=route_value):
+                with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
+                    voice_turn_server.handle_voice_turn(payload)
+                self.assertEqual(400, raised.exception.status)
+                self.assertIn("routeEvidence", str(raised.exception))
+
+    def test_handle_voice_turn_auto_without_key_uses_proof_provider(self):
+        os.environ.pop("OPENAI_API_KEY", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "auto"
+        response = voice_turn_server.handle_voice_turn(self._payload())
+        self.assertTrue(response["ok"])
+        self.assertEqual("proof", response["provider"])
+        self.assertEqual(320, response["bytesReceived"])
 
 
 if __name__ == "__main__":

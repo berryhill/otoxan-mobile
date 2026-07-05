@@ -33,17 +33,25 @@ Matt can talk to Silas/Otoxan from Ray-Ban Meta Wayfarers and hear the response 
 - Assistant response pane.
 - Replay last response button.
 
-## Backend contract draft
+## Current repo-local backend contract
+
+For the physical proof loop, the Android app talks to the repo-local helper rather than a dashboard/runtime endpoint:
 
 ```http
-POST /api/mobile/voice-turn
+POST /voice-turn
 Content-Type: application/json
 
 {
-  "session_id": "...",
-  "device": "rayban_meta_wayfarers",
-  "input_mode": "push_to_talk",
-  "transcript": "Silas, what should I do next?"
+  "format": "pcm_s16le_16khz_mono",
+  "pcm16Mono16kBase64": "...",
+  "routeEvidence": {
+    "inputName": "Ray-Ban Meta",
+    "inputType": "TYPE_BLE_HEADSET",
+    "outputName": "Ray-Ban Meta",
+    "outputType": "TYPE_BLE_HEADSET",
+    "wearableActive": true,
+    "message": "setCommunicationDevice=true"
+  }
 }
 ```
 
@@ -51,11 +59,17 @@ Response:
 
 ```json
 {
-  "text": "Start audio-only. Prove the Ray-Ban mic and speaker route first.",
-  "audio_url": "https://.../tts.mp3",
-  "conversation_id": "..."
+  "ok": true,
+  "provider": "proof",
+  "transcript": "Received 320 bytes from Ray-Ban Meta (TYPE_BLE_HEADSET).",
+  "assistantText": "Xander heard you. The Ray-Ban voice route is live on Ray-Ban Meta.",
+  "ttsPcm16Mono16kBase64": "...",
+  "audioFormat": "pcm_s16le_16khz_mono",
+  "bytesReceived": 320
 }
 ```
+
+The prior `/api/mobile/voice-turn` text/audio-url shape was a draft for a later hosted runtime endpoint, not the current proof helper.
 
 ## DAT later
 

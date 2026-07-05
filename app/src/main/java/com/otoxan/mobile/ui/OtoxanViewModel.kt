@@ -11,6 +11,8 @@ import com.otoxan.mobile.voice.MicCapture
 import com.otoxan.mobile.voice.SpeechPlayback
 import com.otoxan.mobile.voice.XanderVoiceClient
 import com.otoxan.mobile.voice.createXanderVoiceClient
+import com.otoxan.mobile.voice.expectedPcmBytes
+import com.otoxan.mobile.voice.isUsableVoiceCapture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -87,13 +89,18 @@ class OtoxanViewModel(
                 if (!routeEvidence.wearableActive) {
                     error("Wearable route dropped before capture: ${routeEvidence.message}")
                 }
-                val pcm = micCapture.recordPcmForMillis(5_000)
-                if (pcm.isEmpty()) error("Microphone capture returned 0 bytes")
+                val captureMillis = 5_000L
+                val pcm = micCapture.recordPcmForMillis(captureMillis)
+                val expectedBytes = expectedPcmBytes(captureMillis)
+                if (!isUsableVoiceCapture(pcm, expectedBytes)) {
+                    error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, likely silent or truncated")
+                }
                 val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
-                if (result.assistantText.isNotBlank()) {
+                val backendTts = result.ttsPcm16Mono16k
+                if (backendTts != null && backendTts.isNotEmpty()) {
+                    speechPlayback.playPcm16Mono16k(backendTts)
+                } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
                     speechPlayback.speakText(result.assistantText)
-                } else {
-                    result.ttsPcm16Mono16k?.let { speechPlayback.playPcm16Mono16k(it) }
                 }
                 VoiceTurnUiResult(routeEvidence = routeEvidence, capturedBytes = pcm.size, result = result)
             }.onSuccess { proof ->
@@ -109,7 +116,15 @@ class OtoxanViewModel(
                         sessionState = VoiceSessionState.Ready,
                         transcript = result.transcript,
                         assistantResponse = result.assistantText,
-                        lastEvidence = "Voice loop ok: captured=${proof.capturedBytes} bytes; backendReceived=${result.bytesReceived ?: "unknown"}; tts=$ttsBytes bytes; ${proof.routeEvidence.message}"
+                        capturedBytes = proof.capturedBytes,
+                        backendBytesReceived = result.bytesReceived,
+                        ttsBytes = ttsBytes,
+                        provider = result.provider,
+                        lastEvidence = if (result.provider == "stub") {
+                            "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
+                        } else {
+                            "Voice loop ok: captured=${proof.capturedBytes} bytes; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; tts=$ttsBytes bytes; ${proof.routeEvidence.message}"
+                        }
                     )
                 }
             }.onFailure { error ->

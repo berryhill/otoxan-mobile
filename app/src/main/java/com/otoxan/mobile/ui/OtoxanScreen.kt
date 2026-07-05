@@ -69,6 +69,7 @@ fun OtoxanScreen(
         }
 
         EvidenceBlock("Transcript", state.transcript.ifBlank { "No sample captured yet" })
+        VoiceLoopEvidenceCard(state)
         EvidenceBlock("Assistant response", state.assistantResponse.ifBlank { "Configure XANDER_VOICE_ENDPOINT for a real backend turn" })
 
         state.lastError?.let { error ->
@@ -93,6 +94,23 @@ private fun RouteTruthCard(state: OtoxanUiState) {
             Text("Output: ${state.selectedOutputName} (${state.selectedOutputType})")
             Spacer(Modifier.height(4.dp))
             Text("Evidence: ${state.lastEvidence}", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun VoiceLoopEvidenceCard(state: OtoxanUiState) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Voice loop proof", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Provider: ${state.provider ?: "not contacted"}")
+            Text("Captured: ${state.capturedBytes} bytes")
+            Text("Backend received: ${state.backendBytesReceived?.toString() ?: "unknown"} bytes")
+            Text("TTS PCM: ${state.ttsBytes} bytes")
         }
     }
 }

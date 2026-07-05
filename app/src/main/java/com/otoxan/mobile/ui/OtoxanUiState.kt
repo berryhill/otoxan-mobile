@@ -11,6 +11,10 @@ data class OtoxanUiState(
     val lastEvidence: String = "No route check yet",
     val transcript: String = "",
     val assistantResponse: String = "",
+    val capturedBytes: Int = 0,
+    val backendBytesReceived: Int? = null,
+    val ttsBytes: Int = 0,
+    val provider: String? = null,
     val lastError: String? = null
 )
 

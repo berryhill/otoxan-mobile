@@ -25,15 +25,15 @@ Start Android/Kotlin first because:
 
 ## Repository status
 
-This repo was created on GitHub at:
+This repo is active on GitHub at:
 
 https://github.com/berryhill/otoxan-mobile
 
-Initial local clone path:
+Xander's active local clone path:
 
-`/home/silas/.hermes/workspace/codebases/otoxan-mobile`
+`/home/silas/.hermes/profiles/xander/workspace/codebases/otoxan-mobile`
 
-No initial commit or push has been made by Silas.
+The current `main` branch contains the Android route-proof app, repo-local voice-turn helper, Makefile workflow, and proof/real-provider backend seam.
 
 ## Architecture sketch
 
@@ -75,15 +75,17 @@ For the first physical voice-loop test, use the repo-local Python helper instead
 python3 tools/voice_turn_server.py --host 0.0.0.0 --port 8787
 ```
 
-Build the Android app with the phone-reachable host IP:
+Build the Android app with the phone-reachable host IP. Either pass the Gradle property explicitly or export the environment variable; the Gradle property wins when both are present:
 
 ```bash
 ./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn"
+# or:
+XANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn" ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell monkey -p com.otoxan.mobile -c android.intent.category.LAUNCHER 1
 ```
 
-The helper validates the PCM payload, returns visible transcript/assistant text, and returns audio bytes. It does not store raw audio.
+The helper validates the PCM payload and route evidence, returns visible transcript/assistant text, returns `provider`, `bytesReceived`, `audioFormat`, and returns PCM audio bytes. The app shows captured/backend/TTS counters so a physical test can identify which segment failed. It does not store raw audio.
 
 Provider modes:
 

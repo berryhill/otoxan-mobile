@@ -68,7 +68,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise VoiceTurnError(f"format must be {SUPPORTED_FORMAT}", 400)
 
     pcm = _decode_pcm(payload.get("pcm16Mono16kBase64"))
-    route = _parse_route(payload.get("routeEvidence") or {})
+    route = _parse_route(payload.get("routeEvidence"))
     turn = _run_assistant_turn(pcm, route)
 
     return {
@@ -365,10 +365,13 @@ class Handler(BaseHTTPRequestHandler):
             )
             self._send_json(200, response)
         except json.JSONDecodeError:
+            print("voice-turn error status=400 reason=invalid-json", flush=True)
             self._send_json(400, {"ok": False, "error": "Invalid JSON"})
         except VoiceTurnError as exc:
+            print(f"voice-turn error status={exc.status} reason={str(exc)[:160]}", flush=True)
             self._send_json(exc.status, {"ok": False, "error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - dinky dev server; return concise failure.
+            print(f"voice-turn error status=500 reason={str(exc)[:160]}", flush=True)
             self._send_json(500, {"ok": False, "error": str(exc)})
 
     def log_message(self, fmt: str, *args: object) -> None:

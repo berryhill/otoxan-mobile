@@ -26,6 +26,7 @@ class HttpXanderVoiceClientTest {
                 .setBody(
                     """
                     {
+                      "provider": "proof",
                       "transcript": "hello xander",
                       "assistantText": "route confirmed",
                       "ttsPcm16Mono16kBase64": "$ttsBytes",
@@ -62,10 +63,81 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"pcm16Mono16kBase64\":\"AQIDBA==\""))
         assertTrue(requestBody.contains("\"inputName\":\"Ray-Ban Meta\""))
         assertTrue(requestBody.contains("\"wearableActive\":true"))
+        assertEquals("proof", result.provider)
         assertEquals("hello xander", result.transcript)
         assertEquals("route confirmed", result.assistantText)
         assertEquals(listOf<Byte>(9, 8, 7), result.ttsPcm16Mono16k!!.toList())
         assertEquals(4, result.bytesReceived)
+    }
+
+    @Test
+    fun sendVoiceTurn_decodesUnicodeEscapesFromProviderJson() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "provider": "openai",
+                      "transcript": "I\u2019m here",
+                      "assistantText": "Route \u2713",
+                      "bytesReceived": 2
+                    }
+                    """.trimIndent()
+                )
+        )
+        server.start()
+
+        val client = HttpXanderVoiceClient(
+            endpointUrl = server.url("/voice-turn").toString(),
+            connectTimeoutMillis = 1_000,
+            readTimeoutMillis = 1_000
+        )
+
+        val result = kotlinx.coroutines.runBlocking {
+            client.sendVoiceTurn(byteArrayOf(1, 2), RouteEvidence.default("unicode route"))
+        }
+
+        assertEquals("openai", result.provider)
+        assertEquals("I’m here", result.transcript)
+        assertEquals("Route ✓", result.assistantText)
+    }
+
+    @Test
+    fun sendVoiceTurn_throwsHelpfulErrorForInvalidTtsBase64() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "provider": "proof",
+                      "transcript": "hello",
+                      "assistantText": "route confirmed",
+                      "ttsPcm16Mono16kBase64": "not base64",
+                      "bytesReceived": 4
+                    }
+                    """.trimIndent()
+                )
+        )
+        server.start()
+
+        val client = HttpXanderVoiceClient(
+            endpointUrl = server.url("/voice-turn").toString(),
+            connectTimeoutMillis = 1_000,
+            readTimeoutMillis = 1_000
+        )
+
+        val error = kotlin.runCatching {
+            kotlinx.coroutines.runBlocking {
+                client.sendVoiceTurn(byteArrayOf(1, 2), RouteEvidence.default("bad tts"))
+            }
+        }.exceptionOrNull()
+
+        assertTrue(error is XanderVoiceClientException)
+        assertTrue(error!!.message!!.contains("ttsPcm16Mono16kBase64"))
     }
 
     @Test

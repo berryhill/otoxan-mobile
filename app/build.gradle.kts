@@ -4,7 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val xanderVoiceEndpoint: String = providers.gradleProperty("XANDER_VOICE_ENDPOINT").orElse("").get()
+val xanderVoiceEndpoint: String = providers.gradleProperty("XANDER_VOICE_ENDPOINT")
+    .orElse(providers.environmentVariable("XANDER_VOICE_ENDPOINT"))
+    .orElse("")
+    .get()
 
 android {
     namespace = "com.otoxan.mobile"

@@ -258,27 +258,28 @@ The tile should not be the first implementation path. Build app-button voice fir
 
 Keep the Android client thin.
 
-Initial endpoint shape may follow `docs/mvp.md`:
+Current proof-helper endpoint shape follows `docs/mvp.md`:
 
 ```http
-POST /api/mobile/voice-turn
-Content-Type: application/json or audio/pcm
+POST /voice-turn
+Content-Type: application/json
 ```
 
 Request should include:
 
-- session id;
-- device class: `rayban_meta_wayfarers`;
-- input mode: `push_to_talk`;
-- transcript or audio payload;
-- route diagnostics when useful.
+- format: `pcm_s16le_16khz_mono`;
+- `pcm16Mono16kBase64` audio payload;
+- route diagnostics: input/output name, type, wearable active flag, and route message.
 
 Response should include:
 
-- short text response;
-- optional audio URL or PCM stream;
-- conversation id;
-- error/retry hints.
+- `ok`;
+- `provider` (`proof`, `openai`, or fallback mode);
+- transcript;
+- short assistant text response;
+- `ttsPcm16Mono16kBase64` PCM response audio;
+- `audioFormat`;
+- `bytesReceived`.
 
 No Gemini/Google Assistant dependency. The backend may use Otoxan/Hermes/Xander directly.
 
