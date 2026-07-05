@@ -1,0 +1,21 @@
+# Local build artifacts
+.gradle/
+build/
+app/build/
+
+# Android Studio
+.idea/
+*.iml
+local.properties
+
+# Kotlin/Java
+*.class
+
+# OS/editor
+.DS_Store
+.vscode/
+
+# Secrets
+.env
+*.keystore
+*.jks
