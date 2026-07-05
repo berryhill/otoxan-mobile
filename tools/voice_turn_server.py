@@ -21,7 +21,6 @@ import math
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import wave
 from dataclasses import dataclass
@@ -39,6 +38,7 @@ HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
 HERMES_AGENT_HOME_DEFAULT = "/home/silas/.hermes/hermes-agent"
+HERMES_PYTHON_DEFAULT = "/home/silas/.hermes/hermes-agent/venv/bin/python"
 XANDER_HERMES_HOME_DEFAULT = "/home/silas/.hermes/profiles/xander"
 
 
@@ -142,39 +142,55 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> str:
 def _transcribe_with_hermes_stt(pcm: bytes) -> str:
     hermes_agent_home = Path(os.environ.get("OTOXAN_HERMES_AGENT_HOME", HERMES_AGENT_HOME_DEFAULT))
     hermes_home = os.environ.get("HERMES_HOME") or os.environ.get("OTOXAN_XANDER_HERMES_HOME", XANDER_HERMES_HOME_DEFAULT)
-    old_hermes_home = os.environ.get("HERMES_HOME")
-    old_profile = os.environ.get("HERMES_PROFILE")
-    os.environ["HERMES_HOME"] = hermes_home
-    os.environ["HERMES_PROFILE"] = os.environ.get("OTOXAN_XANDER_PROFILE", XANDER_PROFILE_DEFAULT)
-    if str(hermes_agent_home) not in sys.path:
-        sys.path.insert(0, str(hermes_agent_home))
-
-    try:
-        from hermes_cli.env_loader import load_hermes_dotenv
-        from tools.transcription_tools import transcribe_audio
-    except Exception:
-        _restore_env("HERMES_HOME", old_hermes_home)
-        _restore_env("HERMES_PROFILE", old_profile)
-        return ""
-
-    try:
-        load_hermes_dotenv(hermes_home=hermes_home, project_env=str(hermes_agent_home / ".env"))
-        with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file:
-            _write_pcm16_wav(wav_file.name, pcm)
-            result = transcribe_audio(wav_file.name)
-        if not result.get("success"):
+    hermes_python = os.environ.get("OTOXAN_HERMES_PYTHON", HERMES_PYTHON_DEFAULT)
+    with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file:
+        _write_pcm16_wav(wav_file.name, pcm)
+        script = """
+import json
+import os
+import sys
+sys.path.insert(0, os.environ["OTOXAN_HERMES_AGENT_HOME"])
+from hermes_cli.env_loader import load_hermes_dotenv
+from tools.transcription_tools import transcribe_audio
+load_hermes_dotenv(
+    hermes_home=os.environ["HERMES_HOME"],
+    project_env=os.path.join(os.environ["OTOXAN_HERMES_AGENT_HOME"], ".env"),
+)
+print(json.dumps(transcribe_audio(sys.argv[1])))
+"""
+        env = os.environ.copy()
+        env.update(
+            {
+                "HERMES_HOME": hermes_home,
+                "HERMES_PROFILE": os.environ.get("OTOXAN_XANDER_PROFILE", XANDER_PROFILE_DEFAULT),
+                "OTOXAN_HERMES_AGENT_HOME": str(hermes_agent_home),
+                "PYTHONPATH": str(hermes_agent_home),
+            }
+        )
+        try:
+            result = subprocess.run(
+                [hermes_python, "-c", script, wav_file.name],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=float(os.environ.get("OTOXAN_STT_TIMEOUT_SECONDS", "45")),
+                check=False,
+                env=env,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             return ""
-        return _clean(result.get("transcript"), "")
-    finally:
-        _restore_env("HERMES_HOME", old_hermes_home)
-        _restore_env("HERMES_PROFILE", old_profile)
-
-
-def _restore_env(key: str, value: str | None) -> None:
-    if value is None:
-        os.environ.pop(key, None)
-    else:
-        os.environ[key] = value
+    if result.returncode != 0:
+        return ""
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    try:
+        data = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return ""
+    if not data.get("success"):
+        return ""
+    return _clean(data.get("transcript"), "")
 
 
 def _write_pcm16_wav(path: str, pcm: bytes) -> None:

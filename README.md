@@ -113,8 +113,17 @@ Xander/Hermes environment knobs:
 OTOXAN_VOICE_PROVIDER=xander-session
 OTOXAN_DEBUG_TRANSCRIPT="optional debug transcript until STT is wired"
 OTOXAN_HERMES_BIN=/home/silas/.local/bin/hermes
+OTOXAN_HERMES_PYTHON=/home/silas/.hermes/hermes-agent/venv/bin/python
 OTOXAN_XANDER_PROFILE=xander
 OTOXAN_XANDER_TIMEOUT_SECONDS=25
+```
+
+Xander profile STT lane used by this helper:
+
+```bash
+hermes --profile xander config set stt.enabled true
+hermes --profile xander config set stt.provider local
+hermes --profile xander config set stt.local.model base
 ```
 
 In Xander session mode the backend runs:
