@@ -66,3 +66,21 @@ Ray-Ban Meta Wayfarers
 - M3: TTS response through Ray-Ban speaker route.
 - M4: DAT session proof with camera disabled.
 - M5: DAT camera/photo capture for “look at this” workflows.
+
+## Local voice-turn helper
+
+For the first physical voice-loop test, use the repo-local Python helper instead of any Hermes/dashboard runtime service:
+
+```bash
+python3 tools/voice_turn_server.py --host 0.0.0.0 --port 8787
+```
+
+Build the Android app with the phone-reachable host IP:
+
+```bash
+./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn"
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell monkey -p com.otoxan.mobile -c android.intent.category.LAUNCHER 1
+```
+
+The helper validates the PCM payload, returns visible transcript/assistant text, and returns a short PCM proof tone. It is intentionally not a production backend and does not store raw audio.
