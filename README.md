@@ -85,6 +85,13 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell monkey -p com.otoxan.mobile -c android.intent.category.LAUNCHER 1
 ```
 
+On Matt's Linux laptop the Pixel USB/udev path may require sudo for adb. The Makefile auto-detects `/home/berry/sdk/platform-tools/adb` and uses `sudo /home/berry/sdk/platform-tools/adb`; if needed, pass it explicitly:
+
+```bash
+make reinstall ADB="sudo /home/berry/sdk/platform-tools/adb"
+make launch ADB="sudo /home/berry/sdk/platform-tools/adb"
+```
+
 The helper validates the PCM payload and route evidence, returns visible transcript/assistant text, returns `provider`, `bytesReceived`, `audioFormat`, and returns PCM audio bytes. The app shows captured/backend/TTS counters so a physical test can identify which segment failed. It does not store raw audio.
 
 Provider modes:

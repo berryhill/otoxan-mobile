@@ -4,12 +4,12 @@ APP_ID ?= com.otoxan.mobile
 VOICE_HOST ?= 0.0.0.0
 VOICE_PORT ?= 8787
 VOICE_ENDPOINT ?= http://100.126.0.110:8787/voice-turn
-ADB ?= $(shell if [ -x /home/berry/sdk/platform-tools/adb ]; then echo /home/berry/sdk/platform-tools/adb; else command -v adb 2>/dev/null || echo adb; fi)
+ADB ?= $(shell if [ -x /home/berry/sdk/platform-tools/adb ]; then echo sudo /home/berry/sdk/platform-tools/adb; else command -v adb 2>/dev/null || echo adb; fi)
 GRADLE ?= ./gradlew
 PYTHON ?= python3
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 
-.PHONY: help all build clean install reinstall launch run logs devices backend backend-proof backend-openai smoke-backend test-backend test test-all endpoint doctor
+.PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-proof backend-openai smoke-backend test-backend test test-all endpoint doctor
 
 help:
 	@printf '%s\n' \
@@ -20,6 +20,7 @@ help:
 	  '  make backend-openai           Require OpenAI-compatible STT/chat/TTS provider' \
 	  '  make smoke-backend            POST a fake Ray-Ban turn to VOICE_ENDPOINT' \
 	  '  make build                    Build debug APK with VOICE_ENDPOINT baked in' \
+	  '  make adb-start                Start adb daemon with configured ADB command' \
 	  '  make install                  Install debug APK via adb' \
 	  '  make reinstall                Uninstall then install debug APK' \
 	  '  make launch                   Launch installed app' \
@@ -32,7 +33,7 @@ help:
 	  'Useful overrides:' \
 	  '  make all VOICE_ENDPOINT=http://100.126.0.110:8787/voice-turn' \
 	  '  make backend VOICE_HOST=0.0.0.0 VOICE_PORT=8787' \
-	  '  make install ADB=/home/berry/sdk/platform-tools/adb'
+	  '  make install ADB="sudo /home/berry/sdk/platform-tools/adb"'
 
 endpoint:
 	@echo 'VOICE_ENDPOINT=$(VOICE_ENDPOINT)'
@@ -56,14 +57,17 @@ clean:
 build:
 	$(GRADLE) :app:assembleDebug -PXANDER_VOICE_ENDPOINT="$(VOICE_ENDPOINT)"
 
-install:
+adb-start:
+	$(ADB) start-server
+
+install: adb-start
 	$(ADB) install -r $(APK)
 
-reinstall:
+reinstall: adb-start
 	-$(ADB) uninstall $(APP_ID)
 	$(ADB) install $(APK)
 
-launch:
+launch: adb-start
 	$(ADB) shell monkey -p $(APP_ID) -c android.intent.category.LAUNCHER 1
 
 run: launch
