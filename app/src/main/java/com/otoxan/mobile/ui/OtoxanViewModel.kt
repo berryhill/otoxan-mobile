@@ -112,12 +112,21 @@ class OtoxanViewModel(
     fun playRouteProof() {
         _uiState.update { it.copy(sessionState = VoiceSessionState.PlayingTest, lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { speechPlayback.playProofTone() }
-                .onSuccess {
+            runCatching {
+                val evidence = audioRouter.inspectAndSelectWearable()
+                speechPlayback.playProofTone()
+                evidence
+            }
+                .onSuccess { evidence ->
                     _uiState.update {
                         it.copy(
-                            sessionState = if (it.wearableRouteActive) VoiceSessionState.Ready else VoiceSessionState.Idle,
-                            lastEvidence = "Played 440 Hz proof tone using VOICE_COMMUNICATION audio attributes"
+                            selectedInputName = evidence.inputName,
+                            selectedInputType = evidence.inputType,
+                            selectedOutputName = evidence.outputName,
+                            selectedOutputType = evidence.outputType,
+                            wearableRouteActive = evidence.wearableActive,
+                            sessionState = if (evidence.wearableActive) VoiceSessionState.Ready else VoiceSessionState.Idle,
+                            lastEvidence = "Played audible 660 Hz proof tone; ${evidence.message}"
                         )
                     }
                 }
