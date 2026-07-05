@@ -28,7 +28,8 @@ class HttpXanderVoiceClientTest {
                     {
                       "transcript": "hello xander",
                       "assistantText": "route confirmed",
-                      "ttsPcm16Mono16kBase64": "$ttsBytes"
+                      "ttsPcm16Mono16kBase64": "$ttsBytes",
+                      "bytesReceived": 4
                     }
                     """.trimIndent()
                 )
@@ -64,6 +65,7 @@ class HttpXanderVoiceClientTest {
         assertEquals("hello xander", result.transcript)
         assertEquals("route confirmed", result.assistantText)
         assertEquals(listOf<Byte>(9, 8, 7), result.ttsPcm16Mono16k!!.toList())
+        assertEquals(4, result.bytesReceived)
     }
 
     @Test

@@ -14,7 +14,8 @@ interface XanderVoiceClient {
 data class VoiceTurnResult(
     val transcript: String,
     val assistantText: String,
-    val ttsPcm16Mono16k: ByteArray? = null
+    val ttsPcm16Mono16k: ByteArray? = null,
+    val bytesReceived: Int? = null
 )
 
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -56,7 +57,8 @@ class HttpXanderVoiceClient(
                 assistantText = responseBody.requiredJsonString("assistantText"),
                 ttsPcm16Mono16k = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let {
                     Base64.getDecoder().decode(it)
-                }
+                },
+                bytesReceived = responseBody.optionalJsonInt("bytesReceived")
             )
         } catch (error: XanderVoiceClientException) {
             throw error
@@ -113,6 +115,11 @@ private fun String.requiredJsonString(fieldName: String): String {
 private fun String.optionalJsonString(fieldName: String): String? {
     val regex = Regex("\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"])*)\\\"")
     return regex.find(this)?.groupValues?.get(1)?.jsonUnescape()
+}
+
+private fun String.optionalJsonInt(fieldName: String): Int? {
+    val regex = Regex("\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*(-?\\d+)")
+    return regex.find(this)?.groupValues?.get(1)?.toIntOrNull()
 }
 
 private fun String.jsonEscape(): String = buildString {

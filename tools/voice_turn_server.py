@@ -122,7 +122,15 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length).decode("utf-8") if length else "{}"
             payload = json.loads(body)
-            self._send_json(200, handle_voice_turn(payload))
+            response = handle_voice_turn(payload)
+            print(
+                "voice-turn ok "
+                f"bytes={response.get('bytesReceived')} "
+                f"input={response.get('routeEvidence', {}).get('inputName')} "
+                f"type={response.get('routeEvidence', {}).get('inputType')}",
+                flush=True,
+            )
+            self._send_json(200, response)
         except json.JSONDecodeError:
             self._send_json(400, {"ok": False, "error": "Invalid JSON"})
         except VoiceTurnError as exc:

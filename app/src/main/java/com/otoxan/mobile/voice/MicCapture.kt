@@ -15,7 +15,8 @@ class MicCapture {
             sampleRate,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT
-        ).coerceAtLeast(sampleRate)
+        )
+        require(minBuffer > 0) { "AudioRecord minimum buffer unavailable: $minBuffer" }
 
         val recorder = AudioRecord.Builder()
             .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
@@ -29,9 +30,12 @@ class MicCapture {
             .setBufferSizeInBytes(minBuffer * 2)
             .build()
 
+        require(recorder.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialize" }
+
         val output = ByteArray(expectedBytes)
         try {
             recorder.startRecording()
+            require(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AudioRecord did not enter recording state" }
             var offset = 0
             while (offset < output.size) {
                 val read = recorder.read(output, offset, output.size - offset)

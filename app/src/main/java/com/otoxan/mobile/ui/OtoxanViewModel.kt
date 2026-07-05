@@ -82,19 +82,30 @@ class OtoxanViewModel(
 
         _uiState.update { it.copy(sessionState = VoiceSessionState.RecordingTest, lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
-            val routeEvidence = audioRouter.currentEvidence()
             runCatching {
+                val routeEvidence = audioRouter.inspectAndSelectWearable()
+                if (!routeEvidence.wearableActive) {
+                    error("Wearable route dropped before capture: ${routeEvidence.message}")
+                }
                 val pcm = micCapture.recordPcmForMillis(5_000)
+                if (pcm.isEmpty()) error("Microphone capture returned 0 bytes")
                 val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
                 result.ttsPcm16Mono16k?.let { speechPlayback.playPcm16Mono16k(it) }
-                result
-            }.onSuccess { result ->
+                VoiceTurnUiResult(routeEvidence = routeEvidence, capturedBytes = pcm.size, result = result)
+            }.onSuccess { proof ->
+                val result = proof.result
+                val ttsBytes = result.ttsPcm16Mono16k?.size ?: 0
                 _uiState.update {
                     it.copy(
+                        selectedInputName = proof.routeEvidence.inputName,
+                        selectedInputType = proof.routeEvidence.inputType,
+                        selectedOutputName = proof.routeEvidence.outputName,
+                        selectedOutputType = proof.routeEvidence.outputType,
+                        wearableRouteActive = proof.routeEvidence.wearableActive,
                         sessionState = VoiceSessionState.Ready,
                         transcript = result.transcript,
                         assistantResponse = result.assistantText,
-                        lastEvidence = "Captured route proof through ${routeEvidence.inputName}"
+                        lastEvidence = "Voice loop ok: captured=${proof.capturedBytes} bytes; backendReceived=${result.bytesReceived ?: "unknown"}; tts=$ttsBytes bytes; ${proof.routeEvidence.message}"
                     )
                 }
             }.onFailure { error ->
@@ -108,6 +119,12 @@ class OtoxanViewModel(
             }
         }
     }
+
+    private data class VoiceTurnUiResult(
+        val routeEvidence: com.otoxan.mobile.voice.RouteEvidence,
+        val capturedBytes: Int,
+        val result: com.otoxan.mobile.voice.VoiceTurnResult
+    )
 
     fun playRouteProof() {
         _uiState.update { it.copy(sessionState = VoiceSessionState.PlayingTest, lastError = null) }
