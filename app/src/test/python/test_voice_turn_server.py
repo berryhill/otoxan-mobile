@@ -57,7 +57,14 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertIn("Xander heard you", result["assistantText"])
         self.assertEqual("pcm_s16le_16khz_mono", result["audioFormat"])
         self.assertEqual("proof", result["provider"])
+        self.assertEqual("proof", result["transcriptSource"])
+        self.assertEqual("not-run", result["sttStatus"])
+        self.assertIsNone(result["sttLatencyMs"])
         self.assertEqual(320, result["bytesReceived"])
+        self.assertEqual(320, result["audioStats"]["bytes"])
+        self.assertEqual(10, result["audioStats"]["durationMs"])
+        self.assertEqual(513, result["audioStats"]["peak"])
+        self.assertEqual(513.0, result["audioStats"]["rms"])
         self.assertGreater(len(base64.b64decode(result["ttsPcm16Mono16kBase64"])), 1000)
 
     def test_default_provider_calls_xander_session_not_proof(self):
@@ -68,6 +75,8 @@ class VoiceTurnServerTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual("xander-session", result["provider"])
+        self.assertEqual("debug", result["transcriptSource"])
+        self.assertEqual("not-run", result["sttStatus"])
         self.assertEqual("Matt says hello Xander", result["transcript"])
         self.assertEqual("I am live through the phone.", result["assistantText"])
         self.assertEqual(b"", base64.b64decode(result["ttsPcm16Mono16kBase64"]))
@@ -82,32 +91,46 @@ class VoiceTurnServerTest(unittest.TestCase):
         ask.assert_called_once()
         self.assertEqual("Matt says hello Xander", ask.call_args.args[0])
         self.assertEqual("xander-session", result["provider"])
+        self.assertEqual("debug", result["transcriptSource"])
+        self.assertEqual("not-run", result["sttStatus"])
         self.assertEqual("Hello Matt, I hear you now.", result["assistantText"])
 
     def test_xander_transcript_uses_hermes_stt_lane_before_evidence_fallback(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         route = voice_turn_server.RouteSummary("Ray-Ban", "TYPE_BLE_HEADSET", "Ray-Ban", "TYPE_BLE_HEADSET", True, "")
-        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value="actual spoken words"):
+        stt = voice_turn_server.SttResult("actual spoken words", "success", 17)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
             transcript = voice_turn_server._xander_transcript(b"\x01\x02" * 160, route)
-        self.assertEqual("actual spoken words", transcript)
+        self.assertEqual("actual spoken words", transcript.transcript)
+        self.assertEqual("hermes-stt", transcript.source)
+        self.assertEqual("success", transcript.stt_status)
+        self.assertEqual(17, transcript.stt_latency_ms)
 
     def test_xander_transcript_falls_back_to_route_evidence_when_stt_lane_empty(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         route = voice_turn_server.RouteSummary("Ray-Ban", "TYPE_BLE_HEADSET", "Ray-Ban", "TYPE_BLE_HEADSET", True, "")
-        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=""):
+        stt = voice_turn_server.SttResult("", "empty", 23)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
             transcript = voice_turn_server._xander_transcript(b"\x01\x02" * 160, route)
-        self.assertIn("Hermes STT lane did not return", transcript)
+        self.assertIn("Hermes STT lane did not return", transcript.transcript)
+        self.assertEqual("route-evidence-fallback", transcript.source)
+        self.assertEqual("empty", transcript.stt_status)
+        self.assertEqual(23, transcript.stt_latency_ms)
 
     def test_xander_turn_does_not_fake_response_when_stt_lane_empty(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
         payload = self._payload()
-        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=""):
+        stt = voice_turn_server.SttResult("", "empty", 31)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
             with mock.patch.object(voice_turn_server, "_ask_xander_session") as ask:
                 result = voice_turn_server.handle_voice_turn(payload)
 
         ask.assert_not_called()
         self.assertEqual("xander-session", result["provider"])
+        self.assertEqual("route-evidence-fallback", result["transcriptSource"])
+        self.assertEqual("empty", result["sttStatus"])
+        self.assertEqual(31, result["sttLatencyMs"])
         self.assertIn("I got audio from Ray-Ban Meta", result["assistantText"])
         self.assertIn("couldn't decode words", result["assistantText"])
         self.assertIn("Hermes STT lane did not return", result["transcript"])

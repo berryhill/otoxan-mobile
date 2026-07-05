@@ -16,7 +16,14 @@ data class VoiceTurnResult(
     val assistantText: String,
     val ttsPcm16Mono16k: ByteArray? = null,
     val bytesReceived: Int? = null,
-    val provider: String? = null
+    val provider: String? = null,
+    val transcriptSource: String? = null,
+    val sttStatus: String? = null,
+    val sttLatencyMs: Int? = null,
+    val audioFormat: String? = null,
+    val audioDurationMs: Int? = null,
+    val audioPeak: Int? = null,
+    val audioRms: Double? = null
 )
 
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -60,7 +67,14 @@ class HttpXanderVoiceClient(
                     decodeTtsPcm(it)
                 },
                 bytesReceived = responseBody.optionalJsonInt("bytesReceived"),
-                provider = responseBody.optionalJsonString("provider")
+                provider = responseBody.optionalJsonString("provider"),
+                transcriptSource = responseBody.optionalJsonString("transcriptSource"),
+                sttStatus = responseBody.optionalJsonString("sttStatus"),
+                sttLatencyMs = responseBody.optionalJsonInt("sttLatencyMs"),
+                audioFormat = responseBody.optionalJsonString("audioFormat"),
+                audioDurationMs = responseBody.optionalJsonInt("durationMs"),
+                audioPeak = responseBody.optionalJsonInt("peak"),
+                audioRms = responseBody.optionalJsonDouble("rms")
             )
         } catch (error: XanderVoiceClientException) {
             throw error
@@ -97,7 +111,9 @@ class StubXanderVoiceClient : XanderVoiceClient {
         return VoiceTurnResult(
             transcript = "Stub transcript: ${pcm16Mono16k.size} bytes captured through ${routeEvidence.inputName}",
             assistantText = "No Xander endpoint configured. Rebuild with XANDER_VOICE_ENDPOINT to enable the backend turn.",
-            provider = "stub"
+            provider = "stub",
+            transcriptSource = "stub",
+            sttStatus = "not-run"
         )
     }
 }
@@ -123,6 +139,11 @@ private fun String.optionalJsonString(fieldName: String): String? {
 private fun String.optionalJsonInt(fieldName: String): Int? {
     val regex = Regex("\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*(-?\\d+)")
     return regex.find(this)?.groupValues?.get(1)?.toIntOrNull()
+}
+
+private fun String.optionalJsonDouble(fieldName: String): Double? {
+    val regex = Regex("\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)")
+    return regex.find(this)?.groupValues?.get(1)?.toDoubleOrNull()
 }
 
 private fun decodeTtsPcm(encoded: String): ByteArray {

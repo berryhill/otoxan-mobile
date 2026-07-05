@@ -108,8 +108,12 @@ private fun VoiceLoopEvidenceCard(state: OtoxanUiState) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Voice loop proof", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("Provider: ${state.provider ?: "not contacted"}")
-            Text("Captured: ${state.capturedBytes} bytes")
+            Text("Transcript source: ${state.transcriptSource ?: "unknown"}")
+            Text("Hermes STT: ${state.sttStatus ?: "unknown"}${state.sttLatencyMs?.let { " in ${it}ms" } ?: ""}")
+            Text("Captured: ${state.capturedBytes}/${state.expectedCaptureBytes} bytes")
+            Text("Capture usable: ${state.captureUsable?.toString() ?: "unknown"}; peak=${state.capturePeakAmplitude}")
             Text("Backend received: ${state.backendBytesReceived?.toString() ?: "unknown"} bytes")
+            Text("Backend audio: ${state.audioFormat ?: "unknown"}; duration=${state.backendAudioDurationMs?.toString() ?: "unknown"}ms; peak=${state.backendAudioPeak?.toString() ?: "unknown"}; rms=${state.backendAudioRms?.toString() ?: "unknown"}")
             Text("TTS PCM: ${state.ttsBytes} bytes")
         }
     }

@@ -15,6 +15,16 @@ data class OtoxanUiState(
     val backendBytesReceived: Int? = null,
     val ttsBytes: Int = 0,
     val provider: String? = null,
+    val transcriptSource: String? = null,
+    val sttStatus: String? = null,
+    val sttLatencyMs: Int? = null,
+    val audioFormat: String? = null,
+    val backendAudioDurationMs: Int? = null,
+    val backendAudioPeak: Int? = null,
+    val backendAudioRms: Double? = null,
+    val expectedCaptureBytes: Int = 0,
+    val capturePeakAmplitude: Int = 0,
+    val captureUsable: Boolean? = null,
     val lastError: String? = null
 )
 

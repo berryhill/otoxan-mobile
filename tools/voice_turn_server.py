@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,11 +60,29 @@ class RouteSummary:
 
 
 @dataclass(frozen=True)
+class SttResult:
+    transcript: str
+    status: str
+    latency_ms: int | None
+
+
+@dataclass(frozen=True)
+class TranscriptResult:
+    transcript: str
+    source: str
+    stt_status: str
+    stt_latency_ms: int | None
+
+
+@dataclass(frozen=True)
 class AssistantTurn:
     transcript: str
     assistant_text: str
     tts_pcm: bytes
     provider: str
+    transcript_source: str
+    stt_status: str
+    stt_latency_ms: int | None
 
 
 def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -75,6 +94,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise VoiceTurnError(f"format must be {SUPPORTED_FORMAT}", 400)
 
     pcm = _decode_pcm(payload.get("pcm16Mono16kBase64"))
+    stats = _audio_stats(pcm)
     route = _parse_route(payload.get("routeEvidence"))
     turn = _run_assistant_turn(pcm, route)
 
@@ -85,7 +105,11 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "ttsPcm16Mono16kBase64": base64.b64encode(turn.tts_pcm).decode("ascii"),
         "audioFormat": SUPPORTED_FORMAT,
         "bytesReceived": len(pcm),
+        "audioStats": stats,
         "provider": turn.provider,
+        "transcriptSource": turn.transcript_source,
+        "sttStatus": turn.stt_status,
+        "sttLatencyMs": turn.stt_latency_ms,
         "routeEvidence": {
             "inputName": route.input_name,
             "inputType": route.input_type,
@@ -114,45 +138,67 @@ def _run_assistant_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
 
 def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     transcript = _xander_transcript(pcm, route)
-    if _is_stt_fallback(transcript):
+    if _is_stt_fallback(transcript.transcript):
         return AssistantTurn(
-            transcript=transcript,
+            transcript=transcript.transcript,
             assistant_text=(
                 f"I got audio from {route.input_name}, but couldn't decode words. "
                 "Try speaking again a little closer."
             ),
             tts_pcm=b"",
             provider=XANDER_PROVIDER,
+            transcript_source=transcript.source,
+            stt_status=transcript.stt_status,
+            stt_latency_ms=transcript.stt_latency_ms,
         )
-    assistant_text = _ask_xander_session(transcript, route)
+    assistant_text = _ask_xander_session(transcript.transcript, route)
     return AssistantTurn(
-        transcript=transcript,
+        transcript=transcript.transcript,
         assistant_text=assistant_text,
         tts_pcm=b"",
         provider=XANDER_PROVIDER,
+        transcript_source=transcript.source,
+        stt_status=transcript.stt_status,
+        stt_latency_ms=transcript.stt_latency_ms,
     )
 
 
 def _is_stt_fallback(transcript: str) -> bool:
     return "Hermes STT lane did not return a transcript for this turn." in transcript
 
-def _xander_transcript(pcm: bytes, route: RouteSummary) -> str:
+
+def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
     debug_transcript = os.environ.get("OTOXAN_DEBUG_TRANSCRIPT", "").strip()
     if debug_transcript:
-        return _clean(debug_transcript, "Voice turn received.")
+        return TranscriptResult(
+            transcript=_clean(debug_transcript, "Voice turn received."),
+            source="debug",
+            stt_status="not-run",
+            stt_latency_ms=None,
+        )
 
-    transcript = _transcribe_with_hermes_stt(pcm)
-    if transcript:
-        return transcript
+    stt = _transcribe_with_hermes_stt(pcm)
+    if stt.transcript:
+        return TranscriptResult(
+            transcript=stt.transcript,
+            source="hermes-stt",
+            stt_status=stt.status,
+            stt_latency_ms=stt.latency_ms,
+        )
 
-    return (
-        f"Voice audio received from {route.input_name} ({route.input_type}); "
-        f"{len(pcm)} bytes of PCM reached the Xander session adapter. "
-        "Hermes STT lane did not return a transcript for this turn."
+    return TranscriptResult(
+        transcript=(
+            f"Voice audio received from {route.input_name} ({route.input_type}); "
+            f"{len(pcm)} bytes of PCM reached the Xander session adapter. "
+            "Hermes STT lane did not return a transcript for this turn."
+        ),
+        source="route-evidence-fallback",
+        stt_status=stt.status,
+        stt_latency_ms=stt.latency_ms,
     )
 
 
-def _transcribe_with_hermes_stt(pcm: bytes) -> str:
+def _transcribe_with_hermes_stt(pcm: bytes) -> SttResult:
     hermes_agent_home = Path(os.environ.get("OTOXAN_HERMES_AGENT_HOME", HERMES_AGENT_HOME_DEFAULT))
     hermes_home = os.environ.get("HERMES_HOME") or os.environ.get("OTOXAN_XANDER_HERMES_HOME", XANDER_HERMES_HOME_DEFAULT)
     hermes_python = os.environ.get("OTOXAN_HERMES_PYTHON", HERMES_PYTHON_DEFAULT)
@@ -180,6 +226,7 @@ print(json.dumps(transcribe_audio(sys.argv[1])))
                 "PYTHONPATH": str(hermes_agent_home),
             }
         )
+        started = time.monotonic()
         try:
             result = subprocess.run(
                 [hermes_python, "-c", script, wav_file.name],
@@ -190,20 +237,28 @@ print(json.dumps(transcribe_audio(sys.argv[1])))
                 check=False,
                 env=env,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return ""
+        except FileNotFoundError:
+            return SttResult("", "file-not-found", _elapsed_ms(started))
+        except subprocess.TimeoutExpired:
+            return SttResult("", "timeout", _elapsed_ms(started))
+    latency_ms = _elapsed_ms(started)
     if result.returncode != 0:
-        return ""
+        return SttResult("", "subprocess-error", latency_ms)
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     if not lines:
-        return ""
+        return SttResult("", "empty", latency_ms)
     try:
         data = json.loads(lines[-1])
     except json.JSONDecodeError:
-        return ""
+        return SttResult("", "json-error", latency_ms)
     if not data.get("success"):
-        return ""
-    return _clean(data.get("transcript"), "")
+        return SttResult("", "stt-failed", latency_ms)
+    transcript = _clean(data.get("transcript"), "")
+    return SttResult(transcript, "success" if transcript else "empty", latency_ms)
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
 
 
 def _write_pcm16_wav(path: str, pcm: bytes) -> None:
@@ -272,6 +327,9 @@ def _proof_turn(pcm: bytes, route: RouteSummary, provider: str) -> AssistantTurn
         assistant_text=assistant_text,
         tts_pcm=_proof_tone_pcm(),
         provider=provider,
+        transcript_source="proof",
+        stt_status="not-run",
+        stt_latency_ms=None,
     )
 
 
@@ -302,6 +360,25 @@ def _decode_pcm(value: Any) -> bytes:
     if len(pcm) % 2 != 0:
         raise VoiceTurnError("decoded PCM must be 16-bit aligned", 400)
     return pcm
+
+
+def _audio_stats(pcm: bytes) -> dict[str, Any]:
+    samples = []
+    for index in range(0, len(pcm) - 1, 2):
+        low = pcm[index] & 0xFF
+        high = pcm[index + 1]
+        sample = int.from_bytes(bytes((low, high)), byteorder="little", signed=True)
+        samples.append(sample)
+    peak = max((abs(sample) for sample in samples), default=0)
+    rms = math.sqrt(sum(sample * sample for sample in samples) / len(samples)) if samples else 0.0
+    duration_ms = int(round((len(samples) / SAMPLE_RATE) * 1000)) if samples else 0
+    return {
+        "bytes": len(pcm),
+        "samples": len(samples),
+        "durationMs": duration_ms,
+        "peak": peak,
+        "rms": round(rms, 2),
+    }
 
 
 def _proof_tone_pcm(duration_seconds: float = 0.8, frequency_hz: float = 660.0) -> bytes:
@@ -339,6 +416,12 @@ class Handler(BaseHTTPRequestHandler):
                 "voice-turn ok "
                 f"provider={response.get('provider')} "
                 f"bytes={response.get('bytesReceived')} "
+                f"durationMs={response.get('audioStats', {}).get('durationMs')} "
+                f"peak={response.get('audioStats', {}).get('peak')} "
+                f"rms={response.get('audioStats', {}).get('rms')} "
+                f"sttStatus={response.get('sttStatus')} "
+                f"sttLatencyMs={response.get('sttLatencyMs')} "
+                f"transcriptSource={response.get('transcriptSource')} "
                 f"input={response.get('routeEvidence', {}).get('inputName')} "
                 f"type={response.get('routeEvidence', {}).get('inputType')}",
                 flush=True,

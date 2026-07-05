@@ -13,6 +13,7 @@ import com.otoxan.mobile.voice.XanderVoiceClient
 import com.otoxan.mobile.voice.createXanderVoiceClient
 import com.otoxan.mobile.voice.expectedPcmBytes
 import com.otoxan.mobile.voice.isUsableVoiceCapture
+import com.otoxan.mobile.voice.peakPcm16Amplitude
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -92,8 +93,10 @@ class OtoxanViewModel(
                 val captureMillis = 5_000L
                 val pcm = micCapture.recordPcmForMillis(captureMillis)
                 val expectedBytes = expectedPcmBytes(captureMillis)
-                if (!isUsableVoiceCapture(pcm, expectedBytes)) {
-                    error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, likely silent or truncated")
+                val peak = pcm.peakPcm16Amplitude()
+                val usable = isUsableVoiceCapture(pcm, expectedBytes)
+                if (!usable) {
+                    error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, peak=$peak, likely silent or truncated")
                 }
                 val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
                 val backendTts = result.ttsPcm16Mono16k
@@ -102,7 +105,14 @@ class OtoxanViewModel(
                 } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
                     speechPlayback.speakText(result.assistantText)
                 }
-                VoiceTurnUiResult(routeEvidence = routeEvidence, capturedBytes = pcm.size, result = result)
+                VoiceTurnUiResult(
+                    routeEvidence = routeEvidence,
+                    capturedBytes = pcm.size,
+                    expectedCaptureBytes = expectedBytes,
+                    capturePeakAmplitude = peak,
+                    captureUsable = usable,
+                    result = result
+                )
             }.onSuccess { proof ->
                 val result = proof.result
                 val ttsBytes = result.ttsPcm16Mono16k?.size ?: 0
@@ -120,10 +130,20 @@ class OtoxanViewModel(
                         backendBytesReceived = result.bytesReceived,
                         ttsBytes = ttsBytes,
                         provider = result.provider,
+                        transcriptSource = result.transcriptSource,
+                        sttStatus = result.sttStatus,
+                        sttLatencyMs = result.sttLatencyMs,
+                        audioFormat = result.audioFormat,
+                        backendAudioDurationMs = result.audioDurationMs,
+                        backendAudioPeak = result.audioPeak,
+                        backendAudioRms = result.audioRms,
+                        expectedCaptureBytes = proof.expectedCaptureBytes,
+                        capturePeakAmplitude = proof.capturePeakAmplitude,
+                        captureUsable = proof.captureUsable,
                         lastEvidence = if (result.provider == "stub") {
                             "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                         } else {
-                            "Voice loop ok: captured=${proof.capturedBytes} bytes; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; tts=$ttsBytes bytes; ${proof.routeEvidence.message}"
+                            "Voice loop ok: captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; ${proof.routeEvidence.message}"
                         }
                     )
                 }
@@ -142,6 +162,9 @@ class OtoxanViewModel(
     private data class VoiceTurnUiResult(
         val routeEvidence: com.otoxan.mobile.voice.RouteEvidence,
         val capturedBytes: Int,
+        val expectedCaptureBytes: Int,
+        val capturePeakAmplitude: Int,
+        val captureUsable: Boolean,
         val result: com.otoxan.mobile.voice.VoiceTurnResult
     )
 

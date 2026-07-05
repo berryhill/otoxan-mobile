@@ -30,7 +30,12 @@ class HttpXanderVoiceClientTest {
                       "transcript": "hello xander",
                       "assistantText": "route confirmed",
                       "ttsPcm16Mono16kBase64": "$ttsBytes",
-                      "bytesReceived": 4
+                      "audioFormat": "pcm_s16le_16khz_mono",
+                      "bytesReceived": 4,
+                      "transcriptSource": "proof",
+                      "sttStatus": "not-run",
+                      "sttLatencyMs": null,
+                      "audioStats": {"bytes": 4, "samples": 2, "durationMs": 0, "peak": 513, "rms": 512.5}
                     }
                     """.trimIndent()
                 )
@@ -68,6 +73,13 @@ class HttpXanderVoiceClientTest {
         assertEquals("route confirmed", result.assistantText)
         assertEquals(listOf<Byte>(9, 8, 7), result.ttsPcm16Mono16k!!.toList())
         assertEquals(4, result.bytesReceived)
+        assertEquals("proof", result.transcriptSource)
+        assertEquals("not-run", result.sttStatus)
+        assertEquals(null, result.sttLatencyMs)
+        assertEquals("pcm_s16le_16khz_mono", result.audioFormat)
+        assertEquals(0, result.audioDurationMs)
+        assertEquals(513, result.audioPeak)
+        assertEquals(512.5, result.audioRms!!, 0.01)
     }
 
     @Test
