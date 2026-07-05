@@ -30,7 +30,7 @@ class VoiceTurnServerTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertIn("Ray-Ban Meta", result["transcript"])
-        self.assertIn("Otoxan local voice server is online", result["assistantText"])
+        self.assertIn("Xander heard you", result["assistantText"])
         self.assertEqual("pcm_s16le_16khz_mono", result["audioFormat"])
         self.assertGreater(len(base64.b64decode(result["ttsPcm16Mono16kBase64"])), 1000)
 

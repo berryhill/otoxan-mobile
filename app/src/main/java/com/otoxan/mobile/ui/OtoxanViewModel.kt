@@ -90,7 +90,11 @@ class OtoxanViewModel(
                 val pcm = micCapture.recordPcmForMillis(5_000)
                 if (pcm.isEmpty()) error("Microphone capture returned 0 bytes")
                 val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
-                result.ttsPcm16Mono16k?.let { speechPlayback.playPcm16Mono16k(it) }
+                if (result.assistantText.isNotBlank()) {
+                    speechPlayback.speakText(result.assistantText)
+                } else {
+                    result.ttsPcm16Mono16k?.let { speechPlayback.playPcm16Mono16k(it) }
+                }
                 VoiceTurnUiResult(routeEvidence = routeEvidence, capturedBytes = pcm.size, result = result)
             }.onSuccess { proof ->
                 val result = proof.result
@@ -186,7 +190,7 @@ class OtoxanViewModel(
                 return OtoxanViewModel(
                     audioRouter = AudioRouter(appContext),
                     micCapture = MicCapture(),
-                    speechPlayback = SpeechPlayback(),
+                    speechPlayback = SpeechPlayback(appContext),
                     xanderVoiceClient = createXanderVoiceClient(BuildConfig.XANDER_VOICE_ENDPOINT)
                 ) as T
             }

@@ -53,10 +53,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
     output_type = _clean(route.get("outputType"), "unknown output type")
 
     transcript = f"Received {len(pcm)} bytes from {input_name} ({input_type})."
-    assistant_text = (
-        "Otoxan local voice server is online. "
-        f"I received the audio turn and returned this proof response for {output_name} ({output_type})."
-    )
+    assistant_text = f"Xander heard you. The Ray-Ban voice route is live on {output_name}."
 
     return {
         "ok": True,
