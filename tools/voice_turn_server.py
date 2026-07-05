@@ -38,6 +38,25 @@ SUPPORTED_PROVIDER_MODES = {"proof", *XANDER_PROVIDER_ALIASES}
 HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
+XANDER_MOBILE_MAX_WORDS = 25
+XANDER_MOBILE_VOICE_CONTRACT = """You are Xander on Otoxan Mobile.
+
+Identity:
+- You are the Otoxan controller operator speaking through Matt's Ray-Ban Meta route.
+- You are not a generic assistant, chatbot, customer-support voice, or provider demo.
+
+Voice:
+- Direct, architectural, builder-first, evidence-driven.
+- Use first person as Xander.
+- Short enough for glasses audio: one spoken sentence, 25 words max.
+- No filler, no apologies, no 'happy to help', no 'as an AI'.
+- No provider/tool/API talk unless Matt explicitly asks.
+
+Task:
+- Answer Matt's actual transcript.
+- If the transcript is unclear, say what is unclear and what to try next.
+- Prefer concrete operator status over motivational language.
+""".strip()
 HERMES_AGENT_HOME_DEFAULT = "/home/silas/.hermes/hermes-agent"
 HERMES_PYTHON_DEFAULT = "/home/silas/.hermes/hermes-agent/venv/bin/python"
 XANDER_HERMES_HOME_DEFAULT = "/home/silas/.hermes/profiles/xander"
@@ -298,17 +317,7 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
     except ValueError:
         timeout = float(XANDER_PROMPT_TIMEOUT_SECONDS)
 
-    prompt = (
-        "You are Xander speaking through Otoxan Mobile and Matt's Ray-Ban Meta route. "
-        "Answer as the Otoxan controller operator, not as a generic assistant. "
-        "Be direct, grounded, and builder-first. Use first person. "
-        "Keep it to one short spoken sentence under 25 words. "
-        "No filler, no provider/tool/API talk, no implementation details unless Matt asks. "
-        "Answer the actual transcript; if it is unclear, say what is unclear.\n\n"
-        f"Route evidence: input={route.input_name} ({route.input_type}), "
-        f"output={route.output_name} ({route.output_type}), wearableActive={route.wearable_active}.\n"
-        f"Matt said: {transcript}"
-    )
+    prompt = _build_xander_mobile_prompt(transcript, route)
     command = [
         hermes_bin,
         "--profile",
@@ -339,7 +348,44 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
     text = _clean(result.stdout, "").strip()
     if not text:
         raise VoiceTurnError("Hermes/Xander session returned no text", 502)
-    return text
+    return _shape_mobile_spoken_response(text)
+
+
+def _build_xander_mobile_prompt(transcript: str, route: RouteSummary) -> str:
+    return (
+        f"{XANDER_MOBILE_VOICE_CONTRACT}\n\n"
+        "Route evidence:\n"
+        f"- input: {route.input_name} ({route.input_type})\n"
+        f"- output: {route.output_name} ({route.output_type})\n"
+        f"- wearableActive: {route.wearable_active}\n\n"
+        "Matt said:\n"
+        f"{transcript}\n\n"
+        "Return only the spoken sentence."
+    )
+
+
+def _shape_mobile_spoken_response(text: str) -> str:
+    cleaned = _clean(text, "").replace("\r", "\n").strip().strip('"“”')
+    if not cleaned:
+        return cleaned
+    for prefix in ("Sure,", "Certainly,", "Of course,", "As an AI,", "As Xander,"):
+        if cleaned.lower().startswith(prefix.lower()):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+    first_line = next((line.strip(" -\t") for line in cleaned.splitlines() if line.strip()), cleaned)
+    sentence = _first_sentence(first_line)
+    words = sentence.split()
+    if len(words) > XANDER_MOBILE_MAX_WORDS:
+        sentence = " ".join(words[:XANDER_MOBILE_MAX_WORDS]).rstrip(",;:-") + "."
+    return sentence
+
+
+def _first_sentence(text: str) -> str:
+    for marker in (". ", "! ", "? "):
+        index = text.find(marker)
+        if index >= 0:
+            return text[: index + 1].strip()
+    return text.strip()
 
 
 def _proof_turn(pcm: bytes, route: RouteSummary, provider: str) -> AssistantTurn:

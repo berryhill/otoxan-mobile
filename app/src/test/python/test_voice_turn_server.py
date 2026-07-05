@@ -186,11 +186,35 @@ class VoiceTurnServerTest(unittest.TestCase):
         command = run.call_args.args[0]
         prompt = command[command.index("-z") + 1]
         self.assertIn("Otoxan controller operator", prompt)
-        self.assertIn("not as a generic assistant", prompt)
+        self.assertIn("not a generic assistant", prompt)
         self.assertIn("builder-first", prompt)
         self.assertIn("No filler", prompt)
-        self.assertIn("Matt said: Xander, say pineapple if you heard me", prompt)
+        self.assertIn("Matt said", prompt)
+        self.assertIn("Xander, say pineapple if you heard me", prompt)
         self.assertIn("RB Meta 03YS", prompt)
+
+    def test_xander_session_shapes_generic_or_long_output_for_glasses_audio(self):
+        generic = (
+            "Sure, I can help with that. This second sentence should be removed.\n"
+            "Extra detail should not be spoken."
+        )
+        self.assertEqual("I can help with that.", voice_turn_server._shape_mobile_spoken_response(generic))
+
+        long = " ".join(f"word{i}" for i in range(30))
+        shaped = voice_turn_server._shape_mobile_spoken_response(long)
+        self.assertLessEqual(len(shaped.split()), voice_turn_server.XANDER_MOBILE_MAX_WORDS)
+        self.assertTrue(shaped.endswith("."))
+
+    def test_xander_session_returns_shaped_spoken_response(self):
+        os.environ["OTOXAN_HERMES_BIN"] = "/bin/hermes-test"
+        os.environ["OTOXAN_HERMES_CWD"] = "/tmp"
+        route = voice_turn_server.RouteSummary("RB Meta 03YS", "TYPE_BLUETOOTH_SCO", "RB Meta 03YS", "TYPE_BLUETOOTH_SCO", True, "")
+        completed = voice_turn_server.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Certainly, I heard the Ray-Ban route. Extra sentence should be stripped.\n", stderr=""
+        )
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed):
+            text = voice_turn_server._ask_xander_session("test", route)
+        self.assertEqual("I heard the Ray-Ban route.", text)
 
     def test_cloud_provider_mode_is_rejected(self):
         os.environ["OTOXAN_VOICE_PROVIDER"] = "generic-cloud"
