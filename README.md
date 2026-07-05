@@ -83,4 +83,35 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell monkey -p com.otoxan.mobile -c android.intent.category.LAUNCHER 1
 ```
 
-The helper validates the PCM payload, returns visible transcript/assistant text, and returns a short PCM proof tone. It is intentionally not a production backend and does not store raw audio.
+The helper validates the PCM payload, returns visible transcript/assistant text, and returns audio bytes. It does not store raw audio.
+
+Provider modes:
+
+```bash
+# Deterministic proof mode: no external API, returns a short proof response/tone.
+make backend-proof
+
+# Auto mode: uses OpenAI-compatible STT/chat/TTS when OPENAI_API_KEY is set,
+# otherwise falls back to proof mode so the physical route test stays alive.
+make backend
+
+# Strict real-provider mode: fail loudly if OPENAI_API_KEY/provider calls fail.
+OPENAI_API_KEY=... make backend-openai
+```
+
+OpenAI-compatible environment knobs:
+
+```bash
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_STT_MODEL=gpt-4o-mini-transcribe
+OPENAI_CHAT_MODEL=gpt-4o-mini
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
+OPENAI_TTS_VOICE=alloy
+```
+
+In real-provider mode the backend runs:
+
+```text
+Android PCM -> STT -> short Xander chat reply -> TTS audio -> Android/Ray-Ban playback
+```

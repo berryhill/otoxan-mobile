@@ -38,6 +38,7 @@ def main() -> None:
         "ok": data.get("ok"),
         "transcript": data.get("transcript"),
         "assistantText": data.get("assistantText"),
+        "provider": data.get("provider"),
         "tts_bytes": len(base64.b64decode(data.get("ttsPcm16Mono16kBase64", ""))),
     }
     print(json.dumps(summary, indent=2))
