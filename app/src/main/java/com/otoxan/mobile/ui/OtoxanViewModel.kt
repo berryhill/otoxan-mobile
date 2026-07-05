@@ -87,33 +87,42 @@ class OtoxanViewModel(
         _uiState.update { it.copy(sessionState = VoiceSessionState.RecordingTest, lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                val routeEvidence = audioRouter.inspectAndSelectWearable()
-                if (!routeEvidence.wearableActive) {
-                    error("Wearable route dropped before capture: ${routeEvidence.message}")
+                var releaseEvidence = RouteEvidence.default("Communication route release not reached")
+                try {
+                    val routeEvidence = audioRouter.inspectAndSelectWearable()
+                    if (!routeEvidence.wearableActive) {
+                        error("Wearable route dropped before capture: ${routeEvidence.message}")
+                    }
+                    val captureMillis = 5_000L
+                    val pcm = micCapture.recordPcmForMillis(captureMillis)
+                    val expectedBytes = expectedPcmBytes(captureMillis)
+                    val peak = pcm.peakPcm16Amplitude()
+                    val usable = isUsableVoiceCapture(pcm, expectedBytes)
+                    if (!usable) {
+                        error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, peak=$peak, likely silent or truncated")
+                    }
+                    val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
+                    val backendTts = result.ttsPcm16Mono16k
+                    if (backendTts != null && backendTts.isNotEmpty()) {
+                        speechPlayback.playPcm16Mono16k(backendTts)
+                    } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
+                        speechPlayback.speakText(result.assistantText)
+                    }
+                    releaseEvidence = releaseCommunicationRoute("Released communication route after voice turn")
+                    VoiceTurnUiResult(
+                        routeEvidence = routeEvidence,
+                        releaseEvidence = releaseEvidence,
+                        capturedBytes = pcm.size,
+                        expectedCaptureBytes = expectedBytes,
+                        capturePeakAmplitude = peak,
+                        captureUsable = usable,
+                        result = result
+                    )
+                } finally {
+                    if (releaseEvidence.message == "Communication route release not reached") {
+                        releaseCommunicationRoute("Released communication route after interrupted voice turn")
+                    }
                 }
-                val captureMillis = 5_000L
-                val pcm = micCapture.recordPcmForMillis(captureMillis)
-                val expectedBytes = expectedPcmBytes(captureMillis)
-                val peak = pcm.peakPcm16Amplitude()
-                val usable = isUsableVoiceCapture(pcm, expectedBytes)
-                if (!usable) {
-                    error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, peak=$peak, likely silent or truncated")
-                }
-                val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
-                val backendTts = result.ttsPcm16Mono16k
-                if (backendTts != null && backendTts.isNotEmpty()) {
-                    speechPlayback.playPcm16Mono16k(backendTts)
-                } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
-                    speechPlayback.speakText(result.assistantText)
-                }
-                VoiceTurnUiResult(
-                    routeEvidence = routeEvidence,
-                    capturedBytes = pcm.size,
-                    expectedCaptureBytes = expectedBytes,
-                    capturePeakAmplitude = peak,
-                    captureUsable = usable,
-                    result = result
-                )
             }.onSuccess { proof ->
                 val result = proof.result
                 val ttsBytes = result.ttsPcm16Mono16k?.size ?: 0
@@ -123,8 +132,8 @@ class OtoxanViewModel(
                         selectedInputType = proof.routeEvidence.inputType,
                         selectedOutputName = proof.routeEvidence.outputName,
                         selectedOutputType = proof.routeEvidence.outputType,
-                        wearableRouteActive = proof.routeEvidence.wearableActive,
-                        sessionState = VoiceSessionState.Ready,
+                        wearableRouteActive = false,
+                        sessionState = VoiceSessionState.Idle,
                         transcript = result.transcript,
                         assistantResponse = result.assistantText,
                         capturedBytes = proof.capturedBytes,
@@ -146,7 +155,7 @@ class OtoxanViewModel(
                         lastEvidence = if (result.provider == "stub") {
                             "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                         } else {
-                            "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; ${proof.routeEvidence.message}"
+                            "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
                         }
                     )
                 }
@@ -164,6 +173,7 @@ class OtoxanViewModel(
 
     private data class VoiceTurnUiResult(
         val routeEvidence: com.otoxan.mobile.voice.RouteEvidence,
+        val releaseEvidence: com.otoxan.mobile.voice.RouteEvidence,
         val capturedBytes: Int,
         val expectedCaptureBytes: Int,
         val capturePeakAmplitude: Int,
@@ -175,20 +185,28 @@ class OtoxanViewModel(
         _uiState.update { it.copy(sessionState = VoiceSessionState.PlayingTest, lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                val evidence = audioRouter.inspectAndSelectWearable()
-                speechPlayback.playProofTone()
-                evidence
+                var releaseEvidence = RouteEvidence.default("Communication route release not reached")
+                try {
+                    val evidence = audioRouter.inspectAndSelectWearable()
+                    speechPlayback.playProofTone()
+                    releaseEvidence = releaseCommunicationRoute("Released communication route after proof tone")
+                    Pair(evidence, releaseEvidence)
+                } finally {
+                    if (releaseEvidence.message == "Communication route release not reached") {
+                        releaseCommunicationRoute("Released communication route after interrupted proof tone")
+                    }
+                }
             }
-                .onSuccess { evidence ->
+                .onSuccess { (evidence, releaseEvidence) ->
                     _uiState.update {
                         it.copy(
                             selectedInputName = evidence.inputName,
                             selectedInputType = evidence.inputType,
                             selectedOutputName = evidence.outputName,
                             selectedOutputType = evidence.outputType,
-                            wearableRouteActive = evidence.wearableActive,
-                            sessionState = if (evidence.wearableActive) VoiceSessionState.Ready else VoiceSessionState.Idle,
-                            lastEvidence = "Played audible 660 Hz proof tone; ${evidence.message}"
+                            wearableRouteActive = false,
+                            sessionState = VoiceSessionState.Idle,
+                            lastEvidence = "Played audible 660 Hz proof tone; routeUsed=[${evidence.message}]; release=[${releaseEvidence.message}]"
                         )
                     }
                 }
@@ -206,7 +224,7 @@ class OtoxanViewModel(
     fun clearRoute() {
         _uiState.update { it.copy(sessionState = VoiceSessionState.CheckingRoute, lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
-            val evidence = runCatching { audioRouter.clearRoute() }
+            val evidence = runCatching { releaseCommunicationRoute("Manual clear voice route") }
                 .getOrElse { error -> RouteEvidence.default("Communication route release failed: ${error.message ?: error::class.java.simpleName}") }
             _uiState.update {
                 it.copy(
@@ -221,6 +239,15 @@ class OtoxanViewModel(
                 )
             }
         }
+    }
+
+    private fun releaseCommunicationRoute(reason: String): RouteEvidence {
+        val first = audioRouter.clearRoute()
+        Thread.sleep(350L)
+        val second = audioRouter.clearRoute()
+        return RouteEvidence.default(
+            "$reason; first=[${first.message}]; second=[${second.message}]"
+        )
     }
 
     override fun onCleared() {
