@@ -20,6 +20,8 @@ data class VoiceTurnResult(
     val transcriptSource: String? = null,
     val sttStatus: String? = null,
     val sttLatencyMs: Int? = null,
+    val pass1Status: String? = null,
+    val pass1Ready: Boolean? = null,
     val audioFormat: String? = null,
     val audioDurationMs: Int? = null,
     val audioPeak: Int? = null,
@@ -71,6 +73,8 @@ class HttpXanderVoiceClient(
                 transcriptSource = responseBody.optionalJsonString("transcriptSource"),
                 sttStatus = responseBody.optionalJsonString("sttStatus"),
                 sttLatencyMs = responseBody.optionalJsonInt("sttLatencyMs"),
+                pass1Status = responseBody.optionalJsonString("pass1Status"),
+                pass1Ready = responseBody.optionalJsonBoolean("pass1Ready"),
                 audioFormat = responseBody.optionalJsonString("audioFormat"),
                 audioDurationMs = responseBody.optionalJsonInt("durationMs"),
                 audioPeak = responseBody.optionalJsonInt("peak"),
@@ -113,7 +117,9 @@ class StubXanderVoiceClient : XanderVoiceClient {
             assistantText = "No Xander endpoint configured. Rebuild with XANDER_VOICE_ENDPOINT to enable the backend turn.",
             provider = "stub",
             transcriptSource = "stub",
-            sttStatus = "not-run"
+            sttStatus = "not-run",
+            pass1Status = "stub-not-real-speech",
+            pass1Ready = false
         )
     }
 }
@@ -144,6 +150,11 @@ private fun String.optionalJsonInt(fieldName: String): Int? {
 private fun String.optionalJsonDouble(fieldName: String): Double? {
     val regex = Regex("\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)")
     return regex.find(this)?.groupValues?.get(1)?.toDoubleOrNull()
+}
+
+private fun String.optionalJsonBoolean(fieldName: String): Boolean? {
+    val regex = Regex("\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*(true|false)")
+    return regex.find(this)?.groupValues?.get(1)?.toBooleanStrictOrNull()
 }
 
 private fun decodeTtsPcm(encoded: String): ByteArray {

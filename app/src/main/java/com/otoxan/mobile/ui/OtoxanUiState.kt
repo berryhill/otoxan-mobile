@@ -18,6 +18,8 @@ data class OtoxanUiState(
     val transcriptSource: String? = null,
     val sttStatus: String? = null,
     val sttLatencyMs: Int? = null,
+    val pass1Status: String? = null,
+    val pass1Ready: Boolean? = null,
     val audioFormat: String? = null,
     val backendAudioDurationMs: Int? = null,
     val backendAudioPeak: Int? = null,

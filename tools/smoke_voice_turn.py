@@ -52,6 +52,8 @@ def main() -> None:
         "transcriptSource": data.get("transcriptSource"),
         "sttStatus": data.get("sttStatus"),
         "sttLatencyMs": data.get("sttLatencyMs"),
+        "pass1Status": data.get("pass1Status"),
+        "pass1Ready": data.get("pass1Ready"),
         "transcript": data.get("transcript"),
         "assistantText": data.get("assistantText"),
         "tts_bytes": len(tts_bytes),

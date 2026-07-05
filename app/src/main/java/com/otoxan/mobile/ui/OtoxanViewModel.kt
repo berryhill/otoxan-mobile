@@ -133,6 +133,8 @@ class OtoxanViewModel(
                         transcriptSource = result.transcriptSource,
                         sttStatus = result.sttStatus,
                         sttLatencyMs = result.sttLatencyMs,
+                        pass1Status = result.pass1Status,
+                        pass1Ready = result.pass1Ready,
                         audioFormat = result.audioFormat,
                         backendAudioDurationMs = result.audioDurationMs,
                         backendAudioPeak = result.audioPeak,
@@ -143,7 +145,7 @@ class OtoxanViewModel(
                         lastEvidence = if (result.provider == "stub") {
                             "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                         } else {
-                            "Voice loop ok: captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; ${proof.routeEvidence.message}"
+                            "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; ${proof.routeEvidence.message}"
                         }
                     )
                 }

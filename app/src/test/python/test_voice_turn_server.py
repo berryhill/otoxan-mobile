@@ -60,6 +60,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("proof", result["transcriptSource"])
         self.assertEqual("not-run", result["sttStatus"])
         self.assertIsNone(result["sttLatencyMs"])
+        self.assertEqual("proof-mode-not-real-speech", result["pass1Status"])
+        self.assertFalse(result["pass1Ready"])
         self.assertEqual(320, result["bytesReceived"])
         self.assertEqual(320, result["audioStats"]["bytes"])
         self.assertEqual(10, result["audioStats"]["durationMs"])
@@ -77,6 +79,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("xander-session", result["provider"])
         self.assertEqual("debug", result["transcriptSource"])
         self.assertEqual("not-run", result["sttStatus"])
+        self.assertEqual("debug-transcript-not-real-speech", result["pass1Status"])
+        self.assertFalse(result["pass1Ready"])
         self.assertEqual("Matt says hello Xander", result["transcript"])
         self.assertEqual("I am live through the phone.", result["assistantText"])
         self.assertEqual(b"", base64.b64decode(result["ttsPcm16Mono16kBase64"]))
@@ -93,6 +97,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("xander-session", result["provider"])
         self.assertEqual("debug", result["transcriptSource"])
         self.assertEqual("not-run", result["sttStatus"])
+        self.assertEqual("debug-transcript-not-real-speech", result["pass1Status"])
+        self.assertFalse(result["pass1Ready"])
         self.assertEqual("Hello Matt, I hear you now.", result["assistantText"])
 
     def test_xander_transcript_uses_hermes_stt_lane_before_evidence_fallback(self):
@@ -131,6 +137,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("route-evidence-fallback", result["transcriptSource"])
         self.assertEqual("empty", result["sttStatus"])
         self.assertEqual(31, result["sttLatencyMs"])
+        self.assertEqual("stt-empty", result["pass1Status"])
+        self.assertFalse(result["pass1Ready"])
         self.assertIn("I got audio from Ray-Ban Meta", result["assistantText"])
         self.assertIn("couldn't decode words", result["assistantText"])
         self.assertIn("Hermes STT lane did not return", result["transcript"])
@@ -146,6 +154,22 @@ class VoiceTurnServerTest(unittest.TestCase):
         message = str(raised.exception)
         self.assertIn("Xander session provider failed", message)
         self.assertNotIn("provider key", message.lower())
+
+    def test_xander_turn_marks_pass1_ready_when_hermes_stt_succeeds(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
+        payload = self._payload()
+        stt = voice_turn_server.SttResult("say pineapple if you heard me", "success", 44)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
+            with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="Pineapple. I heard you clearly."):
+                result = voice_turn_server.handle_voice_turn(payload)
+
+        self.assertEqual("hermes-stt", result["transcriptSource"])
+        self.assertEqual("success", result["sttStatus"])
+        self.assertEqual(44, result["sttLatencyMs"])
+        self.assertEqual("real-speech-proven", result["pass1Status"])
+        self.assertTrue(result["pass1Ready"])
+        self.assertIn("pineapple", result["assistantText"].lower())
 
     def test_cloud_provider_mode_is_rejected(self):
         os.environ["OTOXAN_VOICE_PROVIDER"] = "generic-cloud"

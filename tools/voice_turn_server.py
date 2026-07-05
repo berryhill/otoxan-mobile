@@ -110,6 +110,8 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "transcriptSource": turn.transcript_source,
         "sttStatus": turn.stt_status,
         "sttLatencyMs": turn.stt_latency_ms,
+        "pass1Status": _pass1_status(turn, stats),
+        "pass1Ready": _pass1_ready(turn),
         "routeEvidence": {
             "inputName": route.input_name,
             "inputType": route.input_type,
@@ -119,6 +121,24 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
             "message": route.message,
         },
     }
+
+
+def _pass1_ready(turn: AssistantTurn) -> bool:
+    return turn.provider == XANDER_PROVIDER and turn.transcript_source == "hermes-stt" and turn.stt_status == "success"
+
+
+def _pass1_status(turn: AssistantTurn, stats: Mapping[str, Any]) -> str:
+    if _pass1_ready(turn):
+        return "real-speech-proven"
+    if turn.provider == "proof":
+        return "proof-mode-not-real-speech"
+    if stats.get("peak", 0) < 128:
+        return "capture-too-quiet"
+    if turn.transcript_source == "route-evidence-fallback":
+        return f"stt-{turn.stt_status or 'not-proven'}"
+    if turn.transcript_source == "debug":
+        return "debug-transcript-not-real-speech"
+    return "not-proven"
 
 
 def _run_assistant_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
@@ -422,6 +442,7 @@ class Handler(BaseHTTPRequestHandler):
                 f"sttStatus={response.get('sttStatus')} "
                 f"sttLatencyMs={response.get('sttLatencyMs')} "
                 f"transcriptSource={response.get('transcriptSource')} "
+                f"pass1Status={response.get('pass1Status')} "
                 f"input={response.get('routeEvidence', {}).get('inputName')} "
                 f"type={response.get('routeEvidence', {}).get('inputType')}",
                 flush=True,

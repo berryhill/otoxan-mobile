@@ -107,6 +107,7 @@ private fun VoiceLoopEvidenceCard(state: OtoxanUiState) {
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Voice loop proof", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Pass 1: ${if (state.pass1Ready == true) "REAL SPEECH PROVEN" else state.pass1Status ?: "not proven yet"}")
             Text("Provider: ${state.provider ?: "not contacted"}")
             Text("Transcript source: ${state.transcriptSource ?: "unknown"}")
             Text("Hermes STT: ${state.sttStatus ?: "unknown"}${state.sttLatencyMs?.let { " in ${it}ms" } ?: ""}")
