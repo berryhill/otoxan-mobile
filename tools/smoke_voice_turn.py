@@ -17,6 +17,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("url", help="voice-turn endpoint URL")
     parser.add_argument("--expect-provider", default="", help="optional exact provider value to require")
+    parser.add_argument("--timeout", type=float, default=60.0, help="HTTP timeout seconds")
     args = parser.parse_args()
 
     payload = {
@@ -37,7 +38,7 @@ def main() -> None:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=args.timeout) as resp:
         data = json.loads(resp.read())
 
     tts_bytes = base64.b64decode(data.get("ttsPcm16Mono16kBase64", ""), validate=True)
@@ -66,8 +67,8 @@ def main() -> None:
         failures.append("transcript missing")
     if not str(data.get("assistantText", "")).strip():
         failures.append("assistantText missing")
-    if not tts_bytes:
-        failures.append("ttsPcm16Mono16kBase64 decoded to empty bytes")
+    if data.get("provider") == "proof" and not tts_bytes:
+        failures.append("proof mode ttsPcm16Mono16kBase64 decoded to empty bytes")
 
     if failures:
         for failure in failures:

@@ -3,6 +3,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+from unittest import mock
 import unittest
 
 
@@ -16,19 +17,23 @@ spec.loader.exec_module(voice_turn_server)
 
 class VoiceTurnServerTest(unittest.TestCase):
     def setUp(self):
-        self._old_provider = os.environ.get("OTOXAN_VOICE_PROVIDER")
-        self._old_key = os.environ.get("OPENAI_API_KEY")
+        self._old_env = {
+            key: os.environ.get(key)
+            for key in (
+                "OTOXAN_VOICE_PROVIDER",
+                "OTOXAN_DEBUG_TRANSCRIPT",
+                "OTOXAN_HERMES_BIN",
+                "OTOXAN_XANDER_TIMEOUT_SECONDS",
+            )
+        }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
 
     def tearDown(self):
-        if self._old_provider is None:
-            os.environ.pop("OTOXAN_VOICE_PROVIDER", None)
-        else:
-            os.environ["OTOXAN_VOICE_PROVIDER"] = self._old_provider
-        if self._old_key is None:
-            os.environ.pop("OPENAI_API_KEY", None)
-        else:
-            os.environ["OPENAI_API_KEY"] = self._old_key
+        for key, value in self._old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     def _payload(self):
         return {
@@ -55,13 +60,47 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(320, result["bytesReceived"])
         self.assertGreater(len(base64.b64decode(result["ttsPcm16Mono16kBase64"])), 1000)
 
-    def test_handle_voice_turn_requires_key_when_openai_forced(self):
-        os.environ.pop("OPENAI_API_KEY", None)
-        os.environ["OTOXAN_VOICE_PROVIDER"] = "openai"
+    def test_default_provider_calls_xander_session_not_proof(self):
+        os.environ.pop("OTOXAN_VOICE_PROVIDER", None)
+        with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="I am live through the phone."):
+            result = voice_turn_server.handle_voice_turn(self._payload())
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("xander-session", result["provider"])
+        self.assertIn("PCM reached the Xander session adapter", result["transcript"])
+        self.assertEqual("I am live through the phone.", result["assistantText"])
+        self.assertEqual(b"", base64.b64decode(result["ttsPcm16Mono16kBase64"]))
+        self.assertEqual(320, result["bytesReceived"])
+
+    def test_xander_provider_can_use_debug_transcript(self):
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
+        os.environ["OTOXAN_DEBUG_TRANSCRIPT"] = "Matt says hello Xander"
+        with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="Hello Matt, I hear you now.") as ask:
+            result = voice_turn_server.handle_voice_turn(self._payload())
+
+        ask.assert_called_once()
+        self.assertEqual("Matt says hello Xander", ask.call_args.args[0])
+        self.assertEqual("xander-session", result["provider"])
+        self.assertEqual("Hello Matt, I hear you now.", result["assistantText"])
+
+    def test_xander_provider_failure_is_session_framed(self):
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
+        with mock.patch.object(voice_turn_server, "_ask_xander_session", side_effect=RuntimeError("boom")):
+            with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
+                voice_turn_server.handle_voice_turn(self._payload())
+
+        self.assertEqual(502, raised.exception.status)
+        message = str(raised.exception)
+        self.assertIn("Xander session provider failed", message)
+        self.assertNotIn("provider key", message.lower())
+
+    def test_cloud_provider_mode_is_rejected(self):
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "generic-cloud"
         with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
             voice_turn_server.handle_voice_turn(self._payload())
         self.assertEqual(500, raised.exception.status)
-        self.assertIn("OPENAI_API_KEY", str(raised.exception))
+        self.assertIn("xander-session", str(raised.exception))
+        self.assertNotIn("provider key", str(raised.exception).lower())
 
     def test_handle_voice_turn_rejects_bad_audio(self):
         payload = self._payload()
@@ -85,14 +124,6 @@ class VoiceTurnServerTest(unittest.TestCase):
                     voice_turn_server.handle_voice_turn(payload)
                 self.assertEqual(400, raised.exception.status)
                 self.assertIn("routeEvidence", str(raised.exception))
-
-    def test_handle_voice_turn_auto_without_key_uses_proof_provider(self):
-        os.environ.pop("OPENAI_API_KEY", None)
-        os.environ["OTOXAN_VOICE_PROVIDER"] = "auto"
-        response = voice_turn_server.handle_voice_turn(self._payload())
-        self.assertTrue(response["ok"])
-        self.assertEqual("proof", response["provider"])
-        self.assertEqual(320, response["bytesReceived"])
 
 
 if __name__ == "__main__":

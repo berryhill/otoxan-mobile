@@ -92,35 +92,35 @@ make reinstall ADB="sudo /home/berry/sdk/platform-tools/adb"
 make launch ADB="sudo /home/berry/sdk/platform-tools/adb"
 ```
 
-The helper validates the PCM payload and route evidence, returns visible transcript/assistant text, returns `provider`, `bytesReceived`, `audioFormat`, and returns PCM audio bytes. The app shows captured/backend/TTS counters so a physical test can identify which segment failed. It does not store raw audio.
+The helper validates the PCM payload and route evidence, returns visible transcript/assistant text, returns `provider`, `bytesReceived`, `audioFormat`, and may return PCM audio bytes. The app shows captured/backend/TTS counters so a physical test can identify which segment failed. It does not store raw audio.
 
 Provider modes:
 
 ```bash
-# Deterministic proof mode: no external API, returns a short proof response/tone.
-make backend-proof
-
-# Auto mode: uses OpenAI-compatible STT/chat/TTS when OPENAI_API_KEY is set,
-# otherwise falls back to proof mode so the physical route test stays alive.
+# Xander/Hermes session mode: default next-phase backend.
+# Returns provider=xander-session and assistantText spoken by Android TTS.
 make backend
+# or explicitly:
+make backend-xander
 
-# Strict real-provider mode: fail loudly if OPENAI_API_KEY/provider calls fail.
-OPENAI_API_KEY=... make backend-openai
+# Deterministic proof mode: no Hermes call, returns a short proof response/tone.
+make backend-proof
 ```
 
-OpenAI-compatible environment knobs:
+Xander/Hermes environment knobs:
 
 ```bash
-OPENAI_API_KEY=...
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_STT_MODEL=gpt-4o-mini-transcribe
-OPENAI_CHAT_MODEL=gpt-4o-mini
-OPENAI_TTS_MODEL=gpt-4o-mini-tts
-OPENAI_TTS_VOICE=alloy
+OTOXAN_VOICE_PROVIDER=xander-session
+OTOXAN_DEBUG_TRANSCRIPT="optional debug transcript until STT is wired"
+OTOXAN_HERMES_BIN=/home/silas/.local/bin/hermes
+OTOXAN_XANDER_PROFILE=xander
+OTOXAN_XANDER_TIMEOUT_SECONDS=25
 ```
 
-In real-provider mode the backend runs:
+In Xander session mode the backend runs:
 
 ```text
-Android PCM -> STT -> short Xander chat reply -> TTS audio -> Android/Ray-Ban playback
+Android PCM -> repo-local /voice-turn adapter -> Hermes profile xander -> assistantText -> Android/Ray-Ban TextToSpeech playback
 ```
+
+Current scope: this starts the live Xander session turn and speaks the text response. STT is still a separate follow-up; until then the helper uses route/byte evidence or `OTOXAN_DEBUG_TRANSCRIPT` for the text passed into Xander.

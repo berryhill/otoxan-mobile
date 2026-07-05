@@ -4,7 +4,7 @@
 This is the fast-but-real backend seam for the Android/Ray-Ban voice loop:
 
 1. validate Android PCM payload
-2. if OPENAI_API_KEY is configured: transcribe -> ask model -> synthesize speech
+2. in xander-session mode: start a short Hermes/Xander turn and return text
 3. otherwise: return the deterministic local proof response/tone
 
 The server does not persist raw audio. It stays repo-local and intentionally small
@@ -16,23 +16,24 @@ from __future__ import annotations
 
 import argparse
 import base64
-import io
 import json
 import math
 import os
+import shutil
 import subprocess
-import tempfile
-import wave
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
-from urllib import error as urlerror
-from urllib import request as urlrequest
 
 SUPPORTED_FORMAT = "pcm_s16le_16khz_mono"
 MAX_PCM_BYTES = 512_000
 SAMPLE_RATE = 16_000
-OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+XANDER_PROVIDER = "xander-session"
+XANDER_PROVIDER_ALIASES = {"xander", "xander-session", "hermes", "hermes-session"}
+SUPPORTED_PROVIDER_MODES = {"proof", *XANDER_PROVIDER_ALIASES}
+HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
+XANDER_PROFILE_DEFAULT = "xander"
+XANDER_PROMPT_TIMEOUT_SECONDS = 25
 
 
 class VoiceTurnError(Exception):
@@ -91,114 +92,90 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _run_assistant_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
-    mode = os.environ.get("OTOXAN_VOICE_PROVIDER", "auto").strip().lower()
-    if mode not in {"auto", "openai", "proof"}:
-        raise VoiceTurnError("OTOXAN_VOICE_PROVIDER must be auto, openai, or proof", 500)
+    mode = os.environ.get("OTOXAN_VOICE_PROVIDER", XANDER_PROVIDER).strip().lower()
+    if mode not in SUPPORTED_PROVIDER_MODES:
+        accepted = ", ".join(sorted(SUPPORTED_PROVIDER_MODES))
+        raise VoiceTurnError(f"OTOXAN_VOICE_PROVIDER must be one of: {accepted}", 500)
 
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if mode == "proof" or (mode == "auto" and not api_key):
+    if mode == "proof":
         return _proof_turn(pcm, route, provider="proof")
-    if mode == "openai" and not api_key:
-        raise VoiceTurnError("OPENAI_API_KEY is required when OTOXAN_VOICE_PROVIDER=openai", 500)
 
     try:
-        return _openai_turn(pcm, route, api_key)
-    except Exception as exc:  # noqa: BLE001 - keep the phone loop alive during provider faults.
-        if mode == "openai":
-            raise VoiceTurnError(f"OpenAI voice provider failed: {exc}", 502) from exc
-        fallback = _proof_turn(pcm, route, provider="proof-after-openai-failure")
-        return AssistantTurn(
-            transcript=fallback.transcript,
-            assistant_text=f"Provider fallback active. {fallback.assistant_text}",
-            tts_pcm=fallback.tts_pcm,
-            provider=fallback.provider,
-        )
+        return _xander_session_turn(pcm, route)
+    except Exception as exc:  # noqa: BLE001 - strict mode should fail loudly.
+        raise VoiceTurnError(f"Xander session provider failed: {exc}", 502) from exc
 
 
-def _openai_turn(pcm: bytes, route: RouteSummary, api_key: str) -> AssistantTurn:
-    transcript = _openai_transcribe(pcm, api_key)
-    assistant_text = _openai_chat(transcript, route, api_key)
-    tts_pcm = _openai_tts_pcm(assistant_text, api_key)
+def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
+    transcript = _xander_transcript(pcm, route)
+    assistant_text = _ask_xander_session(transcript, route)
     return AssistantTurn(
         transcript=transcript,
         assistant_text=assistant_text,
-        tts_pcm=tts_pcm,
-        provider="openai",
+        tts_pcm=b"",
+        provider=XANDER_PROVIDER,
     )
 
 
-def _openai_transcribe(pcm: bytes, api_key: str) -> str:
-    model = os.environ.get("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
-    wav_bytes = _pcm16_to_wav_bytes(pcm)
-    body, content_type = _multipart_form_data(
-        fields={"model": model, "response_format": "json"},
-        files={"file": ("otoxan-turn.wav", "audio/wav", wav_bytes)},
+def _xander_transcript(pcm: bytes, route: RouteSummary) -> str:
+    debug_transcript = os.environ.get("OTOXAN_DEBUG_TRANSCRIPT", "").strip()
+    if debug_transcript:
+        return _clean(debug_transcript, "Voice turn received.")
+    return (
+        f"Voice audio received from {route.input_name} ({route.input_type}); "
+        f"{len(pcm)} bytes of PCM reached the Xander session adapter. "
+        "Speech-to-text is not wired in this local helper yet."
     )
-    data = _http_request_json(
-        "POST",
-        f"{_openai_base_url()}/audio/transcriptions",
-        api_key,
-        body,
-        content_type,
-        timeout=60,
-    )
-    text = _clean(data.get("text"), "").strip()
-    return text or "I heard audio but transcription returned no text."
 
 
-def _openai_chat(transcript: str, route: RouteSummary, api_key: str) -> str:
-    model = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are Xander, an Otoxan controller operator speaking through "
-                    "Ray-Ban Meta glasses. Reply in one short spoken sentence. "
-                    "Be direct, useful, and under 25 words."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Route: input={route.input_name} ({route.input_type}), "
-                    f"output={route.output_name} ({route.output_type}). "
-                    f"User said: {transcript}"
-                ),
-            },
-        ],
-        "temperature": 0.4,
-        "max_tokens": 80,
-    }
-    data = _http_request_json(
-        "POST",
-        f"{_openai_base_url()}/chat/completions",
-        api_key,
-        json.dumps(payload).encode("utf-8"),
-        "application/json",
-        timeout=60,
-    )
+def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
+    hermes_bin = os.environ.get("OTOXAN_HERMES_BIN", "").strip() or shutil.which("hermes") or HERMES_BIN_DEFAULT
+    profile = os.environ.get("OTOXAN_XANDER_PROFILE", XANDER_PROFILE_DEFAULT).strip() or XANDER_PROFILE_DEFAULT
+    timeout_raw = os.environ.get("OTOXAN_XANDER_TIMEOUT_SECONDS", str(XANDER_PROMPT_TIMEOUT_SECONDS)).strip()
     try:
-        text = data["choices"][0]["message"]["content"]
-    except Exception as exc:  # noqa: BLE001
-        raise VoiceTurnError("OpenAI chat response missing assistant text", 502) from exc
-    return _clean(text, "Xander heard you.").strip() or "Xander heard you."
+        timeout = max(5.0, min(float(timeout_raw), 60.0))
+    except ValueError:
+        timeout = float(XANDER_PROMPT_TIMEOUT_SECONDS)
 
-
-def _openai_tts_pcm(text: str, api_key: str) -> bytes:
-    model = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
-    voice = os.environ.get("OPENAI_TTS_VOICE", "alloy")
-    payload = {"model": model, "voice": voice, "input": text, "response_format": "mp3"}
-    mp3 = _http_request_bytes(
-        "POST",
-        f"{_openai_base_url()}/audio/speech",
-        api_key,
-        json.dumps(payload).encode("utf-8"),
-        "application/json",
-        timeout=90,
+    prompt = (
+        "You are Xander, the Otoxan controller operator, speaking through Matt's phone "
+        "and Ray-Ban Meta audio route. Reply as yourself in one short spoken sentence, "
+        "under 25 words. Do not mention provider keys, tools, or implementation details.\n\n"
+        f"Route evidence: input={route.input_name} ({route.input_type}), "
+        f"output={route.output_name} ({route.output_type}), wearableActive={route.wearable_active}.\n"
+        f"Mobile voice turn transcript/evidence: {transcript}"
     )
-    return _ffmpeg_audio_to_pcm16(mp3, suffix=".mp3")
+    command = [
+        hermes_bin,
+        "--profile",
+        profile,
+        "-z",
+        prompt,
+        "--ignore-rules",
+        "--toolsets",
+        "vision",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=os.environ.get("OTOXAN_HERMES_CWD", "/home/silas/.hermes"),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise VoiceTurnError(f"Hermes executable not found: {hermes_bin}", 502) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise VoiceTurnError(f"Hermes/Xander session timed out after {timeout:.0f}s", 504) from exc
+
+    if result.returncode != 0:
+        raise VoiceTurnError(f"Hermes/Xander session exited with status {result.returncode}", 502)
+    text = _clean(result.stdout, "").strip()
+    if not text:
+        raise VoiceTurnError("Hermes/Xander session returned no text", 502)
+    return text
 
 
 def _proof_turn(pcm: bytes, route: RouteSummary, provider: str) -> AssistantTurn:
@@ -210,89 +187,6 @@ def _proof_turn(pcm: bytes, route: RouteSummary, provider: str) -> AssistantTurn
         tts_pcm=_proof_tone_pcm(),
         provider=provider,
     )
-
-
-def _http_request_json(method: str, url: str, api_key: str, body: bytes, content_type: str, timeout: int) -> Any:
-    raw = _http_request_bytes(method, url, api_key, body, content_type, timeout)
-    return json.loads(raw.decode("utf-8"))
-
-
-def _http_request_bytes(method: str, url: str, api_key: str, body: bytes, content_type: str, timeout: int) -> bytes:
-    req = urlrequest.Request(
-        url,
-        data=body,
-        method=method,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": content_type,
-        },
-    )
-    try:
-        with urlrequest.urlopen(req, timeout=timeout) as response:
-            return response.read()
-    except urlerror.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:600]
-        raise VoiceTurnError(f"provider HTTP {exc.code}: {detail}", 502) from exc
-
-
-def _openai_base_url() -> str:
-    return os.environ.get("OPENAI_BASE_URL", OPENAI_DEFAULT_BASE_URL).rstrip("/")
-
-
-def _multipart_form_data(fields: Mapping[str, str], files: Mapping[str, tuple[str, str, bytes]]) -> tuple[bytes, str]:
-    boundary = "----otoxan-mobile-boundary"
-    body = bytearray()
-    for name, value in fields.items():
-        body.extend(f"--{boundary}\r\n".encode())
-        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
-        body.extend(str(value).encode())
-        body.extend(b"\r\n")
-    for name, (filename, mime, content) in files.items():
-        body.extend(f"--{boundary}\r\n".encode())
-        body.extend(
-            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode()
-        )
-        body.extend(f"Content-Type: {mime}\r\n\r\n".encode())
-        body.extend(content)
-        body.extend(b"\r\n")
-    body.extend(f"--{boundary}--\r\n".encode())
-    return bytes(body), f"multipart/form-data; boundary={boundary}"
-
-
-def _pcm16_to_wav_bytes(pcm: bytes) -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(SAMPLE_RATE)
-        wav.writeframes(pcm)
-    return buf.getvalue()
-
-
-def _ffmpeg_audio_to_pcm16(audio: bytes, suffix: str) -> bytes:
-    with tempfile.NamedTemporaryFile(suffix=suffix) as src, tempfile.NamedTemporaryFile(suffix=".pcm") as dst:
-        src.write(audio)
-        src.flush()
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            src.name,
-            "-f",
-            "s16le",
-            "-acodec",
-            "pcm_s16le",
-            "-ac",
-            "1",
-            "-ar",
-            str(SAMPLE_RATE),
-            dst.name,
-        ]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return dst.read()
 
 
 def _parse_route(value: Any) -> RouteSummary:

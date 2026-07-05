@@ -60,10 +60,10 @@ Response:
 ```json
 {
   "ok": true,
-  "provider": "proof",
-  "transcript": "Received 320 bytes from Ray-Ban Meta (TYPE_BLE_HEADSET).",
-  "assistantText": "Xander heard you. The Ray-Ban voice route is live on Ray-Ban Meta.",
-  "ttsPcm16Mono16kBase64": "...",
+  "provider": "xander-session",
+  "transcript": "Voice audio received from Ray-Ban Meta (TYPE_BLE_HEADSET); 320 bytes of PCM reached the Xander session adapter.",
+  "assistantText": "Xander here; Ray-Ban route is active, and I’m hearing you through Otoxan Mobile.",
+  "ttsPcm16Mono16kBase64": "",
   "audioFormat": "pcm_s16le_16khz_mono",
   "bytesReceived": 320
 }

@@ -79,7 +79,7 @@ class HttpXanderVoiceClientTest {
                 .setBody(
                     """
                     {
-                      "provider": "openai",
+                      "provider": "xander-session",
                       "transcript": "I\u2019m here",
                       "assistantText": "Route \u2713",
                       "bytesReceived": 2
@@ -99,7 +99,7 @@ class HttpXanderVoiceClientTest {
             client.sendVoiceTurn(byteArrayOf(1, 2), RouteEvidence.default("unicode route"))
         }
 
-        assertEquals("openai", result.provider)
+        assertEquals("xander-session", result.provider)
         assertEquals("I’m here", result.transcript)
         assertEquals("Route ✓", result.assistantText)
     }

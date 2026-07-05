@@ -274,7 +274,7 @@ Request should include:
 Response should include:
 
 - `ok`;
-- `provider` (`proof`, `openai`, or fallback mode);
+- `provider` (`xander-session` for the live Hermes/Xander adapter, or `proof` for deterministic route testing);
 - transcript;
 - short assistant text response;
 - `ttsPcm16Mono16kBase64` PCM response audio;

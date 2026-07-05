@@ -9,15 +9,15 @@ GRADLE ?= ./gradlew
 PYTHON ?= python3
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 
-.PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-proof backend-openai smoke-backend test-backend test test-all endpoint doctor
+.PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-xander backend-proof smoke-backend test-backend test test-all endpoint doctor
 
 help:
 	@printf '%s\n' \
 	  'Otoxan Mobile make targets:' \
 	  '' \
-	  '  make backend                  Run local backend on 0.0.0.0:8787 (auto provider)' \
+	  '  make backend                  Run Xander/Hermes session backend on 0.0.0.0:8787' \
+	  '  make backend-xander           Explicitly require Xander/Hermes session provider' \
 	  '  make backend-proof            Run deterministic proof backend only' \
-	  '  make backend-openai           Require OpenAI-compatible STT/chat/TTS provider' \
 	  '  make smoke-backend            POST a fake Ray-Ban turn to VOICE_ENDPOINT' \
 	  '  make build                    Build debug APK with VOICE_ENDPOINT baked in' \
 	  '  make adb-start                Start adb daemon with configured ADB command' \
@@ -40,13 +40,13 @@ endpoint:
 	@echo 'ADB=$(ADB)'
 
 backend:
-	$(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
+	OTOXAN_VOICE_PROVIDER=xander-session $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
+
+backend-xander:
+	OTOXAN_VOICE_PROVIDER=xander-session $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
 
 backend-proof:
 	OTOXAN_VOICE_PROVIDER=proof $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
-
-backend-openai:
-	OTOXAN_VOICE_PROVIDER=openai $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
 
 smoke-backend:
 	$(PYTHON) tools/smoke_voice_turn.py "$(VOICE_ENDPOINT)" --expect-provider "$${OTOXAN_EXPECT_PROVIDER:-}"
