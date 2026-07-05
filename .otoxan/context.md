@@ -28,6 +28,19 @@ Audio-first assistant loop:
 
 Android/Kotlin first. Keep iOS as a later parallel target after the interaction loop is proven.
 
+## Android implementation doctrine
+
+Use the minimal Android patterns in `docs/android-minimal-patterns.md`.
+
+- Native Android/Kotlin first.
+- Jetpack Compose and one `MainActivity` initially.
+- Single `:app` module until complexity proves otherwise.
+- First screen is route-check + push-to-talk + transcript/response.
+- Use Android Bluetooth communication routing for the first audio loop.
+- No DAT/camera permissions until the audio loop is proven.
+- No wake word or always-on/background recording in MVP 0/1.
+- Keep the client thin; backend handles assistant intelligence.
+
 ## Safety and privacy defaults
 
 - explicit user session only;
