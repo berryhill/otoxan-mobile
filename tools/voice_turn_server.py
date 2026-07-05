@@ -21,7 +21,11 @@ import math
 import os
 import shutil
 import subprocess
+import sys
+import tempfile
+import wave
 from dataclasses import dataclass
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
 
@@ -34,6 +38,8 @@ SUPPORTED_PROVIDER_MODES = {"proof", *XANDER_PROVIDER_ALIASES}
 HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
+HERMES_AGENT_HOME_DEFAULT = "/home/silas/.hermes/hermes-agent"
+XANDER_HERMES_HOME_DEFAULT = "/home/silas/.hermes/profiles/xander"
 
 
 class VoiceTurnError(Exception):
@@ -121,11 +127,62 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> str:
     debug_transcript = os.environ.get("OTOXAN_DEBUG_TRANSCRIPT", "").strip()
     if debug_transcript:
         return _clean(debug_transcript, "Voice turn received.")
+
+    transcript = _transcribe_with_hermes_stt(pcm)
+    if transcript:
+        return transcript
+
     return (
         f"Voice audio received from {route.input_name} ({route.input_type}); "
         f"{len(pcm)} bytes of PCM reached the Xander session adapter. "
-        "Speech-to-text is not wired in this local helper yet."
+        "Hermes STT lane did not return a transcript for this turn."
     )
+
+
+def _transcribe_with_hermes_stt(pcm: bytes) -> str:
+    hermes_agent_home = Path(os.environ.get("OTOXAN_HERMES_AGENT_HOME", HERMES_AGENT_HOME_DEFAULT))
+    hermes_home = os.environ.get("HERMES_HOME") or os.environ.get("OTOXAN_XANDER_HERMES_HOME", XANDER_HERMES_HOME_DEFAULT)
+    old_hermes_home = os.environ.get("HERMES_HOME")
+    old_profile = os.environ.get("HERMES_PROFILE")
+    os.environ["HERMES_HOME"] = hermes_home
+    os.environ["HERMES_PROFILE"] = os.environ.get("OTOXAN_XANDER_PROFILE", XANDER_PROFILE_DEFAULT)
+    if str(hermes_agent_home) not in sys.path:
+        sys.path.insert(0, str(hermes_agent_home))
+
+    try:
+        from hermes_cli.env_loader import load_hermes_dotenv
+        from tools.transcription_tools import transcribe_audio
+    except Exception:
+        _restore_env("HERMES_HOME", old_hermes_home)
+        _restore_env("HERMES_PROFILE", old_profile)
+        return ""
+
+    try:
+        load_hermes_dotenv(hermes_home=hermes_home, project_env=str(hermes_agent_home / ".env"))
+        with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file:
+            _write_pcm16_wav(wav_file.name, pcm)
+            result = transcribe_audio(wav_file.name)
+        if not result.get("success"):
+            return ""
+        return _clean(result.get("transcript"), "")
+    finally:
+        _restore_env("HERMES_HOME", old_hermes_home)
+        _restore_env("HERMES_PROFILE", old_profile)
+
+
+def _restore_env(key: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = value
+
+
+def _write_pcm16_wav(path: str, pcm: bytes) -> None:
+    with wave.open(path, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE)
+        wav.writeframes(pcm)
 
 
 def _ask_xander_session(transcript: str, route: RouteSummary) -> str:

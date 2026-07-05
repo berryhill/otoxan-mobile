@@ -120,7 +120,7 @@ OTOXAN_XANDER_TIMEOUT_SECONDS=25
 In Xander session mode the backend runs:
 
 ```text
-Android PCM -> repo-local /voice-turn adapter -> Hermes profile xander -> assistantText -> Android/Ray-Ban TextToSpeech playback
+Android PCM -> repo-local /voice-turn adapter -> Hermes STT lane -> Hermes profile xander model lane -> assistantText -> Android/Ray-Ban TextToSpeech playback
 ```
 
-Current scope: this starts the live Xander session turn and speaks the text response. STT is still a separate follow-up; until then the helper uses route/byte evidence or `OTOXAN_DEBUG_TRANSCRIPT` for the text passed into Xander.
+Current scope: this starts the live Xander turn through the configured Hermes model lane and attempts transcription through the configured Hermes STT lane. If STT is unavailable or returns nothing, the helper falls back to route/byte evidence or `OTOXAN_DEBUG_TRANSCRIPT` so the physical loop still stays testable.

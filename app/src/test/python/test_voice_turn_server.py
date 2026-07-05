@@ -83,6 +83,20 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("xander-session", result["provider"])
         self.assertEqual("Hello Matt, I hear you now.", result["assistantText"])
 
+    def test_xander_transcript_uses_hermes_stt_lane_before_evidence_fallback(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        route = voice_turn_server.RouteSummary("Ray-Ban", "TYPE_BLE_HEADSET", "Ray-Ban", "TYPE_BLE_HEADSET", True, "")
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value="actual spoken words"):
+            transcript = voice_turn_server._xander_transcript(b"\x01\x02" * 160, route)
+        self.assertEqual("actual spoken words", transcript)
+
+    def test_xander_transcript_falls_back_to_route_evidence_when_stt_lane_empty(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        route = voice_turn_server.RouteSummary("Ray-Ban", "TYPE_BLE_HEADSET", "Ray-Ban", "TYPE_BLE_HEADSET", True, "")
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=""):
+            transcript = voice_turn_server._xander_transcript(b"\x01\x02" * 160, route)
+        self.assertIn("Hermes STT lane did not return", transcript)
+
     def test_xander_provider_failure_is_session_framed(self):
         os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
         with mock.patch.object(voice_turn_server, "_ask_xander_session", side_effect=RuntimeError("boom")):
