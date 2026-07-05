@@ -114,6 +114,16 @@ def _run_assistant_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
 
 def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     transcript = _xander_transcript(pcm, route)
+    if _is_stt_fallback(transcript):
+        return AssistantTurn(
+            transcript=transcript,
+            assistant_text=(
+                f"I got audio from {route.input_name}, but couldn't decode words. "
+                "Try speaking again a little closer."
+            ),
+            tts_pcm=b"",
+            provider=XANDER_PROVIDER,
+        )
     assistant_text = _ask_xander_session(transcript, route)
     return AssistantTurn(
         transcript=transcript,
@@ -122,6 +132,9 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         provider=XANDER_PROVIDER,
     )
 
+
+def _is_stt_fallback(transcript: str) -> bool:
+    return "Hermes STT lane did not return a transcript for this turn." in transcript
 
 def _xander_transcript(pcm: bytes, route: RouteSummary) -> str:
     debug_transcript = os.environ.get("OTOXAN_DEBUG_TRANSCRIPT", "").strip()

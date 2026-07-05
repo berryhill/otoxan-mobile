@@ -62,12 +62,13 @@ class VoiceTurnServerTest(unittest.TestCase):
 
     def test_default_provider_calls_xander_session_not_proof(self):
         os.environ.pop("OTOXAN_VOICE_PROVIDER", None)
+        os.environ["OTOXAN_DEBUG_TRANSCRIPT"] = "Matt says hello Xander"
         with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="I am live through the phone."):
             result = voice_turn_server.handle_voice_turn(self._payload())
 
         self.assertTrue(result["ok"])
         self.assertEqual("xander-session", result["provider"])
-        self.assertIn("PCM reached the Xander session adapter", result["transcript"])
+        self.assertEqual("Matt says hello Xander", result["transcript"])
         self.assertEqual("I am live through the phone.", result["assistantText"])
         self.assertEqual(b"", base64.b64decode(result["ttsPcm16Mono16kBase64"]))
         self.assertEqual(320, result["bytesReceived"])
@@ -97,8 +98,23 @@ class VoiceTurnServerTest(unittest.TestCase):
             transcript = voice_turn_server._xander_transcript(b"\x01\x02" * 160, route)
         self.assertIn("Hermes STT lane did not return", transcript)
 
+    def test_xander_turn_does_not_fake_response_when_stt_lane_empty(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
+        payload = self._payload()
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=""):
+            with mock.patch.object(voice_turn_server, "_ask_xander_session") as ask:
+                result = voice_turn_server.handle_voice_turn(payload)
+
+        ask.assert_not_called()
+        self.assertEqual("xander-session", result["provider"])
+        self.assertIn("I got audio from Ray-Ban Meta", result["assistantText"])
+        self.assertIn("couldn't decode words", result["assistantText"])
+        self.assertIn("Hermes STT lane did not return", result["transcript"])
+
     def test_xander_provider_failure_is_session_framed(self):
         os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
+        os.environ["OTOXAN_DEBUG_TRANSCRIPT"] = "Matt says hello Xander"
         with mock.patch.object(voice_turn_server, "_ask_xander_session", side_effect=RuntimeError("boom")):
             with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
                 voice_turn_server.handle_voice_turn(self._payload())
