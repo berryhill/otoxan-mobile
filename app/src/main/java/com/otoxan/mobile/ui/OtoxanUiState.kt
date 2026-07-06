@@ -1,5 +1,23 @@
 package com.otoxan.mobile.ui
 
+data class TelemetryPassSummary(
+    val turnId: String,
+    val success: Boolean,
+    val pass1Status: String?,
+    val routeName: String,
+    val totalMs: Long?,
+    val ttfaMs: Long?,
+    val backendMs: Long?,
+    val sttMs: Int?,
+    val xanderMs: Int?,
+    val playbackMs: Long?,
+    val capturedBytes: Int,
+    val peakAmplitude: Int,
+    val transcriptSource: String?,
+    val assistantTextLength: Int,
+    val error: String? = null
+)
+
 data class OtoxanUiState(
     val voiceEndpoint: String = "",
     val permissionState: PermissionState = PermissionState.Unknown,
@@ -68,6 +86,7 @@ data class OtoxanUiState(
     val transcriptTotalMs: Int? = null,
     val xanderSessionMs: Int? = null,
     val responseBuildMs: Int? = null,
+    val telemetryHistory: List<TelemetryPassSummary> = emptyList(),
     val lastError: String? = null
 )
 

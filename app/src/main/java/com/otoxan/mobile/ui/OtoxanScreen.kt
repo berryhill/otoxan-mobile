@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -45,6 +48,7 @@ fun OtoxanScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -108,6 +112,7 @@ fun OtoxanScreen(
         EvidenceBlock("Transcript", state.transcript.ifBlank { "No sample captured yet" })
         VoiceLoopEvidenceCard(state)
         LatencyCard(state)
+        TelemetryDashboardCard(state)
         OperatorDebugCard(state)
         EvidenceBlock("Assistant response", state.assistantResponse.ifBlank { "Configure XANDER_VOICE_ENDPOINT for a real backend turn" })
 
@@ -270,6 +275,104 @@ private fun LatencyCard(state: OtoxanUiState) {
             Text("Playback: kind=${state.playbackKind}; total=${state.playbackTotalMs?.let { "${it}ms" } ?: "unknown"}")
             Text("TTFA: ${state.ttfaMs?.let { "${it}ms" } ?: "unknown"}; ack=${state.localAckKind}; ackStart=${state.localAckStartMs?.let { "${it}ms" } ?: "none"}; assistantStart=${state.assistantPlaybackStartMs?.let { "${it}ms" } ?: "unknown"}")
         }
+    }
+}
+
+@Composable
+private fun TelemetryDashboardCard(state: OtoxanUiState) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Telemetry dashboard", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Latest pass", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            TelemetryBar("TTFA", state.ttfaMs, targetMs = 1_500L)
+            TelemetryBar("Total", state.turnTotalMs, targetMs = 8_000L)
+            TelemetryBar("Backend", state.backendRoundTripMs, targetMs = 4_000L)
+            TelemetryBar("STT", state.sttLatencyMs?.toLong(), targetMs = 1_500L)
+            TelemetryBar("Xander", state.xanderSessionMs?.toLong(), targetMs = 2_500L)
+            TelemetryBar("Playback", state.playbackTotalMs, targetMs = 1_500L)
+            Text(
+                "Route=${state.selectedInputName}; pass1=${state.pass1Status ?: "unknown"}; capture=${state.capturedBytes}/${state.expectedCaptureBytes} bytes; peak=${state.capturePeakAmplitude}; source=${state.transcriptSource ?: "unknown"}; replyChars=${state.assistantResponse.length}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (state.telemetryHistory.isNotEmpty()) {
+                Text("Recent passes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                state.telemetryHistory.asReversed().forEachIndexed { index, pass ->
+                    TelemetryHistoryRow(index = index + 1, pass = pass)
+                }
+            } else {
+                Text("Recent passes appear here after each completed turn.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TelemetryBar(label: String, valueMs: Long?, targetMs: Long) {
+    val value = valueMs ?: 0L
+    val fraction = if (valueMs == null) 0.04f else (value.toFloat() / (targetMs * 2f)).coerceIn(0.04f, 1f)
+    val status = when {
+        valueMs == null -> "unknown"
+        value <= targetMs -> "good"
+        value <= targetMs * 2 -> "slow"
+        else -> "bad"
+    }
+    val color = when (status) {
+        "good" -> MaterialTheme.colorScheme.primary
+        "slow" -> MaterialTheme.colorScheme.tertiary
+        "bad" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.outline
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+            Text(valueMs?.let { "${it}ms · $status" } ?: "unknown", style = MaterialTheme.typography.bodySmall)
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(20.dp))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .height(10.dp)
+                    .background(color, RoundedCornerShape(20.dp))
+            )
+        }
+    }
+}
+
+@Composable
+private fun TelemetryHistoryRow(index: Int, pass: TelemetryPassSummary) {
+    val total = pass.totalMs ?: 0L
+    val fraction = (total.toFloat() / 24_000f).coerceIn(0.06f, 1f)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("#$index ${pass.routeName}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+            Text("${pass.totalMs?.let { "${it}ms" } ?: "unknown"} · TTFA ${pass.ttfaMs?.let { "${it}ms" } ?: "?"}", style = MaterialTheme.typography.bodySmall)
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(8.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(20.dp))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .height(8.dp)
+                    .background(if (pass.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, RoundedCornerShape(20.dp))
+            )
+        }
+        Text(
+            "backend=${pass.backendMs?.let { "${it}ms" } ?: "?"}; stt=${pass.sttMs?.let { "${it}ms" } ?: "?"}; xander=${pass.xanderMs?.let { "${it}ms" } ?: "?"}; playback=${pass.playbackMs?.let { "${it}ms" } ?: "?"}; pass1=${pass.pass1Status ?: "unknown"}; source=${pass.transcriptSource ?: "unknown"}; reply=${pass.assistantTextLength} chars",
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 

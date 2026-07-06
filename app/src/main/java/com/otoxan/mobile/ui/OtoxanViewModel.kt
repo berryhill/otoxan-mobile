@@ -443,6 +443,22 @@ class OtoxanViewModel(
         val ttsBytes = result.ttsPcm16Mono16k?.size ?: 0
         _uiState.update {
             val nextTurnCount = if (keepConversationActive) it.conversationTurnCount + 1 else it.conversationTurnCount
+            val telemetrySummary = TelemetryPassSummary(
+                turnId = turnId,
+                success = true,
+                pass1Status = result.pass1Status,
+                routeName = proof.routeEvidence.inputName,
+                totalMs = proof.turnTotalMs,
+                ttfaMs = proof.ttfaMs,
+                backendMs = proof.backendRoundTripMs,
+                sttMs = result.sttLatencyMs,
+                xanderMs = result.xanderSessionMs,
+                playbackMs = proof.playbackTotalMs,
+                capturedBytes = proof.capturedBytes,
+                peakAmplitude = proof.capturePeakAmplitude,
+                transcriptSource = result.transcriptSource,
+                assistantTextLength = result.assistantText.length
+            )
             it.copy(
                 selectedInputName = proof.routeEvidence.inputName,
                 selectedInputType = proof.routeEvidence.inputType,
@@ -502,6 +518,7 @@ class OtoxanViewModel(
                 transcriptTotalMs = result.transcriptTotalMs,
                 xanderSessionMs = result.xanderSessionMs,
                 responseBuildMs = result.responseBuildMs,
+                telemetryHistory = (it.telemetryHistory + telemetrySummary).takeLast(8),
                 turnStage = if (keepConversationActive) {
                     "Turn $nextTurnCount complete; route released for playback, next listen will re-select Ray-Ban mic"
                 } else if (it.playbackMode == PlaybackMode.SilentAfterCapture) {
