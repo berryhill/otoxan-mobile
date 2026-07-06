@@ -270,7 +270,12 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
             timing=timing,
         )
     fast_started = time.monotonic()
-    assistant_text = _ask_xander_mobile_fast(transcript.transcript, route)
+    try:
+        assistant_text = _ask_xander_mobile_fast(transcript.transcript, route)
+        timing["xanderFastStatus"] = 1
+    except Exception as exc:  # noqa: BLE001 - mobile voice must return telemetry, not hard-fail.
+        assistant_text = f"Fast lane failed after STT: {str(exc)[:90]}."
+        timing["xanderFastStatus"] = 0
     fast_ms = _elapsed_ms(fast_started)
     # Keep xanderSessionMs populated so existing Android telemetry charts compare old vs fast lane.
     timing["xanderSessionMs"] = fast_ms

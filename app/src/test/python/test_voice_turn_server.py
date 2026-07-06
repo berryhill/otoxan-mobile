@@ -212,6 +212,23 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertTrue(result["pass1Ready"])
         self.assertIn("Fast lane", result["assistantText"])
 
+    def test_mobile_fast_provider_returns_diagnostic_instead_of_hard_failing_after_stt(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
+        payload = self._payload()
+        stt = voice_turn_server.SttResult("real words decoded", "success", 33)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
+            with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", side_effect=RuntimeError("provider exploded")):
+                result = voice_turn_server.handle_voice_turn(payload)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("mobile-fast", result["provider"])
+        self.assertEqual("real-speech-proven", result["pass1Status"])
+        self.assertTrue(result["pass1Ready"])
+        self.assertIn("Fast lane failed after STT", result["assistantText"])
+        self.assertEqual(0, result["timing"]["xanderFastStatus"])
+        self.assertIsInstance(result["xanderSessionMs"], int)
+
     def test_mobile_fast_direct_provider_shapes_response_without_leaking_reasoning(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
         fake_config = {
