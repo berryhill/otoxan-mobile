@@ -437,6 +437,8 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
 
 
 def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
+    # MiniMax is fastest enough for this lane, but it can emit long <think> blocks;
+    # give it enough budget for the closing tag and guard against reasoning-only output.
     provider_name = os.environ.get("OTOXAN_MOBILE_FAST_PROVIDER", "minimax").strip()
     config = _load_xander_config()
     provider = _configured_provider(config, provider_name)
@@ -473,7 +475,7 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
                 ),
             },
         ],
-        "max_tokens": int(os.environ.get("OTOXAN_MOBILE_FAST_MAX_TOKENS", "160")),
+        "max_tokens": int(os.environ.get("OTOXAN_MOBILE_FAST_MAX_TOKENS", "1024")),
         "temperature": _mobile_fast_temperature(provider_name),
     }
     request = urllib.request.Request(
@@ -499,7 +501,7 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
         raise VoiceTurnError("mobile-fast provider returned an unexpected response shape", 502) from exc
     text = _strip_reasoning_markup(str(text))
     if not text.strip():
-        raise VoiceTurnError("mobile-fast provider returned no spoken text", 502)
+        return "Fast lane got your words, but the model returned no spoken answer."
     return _shape_mobile_spoken_response(text, max_words=XANDER_FAST_MAX_WORDS)
 
 

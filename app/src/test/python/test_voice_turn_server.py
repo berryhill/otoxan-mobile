@@ -251,7 +251,36 @@ class VoiceTurnServerTest(unittest.TestCase):
         body = voice_turn_server.json.loads(request.data.decode("utf-8"))
         self.assertEqual("fast-model", body["model"])
         self.assertIn("max 16 words", body["messages"][0]["content"])
+        self.assertEqual(1024, body["max_tokens"])
         self.assertNotIn("test-key", str(body))
+
+    def test_mobile_fast_reasoning_only_output_returns_diagnostic_instead_of_502(self):
+        route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
+        fake_config = {
+            "providers": {
+                "fast-test": {
+                    "base_url": "https://example.invalid/v1",
+                    "api_key": "test-key",
+                    "model": "fast-model",
+                }
+            }
+        }
+        response_body = {"choices": [{"message": {"content": "<think>unfinished reasoning without spoken answer"}}]}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return voice_turn_server.json.dumps(response_body).encode("utf-8")
+
+        os.environ["OTOXAN_MOBILE_FAST_PROVIDER"] = "fast-test"
+        with mock.patch.object(voice_turn_server, "_load_xander_config", return_value=fake_config):
+            with mock.patch.object(voice_turn_server.urllib.request, "urlopen", return_value=FakeResponse()):
+                text = voice_turn_server._ask_xander_mobile_fast("test transcript", route)
+
+        self.assertIn("model returned no spoken answer", text)
 
     def test_xander_session_prompt_preserves_mobile_xander_voice_contract(self):
         os.environ["OTOXAN_HERMES_BIN"] = "/bin/hermes-test"
