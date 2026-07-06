@@ -94,6 +94,28 @@ make launch ADB="sudo /home/berry/sdk/platform-tools/adb"
 
 The helper validates the PCM payload and route evidence, returns visible transcript/assistant text, returns `provider`, `bytesReceived`, `audioFormat`, and may return PCM audio bytes. The app shows captured/backend/TTS counters so a physical test can identify which segment failed. It does not store raw audio.
 
+## Phase 1 realtime WebSocket skeleton
+
+The first open-source realtime phase is now a repo-local WebSocket transport skeleton. It does not replace `/voice-turn`; it gives the next Android/client slice a persistent transport to stream PCM chunks and commit them through the existing voice-turn contract.
+
+```bash
+make backend-realtime
+# serves ws://0.0.0.0:8788/realtime
+```
+
+Event shape:
+
+```text
+server -> {"type":"session.created","audioFormat":"pcm_s16le_16khz_mono"}
+client -> {"type":"session.update","routeEvidence":{...}}
+client -> binary PCM16 16kHz mono frames
+server -> {"type":"input_audio.appended","bufferedBytes":...}
+client -> {"type":"input_audio.commit"}
+server -> {"type":"response.completed","voiceTurn":{...existing /voice-turn response...}}
+```
+
+This is transport-only Phase 1. VAD, partial transcripts, barge-in, and WebRTC stay in later phases.
+
 Provider modes:
 
 ```bash
