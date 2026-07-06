@@ -29,11 +29,15 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_VOICE_METRICS_JSONL",
                 "OTOXAN_MOBILE_FAST_PROVIDER",
                 "OTOXAN_XANDER_CONFIG",
+                "OTOXAN_STT_MODE",
             )
         }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
 
     def tearDown(self):
+        setattr(voice_turn_server, "_STT_TRANSCRIBE_AUDIO", None)
+        setattr(voice_turn_server, "_STT_FAST_LOCAL_TRANSCRIBE", None)
+        setattr(voice_turn_server, "_STT_LOAD_ERROR", None)
         for key, value in self._old_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -137,6 +141,34 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("route-evidence-fallback", transcript.source)
         self.assertEqual("empty", transcript.stt_status)
         self.assertEqual(23, transcript.stt_latency_ms)
+
+    def test_stt_prefers_inprocess_transcriber_without_subprocess_spawn(self):
+        os.environ.pop("OTOXAN_STT_MODE", None)
+        with mock.patch.object(voice_turn_server, "_load_fast_local_stt", return_value=lambda path: {"success": True, "transcript": "hey xander", "provider": "local-fast"}):
+            with mock.patch.object(voice_turn_server.subprocess, "run") as run:
+                stt = voice_turn_server._transcribe_with_hermes_stt(b"\x01\x02" * 160)
+        run.assert_not_called()
+        self.assertEqual("hey xander", stt.transcript)
+        self.assertEqual("success", stt.status)
+        self.assertIsInstance(stt.latency_ms, int)
+
+    def test_stt_falls_back_to_subprocess_when_inprocess_unavailable(self):
+        os.environ.pop("OTOXAN_STT_MODE", None)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_inprocess_stt", return_value=voice_turn_server.SttResult("", "inprocess-unavailable", 1)):
+            with mock.patch.object(voice_turn_server, "_transcribe_with_subprocess_stt", return_value=voice_turn_server.SttResult("fallback words", "success", 22)) as subprocess_stt:
+                stt = voice_turn_server._transcribe_with_hermes_stt(b"\x01\x02" * 160)
+        subprocess_stt.assert_called_once()
+        self.assertEqual("fallback words", stt.transcript)
+        self.assertEqual("success", stt.status)
+        self.assertEqual(22, stt.latency_ms)
+
+    def test_stt_subprocess_mode_bypasses_inprocess_loader(self):
+        os.environ["OTOXAN_STT_MODE"] = "subprocess"
+        with mock.patch.object(voice_turn_server, "_load_inprocess_stt") as loader:
+            with mock.patch.object(voice_turn_server, "_transcribe_with_subprocess_stt", return_value=voice_turn_server.SttResult("subprocess words", "success", 44)):
+                stt = voice_turn_server._transcribe_with_hermes_stt(b"\x01\x02" * 160)
+        loader.assert_not_called()
+        self.assertEqual("subprocess words", stt.transcript)
 
     def test_xander_turn_does_not_fake_response_when_stt_lane_empty(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)

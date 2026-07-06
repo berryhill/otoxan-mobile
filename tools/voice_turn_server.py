@@ -21,7 +21,9 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import wave
 import uuid
@@ -30,7 +32,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import yaml
 
@@ -71,6 +73,10 @@ HERMES_AGENT_HOME_DEFAULT = "/home/silas/.hermes/hermes-agent"
 HERMES_PYTHON_DEFAULT = "/home/silas/.hermes/hermes-agent/venv/bin/python"
 XANDER_HERMES_HOME_DEFAULT = "/home/silas/.hermes/profiles/xander"
 METRICS_JSONL_DEFAULT = str(Path(__file__).resolve().parent / "data" / "voice_turn_metrics.jsonl")
+_STT_LOCK = threading.Lock()
+_STT_TRANSCRIBE_AUDIO: Callable[[str], Mapping[str, Any]] | None = None
+_STT_FAST_LOCAL_TRANSCRIBE: Callable[[str], Mapping[str, Any]] | None = None
+_STT_LOAD_ERROR: str | None = None
 
 
 class VoiceTurnError(Exception):
@@ -328,6 +334,92 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
 
 
 def _transcribe_with_hermes_stt(pcm: bytes) -> SttResult:
+    mode = os.environ.get("OTOXAN_STT_MODE", "inprocess").strip().lower()
+    if mode != "subprocess":
+        inprocess = _transcribe_with_inprocess_stt(pcm)
+        if inprocess.status != "inprocess-unavailable":
+            return inprocess
+    return _transcribe_with_subprocess_stt(pcm)
+
+
+def _transcribe_with_inprocess_stt(pcm: bytes) -> SttResult:
+    started = time.monotonic()
+    try:
+        transcribe_audio = _load_fast_local_stt()
+    except Exception:
+        try:
+            transcribe_audio = _load_inprocess_stt()
+        except Exception:
+            return SttResult("", "inprocess-unavailable", _elapsed_ms(started))
+    with _STT_LOCK:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file:
+                _write_pcm16_wav(wav_file.name, pcm)
+                data = transcribe_audio(wav_file.name)
+        except Exception:
+            return SttResult("", "inprocess-error", _elapsed_ms(started))
+    latency_ms = _elapsed_ms(started)
+    if not data.get("success"):
+        return SttResult("", "stt-failed", latency_ms)
+    transcript = _clean(data.get("transcript"), "")
+    return SttResult(transcript, "success" if transcript else "empty", latency_ms)
+
+
+def _load_fast_local_stt() -> Callable[[str], Mapping[str, Any]]:
+    global _STT_FAST_LOCAL_TRANSCRIBE
+    if _STT_FAST_LOCAL_TRANSCRIBE is not None:
+        return _STT_FAST_LOCAL_TRANSCRIBE
+    _load_inprocess_stt()
+    import tools.transcription_tools as transcription_tools  # type: ignore[import-not-found]
+    stt_config = transcription_tools._load_stt_config()
+    if transcription_tools._get_provider(stt_config) != "local":
+        raise RuntimeError("fast local STT only applies to provider=local")
+    local_cfg = stt_config.get("local", {})
+    model_name = transcription_tools._normalize_local_model(
+        local_cfg.get("model", transcription_tools.DEFAULT_LOCAL_MODEL)
+    )
+    model = transcription_tools._load_local_whisper_model(model_name)
+    language = local_cfg.get("language") or os.getenv("HERMES_LOCAL_STT_LANGUAGE") or "en"
+
+    def transcribe_fast_local(file_path: str) -> Mapping[str, Any]:
+        segments, _info = model.transcribe(
+            file_path,
+            beam_size=1,
+            language=language,
+            condition_on_previous_text=False,
+        )
+        transcript = " ".join(segment.text.strip() for segment in segments).strip()
+        return {"success": True, "transcript": transcript, "provider": "local-fast"}
+
+    _STT_FAST_LOCAL_TRANSCRIBE = transcribe_fast_local
+    return transcribe_fast_local
+
+
+def _load_inprocess_stt() -> Callable[[str], Mapping[str, Any]]:
+    global _STT_LOAD_ERROR, _STT_TRANSCRIBE_AUDIO
+    if _STT_TRANSCRIBE_AUDIO is not None:
+        return _STT_TRANSCRIBE_AUDIO
+    if _STT_LOAD_ERROR:
+        raise RuntimeError(_STT_LOAD_ERROR)
+    try:
+        hermes_agent_home = Path(os.environ.get("OTOXAN_HERMES_AGENT_HOME", HERMES_AGENT_HOME_DEFAULT))
+        hermes_home = os.environ.get("HERMES_HOME") or os.environ.get("OTOXAN_XANDER_HERMES_HOME", XANDER_HERMES_HOME_DEFAULT)
+        if str(hermes_agent_home) not in sys.path:
+            sys.path.insert(0, str(hermes_agent_home))
+        from hermes_cli.env_loader import load_hermes_dotenv  # type: ignore[import-not-found]
+        from tools.transcription_tools import transcribe_audio  # type: ignore[import-not-found]
+        load_hermes_dotenv(
+            hermes_home=hermes_home,
+            project_env=str(hermes_agent_home / ".env"),
+        )
+        _STT_TRANSCRIBE_AUDIO = transcribe_audio
+        return transcribe_audio
+    except Exception as exc:
+        _STT_LOAD_ERROR = exc.__class__.__name__
+        raise
+
+
+def _transcribe_with_subprocess_stt(pcm: bytes) -> SttResult:
     hermes_agent_home = Path(os.environ.get("OTOXAN_HERMES_AGENT_HOME", HERMES_AGENT_HOME_DEFAULT))
     hermes_home = os.environ.get("HERMES_HOME") or os.environ.get("OTOXAN_XANDER_HERMES_HOME", XANDER_HERMES_HOME_DEFAULT)
     hermes_python = os.environ.get("OTOXAN_HERMES_PYTHON", HERMES_PYTHON_DEFAULT)
@@ -344,7 +436,26 @@ load_hermes_dotenv(
     hermes_home=os.environ["HERMES_HOME"],
     project_env=os.path.join(os.environ["OTOXAN_HERMES_AGENT_HOME"], ".env"),
 )
-print(json.dumps(transcribe_audio(sys.argv[1])))
+try:
+    import tools.transcription_tools as stt_tools
+    cfg = stt_tools._load_stt_config()
+    if stt_tools._get_provider(cfg) == "local":
+        local_cfg = cfg.get("local", {})
+        model_name = stt_tools._normalize_local_model(local_cfg.get("model", stt_tools.DEFAULT_LOCAL_MODEL))
+        model = stt_tools._load_local_whisper_model(model_name)
+        language = local_cfg.get("language") or os.getenv("HERMES_LOCAL_STT_LANGUAGE") or "en"
+        segments, _info = model.transcribe(
+            sys.argv[1],
+            beam_size=1,
+            language=language,
+            condition_on_previous_text=False,
+        )
+        transcript = " ".join(segment.text.strip() for segment in segments).strip()
+        print(json.dumps({"success": True, "transcript": transcript, "provider": "local-fast"}))
+    else:
+        print(json.dumps(transcribe_audio(sys.argv[1])))
+except Exception:
+    print(json.dumps(transcribe_audio(sys.argv[1])))
 """
         env = os.environ.copy()
         env.update(

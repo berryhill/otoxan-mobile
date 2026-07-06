@@ -6,7 +6,7 @@ VOICE_PORT ?= 8787
 VOICE_ENDPOINT ?= http://100.126.0.110:8787/voice-turn
 ADB ?= $(shell if [ -x /home/berry/sdk/platform-tools/adb ]; then echo sudo /home/berry/sdk/platform-tools/adb; else command -v adb 2>/dev/null || echo adb; fi)
 GRADLE ?= ./gradlew
-PYTHON ?= python3
+PYTHON ?= $(shell if [ -x /home/silas/.hermes/hermes-agent/venv/bin/python ]; then echo /home/silas/.hermes/hermes-agent/venv/bin/python; else echo python3; fi)
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 
 .PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-xander backend-proof smoke-backend test-backend test test-all endpoint doctor
