@@ -33,6 +33,7 @@ data class VoiceTurnTelemetryRecord(
     val receivedAtMs: Long?,
     val totalMs: Long?,
     val ttfaMs: Long?,
+    val postCaptureAckDelayMs: Long?,
     val backendMs: Long?,
     val sttMs: Int?,
     val xanderMs: Int?,
@@ -111,6 +112,7 @@ data class VoiceTurnTelemetryPacket(
     val ttfaRouteSelectMs: Long? = null,
     val ttfaCaptureReadMs: Long? = null,
     val ttfaPostCaptureDispatchMs: Long? = null,
+    val postCaptureAckDelayMs: Long? = null,
     val localAckStartMs: Long? = null,
     val localAckTotalMs: Long? = null,
     val ttfaBackendWaitAfterReleaseMs: Long? = null,
@@ -349,6 +351,8 @@ class HttpXanderVoiceClient(
                                 receivedAtMs = record.optLongOrNull("receivedAtMs"),
                                 totalMs = totals.optLongOrNull("turnTotalMs"),
                                 ttfaMs = perceived.optLongOrNull("ttfaMs"),
+                                postCaptureAckDelayMs = perceived.optLongOrNull("postCaptureAckDelayMs")
+                                    ?: perceived?.optJSONObject("breakdown").optLongOrNull("postCaptureDispatchMs"),
                                 backendMs = backend.optLongOrNull("roundTripMs"),
                                 sttMs = backend.optIntOrNull("sttLatencyMs"),
                                 xanderMs = backend.optIntOrNull("xanderFastMs") ?: backend.optIntOrNull("xanderSessionMs"),
@@ -465,6 +469,7 @@ class HttpXanderVoiceClient(
               "perceivedLatency":{
                 "ttfaMs":${packet.ttfaMs.jsonValue()},
                 "localAckKind":${packet.localAckKind.jsonValue()},
+                "postCaptureAckDelayMs":${packet.postCaptureAckDelayMs.jsonValue()},
                 "breakdown":{
                   "routeSelectMs":${packet.ttfaRouteSelectMs.jsonValue()},
                   "captureReadMs":${packet.ttfaCaptureReadMs.jsonValue()},

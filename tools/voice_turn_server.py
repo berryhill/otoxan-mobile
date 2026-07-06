@@ -1164,11 +1164,12 @@ def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "")
     if not turn_id:
         raise VoiceTurnError("turn.turnId is required", 400)
 
+    sanitized_payload = _sanitize_metrics_payload(payload)
     record = {
         "recordId": str(uuid.uuid4()),
         "receivedAtMs": int(time.time() * 1000),
         "remoteAddr": remote_addr,
-        "payload": _sanitize_metrics_payload(payload),
+        "payload": sanitized_payload,
     }
     path = Path(os.environ.get("OTOXAN_VOICE_METRICS_JSONL", METRICS_JSONL_DEFAULT))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1182,6 +1183,7 @@ def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "")
         f"totalMs={_nested_get(payload, 'totals', 'turnTotalMs')} "
         f"backendMs={_nested_get(payload, 'backend', 'roundTripMs')} "
         f"ttfaMs={_nested_get(payload, 'perceivedLatency', 'ttfaMs')} "
+        f"postCaptureAckDelayMs={_nested_get(sanitized_payload, 'perceivedLatency', 'postCaptureAckDelayMs')} "
         f"ttfaCaptureMs={_nested_get(payload, 'perceivedLatency', 'breakdown', 'captureReadMs')} "
         f"playback={_nested_get(payload, 'playback', 'kind')} "
         f"path={path}"
@@ -1235,6 +1237,11 @@ def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(verdict, dict):
         for forbidden in ("transcript", "assistantText", "rawTranscript", "rawAssistantText"):
             verdict.pop(forbidden, None)
+    perceived_latency = data.get("perceivedLatency")
+    if isinstance(perceived_latency, dict) and perceived_latency.get("postCaptureAckDelayMs") is None:
+        breakdown = perceived_latency.get("breakdown")
+        if isinstance(breakdown, dict) and breakdown.get("postCaptureDispatchMs") is not None:
+            perceived_latency["postCaptureAckDelayMs"] = breakdown.get("postCaptureDispatchMs")
     return data
 
 
