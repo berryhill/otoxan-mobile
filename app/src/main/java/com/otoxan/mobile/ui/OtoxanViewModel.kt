@@ -28,7 +28,11 @@ class OtoxanViewModel(
     private val speechPlayback: SpeechPlayback,
     private val xanderVoiceClient: XanderVoiceClient
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(OtoxanUiState())
+    private val _uiState = MutableStateFlow(
+        OtoxanUiState(
+            voiceEndpoint = BuildConfig.XANDER_VOICE_ENDPOINT.ifBlank { "stub/no endpoint baked" }
+        )
+    )
     val uiState: StateFlow<OtoxanUiState> = _uiState.asStateFlow()
 
     fun onPermissionResult(granted: Boolean) {
@@ -42,7 +46,7 @@ class OtoxanViewModel(
     }
 
     fun refreshRoute() {
-        _uiState.update { it.copy(sessionState = VoiceSessionState.CheckingRoute, lastError = null) }
+        _uiState.update { it.copy(sessionState = VoiceSessionState.CheckingRoute, turnStage = "Selecting wearable route", lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { audioRouter.inspectAndSelectWearable() }
                 .onSuccess { evidence ->
@@ -54,6 +58,7 @@ class OtoxanViewModel(
                             selectedOutputType = evidence.outputType,
                             wearableRouteActive = evidence.wearableActive,
                             sessionState = if (evidence.wearableActive) VoiceSessionState.Ready else VoiceSessionState.Idle,
+                            turnStage = if (evidence.wearableActive) "Wearable route selected" else "No wearable route selected",
                             lastEvidence = evidence.message,
                             lastError = null
                         )
@@ -64,6 +69,7 @@ class OtoxanViewModel(
                         it.copy(
                             sessionState = VoiceSessionState.Error,
                             wearableRouteActive = false,
+                            turnStage = "Route check failed",
                             lastEvidence = "Route check failed",
                             lastError = error.message ?: error::class.java.simpleName
                         )
@@ -84,7 +90,7 @@ class OtoxanViewModel(
             return
         }
 
-        _uiState.update { it.copy(sessionState = VoiceSessionState.RecordingTest, lastError = null) }
+        _uiState.update { it.copy(sessionState = VoiceSessionState.RecordingTest, turnStage = "Starting Ray-Ban route capture", lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 var releaseEvidence = RouteEvidence.default("Communication route release not reached")
@@ -93,6 +99,7 @@ class OtoxanViewModel(
                     if (!routeEvidence.wearableActive) {
                         error("Wearable route dropped before capture: ${routeEvidence.message}")
                     }
+                    _uiState.update { it.copy(turnStage = "Capturing 5 seconds from selected route") }
                     val captureMillis = 5_000L
                     val pcm = micCapture.recordPcmForMillis(captureMillis)
                     val expectedBytes = expectedPcmBytes(captureMillis)
@@ -101,8 +108,11 @@ class OtoxanViewModel(
                     if (!usable) {
                         error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, peak=$peak, likely silent or truncated")
                     }
+                    _uiState.update { it.copy(turnStage = "Posting ${pcm.size} bytes to Xander backend") }
                     val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
+                    _uiState.update { it.copy(turnStage = "Releasing call route before assistant playback") }
                     releaseEvidence = releaseCommunicationRoute("Released communication route before assistant playback")
+                    _uiState.update { it.copy(turnStage = "Playing assistant response with non-call playback policy") }
                     val backendTts = result.ttsPcm16Mono16k
                     if (backendTts != null && backendTts.isNotEmpty()) {
                         speechPlayback.playPcm16Mono16k(backendTts)
@@ -152,6 +162,7 @@ class OtoxanViewModel(
                         expectedCaptureBytes = proof.expectedCaptureBytes,
                         capturePeakAmplitude = proof.capturePeakAmplitude,
                         captureUsable = proof.captureUsable,
+                        turnStage = "Turn complete; communication route released before playback",
                         lastEvidence = if (result.provider == "stub") {
                             "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                         } else {
@@ -163,6 +174,7 @@ class OtoxanViewModel(
                 _uiState.update {
                     it.copy(
                         sessionState = VoiceSessionState.Error,
+                        turnStage = "Voice turn failed",
                         lastEvidence = "Capture failed",
                         lastError = error.message ?: error::class.java.simpleName
                     )
@@ -182,13 +194,15 @@ class OtoxanViewModel(
     )
 
     fun playRouteProof() {
-        _uiState.update { it.copy(sessionState = VoiceSessionState.PlayingTest, lastError = null) }
+        _uiState.update { it.copy(sessionState = VoiceSessionState.PlayingTest, turnStage = "Starting proof-tone route test", lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 var releaseEvidence = RouteEvidence.default("Communication route release not reached")
                 try {
                     val evidence = audioRouter.inspectAndSelectWearable()
+                    _uiState.update { it.copy(turnStage = "Releasing call route before proof tone playback") }
                     releaseEvidence = releaseCommunicationRoute("Released communication route before proof tone playback")
+                    _uiState.update { it.copy(turnStage = "Playing proof tone with non-call playback policy") }
                     speechPlayback.playProofTone()
                     Pair(evidence, releaseEvidence)
                 } finally {
@@ -206,6 +220,7 @@ class OtoxanViewModel(
                             selectedOutputType = evidence.outputType,
                             wearableRouteActive = false,
                             sessionState = VoiceSessionState.Idle,
+                            turnStage = "Proof tone complete; communication route released before playback",
                             lastEvidence = "Played audible 660 Hz proof tone; routeUsed=[${evidence.message}]; release=[${releaseEvidence.message}]"
                         )
                     }
@@ -214,6 +229,7 @@ class OtoxanViewModel(
                     _uiState.update {
                         it.copy(
                             sessionState = VoiceSessionState.Error,
+                            turnStage = "Proof tone failed",
                             lastError = error.message ?: error::class.java.simpleName
                         )
                     }
@@ -222,7 +238,7 @@ class OtoxanViewModel(
     }
 
     fun clearRoute() {
-        _uiState.update { it.copy(sessionState = VoiceSessionState.CheckingRoute, lastError = null) }
+        _uiState.update { it.copy(sessionState = VoiceSessionState.CheckingRoute, turnStage = "Manual route clear requested", lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             val evidence = runCatching { releaseCommunicationRoute("Manual clear voice route") }
                 .getOrElse { error -> RouteEvidence.default("Communication route release failed: ${error.message ?: error::class.java.simpleName}") }
@@ -234,9 +250,51 @@ class OtoxanViewModel(
                     selectedOutputType = evidence.outputType,
                     wearableRouteActive = false,
                     sessionState = VoiceSessionState.Idle,
+                    turnStage = "Manual route clear complete",
                     lastEvidence = evidence.message,
                     lastError = null
                 )
+            }
+        }
+    }
+
+
+    fun runBackendSelfTest() {
+        _uiState.update {
+            it.copy(
+                sessionState = VoiceSessionState.CheckingRoute,
+                turnStage = "Running backend self-test without Ray-Bans",
+                backendSelfTestStatus = "Running",
+                lastError = null
+            )
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val pcm = ByteArray(320) { index -> if (index % 2 == 0) 1 else 2 }
+                val result = xanderVoiceClient.sendVoiceTurn(
+                    pcm,
+                    RouteEvidence.default("Backend self-test: no wearable route selected")
+                )
+                "OK provider=${result.provider ?: "unknown"}; backendReceived=${result.bytesReceived ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; pass1=${result.pass1Status ?: "unknown"}; endpoint=${BuildConfig.XANDER_VOICE_ENDPOINT.ifBlank { "stub" }}"
+            }.onSuccess { status ->
+                _uiState.update {
+                    it.copy(
+                        sessionState = VoiceSessionState.Idle,
+                        turnStage = "Backend self-test complete",
+                        backendSelfTestStatus = status,
+                        lastEvidence = status,
+                        lastError = null
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        sessionState = VoiceSessionState.Error,
+                        turnStage = "Backend self-test failed",
+                        backendSelfTestStatus = "FAILED: ${error.message ?: error::class.java.simpleName}",
+                        lastError = error.message ?: error::class.java.simpleName
+                    )
+                }
             }
         }
     }

@@ -27,7 +27,8 @@ fun OtoxanScreen(
     onRefreshRoute: () -> Unit,
     onRecordFiveSeconds: () -> Unit,
     onPlayTest: () -> Unit,
-    onClearRoute: () -> Unit
+    onClearRoute: () -> Unit,
+    onBackendSelfTest: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -57,6 +58,10 @@ fun OtoxanScreen(
             }
         }
 
+        OutlinedButton(onClick = onBackendSelfTest) {
+            Text("Backend self-test")
+        }
+
         Button(
             onClick = onRecordFiveSeconds,
             enabled = state.permissionState == PermissionState.Granted && state.wearableRouteActive
@@ -70,6 +75,7 @@ fun OtoxanScreen(
 
         EvidenceBlock("Transcript", state.transcript.ifBlank { "No sample captured yet" })
         VoiceLoopEvidenceCard(state)
+        OperatorDebugCard(state)
         EvidenceBlock("Assistant response", state.assistantResponse.ifBlank { "Configure XANDER_VOICE_ENDPOINT for a real backend turn" })
 
         state.lastError?.let { error ->
@@ -90,6 +96,7 @@ private fun RouteTruthCard(state: OtoxanUiState) {
             Text(if (state.wearableRouteActive) "Wearable route active" else "Phone/default route or no wearable route")
             Text("Permission: ${state.permissionState}")
             Text("Session: ${state.sessionState}")
+            Text("Turn stage: ${state.turnStage}")
             Text("Input: ${state.selectedInputName} (${state.selectedInputType})")
             Text("Output: ${state.selectedOutputName} (${state.selectedOutputType})")
             Spacer(Modifier.height(4.dp))
@@ -116,6 +123,25 @@ private fun VoiceLoopEvidenceCard(state: OtoxanUiState) {
             Text("Backend received: ${state.backendBytesReceived?.toString() ?: "unknown"} bytes")
             Text("Backend audio: ${state.audioFormat ?: "unknown"}; duration=${state.backendAudioDurationMs?.toString() ?: "unknown"}ms; peak=${state.backendAudioPeak?.toString() ?: "unknown"}; rms=${state.backendAudioRms?.toString() ?: "unknown"}")
             Text("TTS PCM: ${state.ttsBytes} bytes")
+        }
+    }
+}
+
+
+@Composable
+private fun OperatorDebugCard(state: OtoxanUiState) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Operator debug", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Endpoint: ${state.voiceEndpoint}")
+            Text("Backend self-test: ${state.backendSelfTestStatus}")
+            Text("Route release policy: ${state.routeReleasePolicy}")
+            Text("Playback policy: ${state.playbackPolicy}")
+            Text("Physical acceptance: after Talk, Meta should leave call state after playback/release.")
         }
     }
 }

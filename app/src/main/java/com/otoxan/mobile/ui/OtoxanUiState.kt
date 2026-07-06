@@ -1,6 +1,7 @@
 package com.otoxan.mobile.ui
 
 data class OtoxanUiState(
+    val voiceEndpoint: String = "",
     val permissionState: PermissionState = PermissionState.Unknown,
     val selectedInputName: String = "Unknown",
     val selectedInputType: String = "Unknown",
@@ -27,6 +28,10 @@ data class OtoxanUiState(
     val expectedCaptureBytes: Int = 0,
     val capturePeakAmplitude: Int = 0,
     val captureUsable: Boolean? = null,
+    val backendSelfTestStatus: String = "Not run",
+    val routeReleasePolicy: String = "Release communication route before playback; clear communication device twice; reset SCO and MODE_NORMAL",
+    val playbackPolicy: String = "Playback uses non-call speech audio attributes with transient audio focus",
+    val turnStage: String = "Idle",
     val lastError: String? = null
 )
 

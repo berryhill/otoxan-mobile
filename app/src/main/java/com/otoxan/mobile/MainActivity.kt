@@ -37,7 +37,8 @@ class MainActivity : ComponentActivity() {
                 onRefreshRoute = viewModel::refreshRoute,
                 onRecordFiveSeconds = viewModel::recordFiveSecondProof,
                 onPlayTest = viewModel::playRouteProof,
-                onClearRoute = viewModel::clearRoute
+                onClearRoute = viewModel::clearRoute,
+                onBackendSelfTest = viewModel::runBackendSelfTest
             )
         }
     }
