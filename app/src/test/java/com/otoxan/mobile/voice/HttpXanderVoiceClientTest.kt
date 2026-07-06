@@ -33,6 +33,7 @@ class HttpXanderVoiceClientTest {
                       "audioFormat": "pcm_s16le_16khz_mono",
                       "bytesReceived": 4,
                       "transcriptSource": "proof",
+                      "sttProvider": "not-run",
                       "sttStatus": "not-run",
                       "sttLatencyMs": null,
                       "pass1Status": "proof-mode-not-real-speech",
@@ -87,6 +88,7 @@ class HttpXanderVoiceClientTest {
         assertEquals(listOf<Byte>(9, 8, 7), result.ttsPcm16Mono16k!!.toList())
         assertEquals(4, result.bytesReceived)
         assertEquals("proof", result.transcriptSource)
+        assertEquals("not-run", result.sttProvider)
         assertEquals("not-run", result.sttStatus)
         assertEquals(null, result.sttLatencyMs)
         assertEquals("proof-mode-not-real-speech", result.pass1Status)
@@ -257,6 +259,7 @@ class HttpXanderVoiceClientTest {
                     xanderFallbackSkipped = 1,
                     provider = "xander-session",
                     transcriptSource = "hermes-stt",
+                    sttProvider = "moonshine-stt",
                     sttStatus = "success",
                     pass1Status = "real-speech-proven",
                     pass1Ready = true,
@@ -280,6 +283,7 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"assistantTextLength\":44"))
         assertTrue(requestBody.contains("\"xanderFastTimedOut\":1"))
         assertTrue(requestBody.contains("\"xanderFallbackSkipped\":1"))
+        assertTrue(requestBody.contains("\"sttProvider\":\"moonshine-stt\""))
         assertTrue(requestBody.contains("\"stopReason\":\"speech_silence\""))
         assertTrue(!requestBody.contains("rawTranscript"))
         assertTrue(!requestBody.contains("assistantText\""))

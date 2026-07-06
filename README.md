@@ -195,6 +195,36 @@ ttsLatencyMs=<milliseconds>
 
 TTS failure is non-fatal: empty PCM preserves the Android playback fallback so voice turns do not fail because a local TTS model is missing.
 
+
+## Phase 5 local STT seam
+
+The voice-turn helper now has an optional Moonshine-compatible command STT adapter ahead of the existing Hermes/faster-whisper STT fallback. Default behavior is unchanged: `OTOXAN_STT_PROVIDER=hermes` uses the configured Hermes STT lane.
+
+Moonshine-compatible command mode:
+
+```bash
+OTOXAN_STT_PROVIDER=moonshine-command \
+OTOXAN_MOONSHINE_STT_COMMAND='moonshine-transcribe --input {input}' \
+make backend
+```
+
+The command receives a 16 kHz mono PCM16 WAV path through `{input}`. It may print plain transcript text or JSON on stdout, or write JSON/text to `{output}` when the command template uses that placeholder:
+
+```json
+{"success": true, "transcript": "decoded words"}
+```
+
+If the Moonshine command is missing, times out, errors, or returns an empty transcript, the helper falls back to the existing Hermes STT path instead of failing the turn. Successful local command decoding reports:
+
+```text
+transcriptSource=moonshine-stt
+sttProvider=moonshine-stt
+sttStatus=success
+sttLatencyMs=<milliseconds>
+```
+
+Fallback and no-speech behavior stay honest: if all STT lanes return empty, the backend says `Audio arrived, but words did not decode.` and does not call the Xander model lane with route evidence as fake speech.
+
 Provider modes:
 
 ```bash
@@ -233,6 +263,6 @@ In Xander session mode the backend runs:
 Android PCM -> repo-local /voice-turn adapter -> Hermes STT lane -> Hermes profile xander model lane -> assistantText -> Android/Ray-Ban TextToSpeech playback
 ```
 
-Current scope: this starts the live Xander turn through the configured Hermes model lane and attempts transcription through the configured Hermes STT lane. If STT is unavailable or returns nothing, the helper falls back to route/byte evidence or `OTOXAN_DEBUG_TRANSCRIPT` so the physical loop still stays testable.
+Current scope: this starts the live Xander turn through the configured Hermes model lane and attempts transcription through the configured Hermes STT lane, optionally trying the Moonshine-compatible local STT command first. If STT is unavailable or returns nothing, the helper falls back to route/byte evidence or `OTOXAN_DEBUG_TRANSCRIPT` so the physical loop still stays testable.
 
 Pass 1 closeout evidence and the current keep-it-simple backend decision are captured in [`docs/pass1-closeout.md`](docs/pass1-closeout.md). The repo-local `/voice-turn` adapter remains the active edge while voice quality, Xander personality, and latency are hardened; avoid a large backend reorganization for now.

@@ -17,6 +17,7 @@ data class OtoxanUiState(
     val ttsBytes: Int = 0,
     val provider: String? = null,
     val transcriptSource: String? = null,
+    val sttProvider: String? = null,
     val sttStatus: String? = null,
     val sttLatencyMs: Int? = null,
     val pass1Status: String? = null,

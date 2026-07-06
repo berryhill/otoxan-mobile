@@ -239,7 +239,7 @@ private fun VoiceLoopEvidenceCard(state: OtoxanUiState) {
             Text("Pass 1: ${if (state.pass1Ready == true) "REAL SPEECH PROVEN" else state.pass1Status ?: "not proven yet"}")
             Text("Provider: ${state.provider ?: "not contacted"}")
             Text("Transcript source: ${state.transcriptSource ?: "unknown"}")
-            Text("Hermes STT: ${state.sttStatus ?: "unknown"}${state.sttLatencyMs?.let { " in ${it}ms" } ?: ""}")
+            Text("STT: ${state.sttProvider ?: "unknown"} / ${state.sttStatus ?: "unknown"}${state.sttLatencyMs?.let { " in ${it}ms" } ?: ""}")
             Text("Captured: ${state.capturedBytes}/${state.expectedCaptureBytes} bytes")
             Text("Capture usable: ${state.captureUsable?.toString() ?: "unknown"}; peak=${state.capturePeakAmplitude}")
             Text("Backend received: ${state.backendBytesReceived?.toString() ?: "unknown"} bytes")

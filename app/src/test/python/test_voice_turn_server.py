@@ -32,6 +32,8 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_MOBILE_FAST_SESSION_FALLBACK",
                 "OTOXAN_XANDER_CONFIG",
                 "OTOXAN_STT_MODE",
+                "OTOXAN_STT_PROVIDER",
+                "OTOXAN_MOONSHINE_STT_COMMAND",
                 "OTOXAN_TTS_PROVIDER",
                 "OTOXAN_KOKORO_TTS_COMMAND",
                 "OTOXAN_TTS_TIMEOUT_SECONDS",
@@ -72,6 +74,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("pcm_s16le_16khz_mono", result["audioFormat"])
         self.assertEqual("proof", result["provider"])
         self.assertEqual("proof", result["transcriptSource"])
+        self.assertEqual("not-run", result["sttProvider"])
         self.assertEqual("not-run", result["sttStatus"])
         self.assertIsNone(result["sttLatencyMs"])
         self.assertEqual("proof-mode-not-real-speech", result["pass1Status"])
@@ -99,6 +102,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual("xander-session", result["provider"])
         self.assertEqual("debug", result["transcriptSource"])
+        self.assertEqual("not-run", result["sttProvider"])
         self.assertEqual("not-run", result["sttStatus"])
         self.assertEqual("debug-transcript-not-real-speech", result["pass1Status"])
         self.assertFalse(result["pass1Ready"])
@@ -120,6 +124,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("Matt says hello Xander", ask.call_args.args[0])
         self.assertEqual("xander-session", result["provider"])
         self.assertEqual("debug", result["transcriptSource"])
+        self.assertEqual("not-run", result["sttProvider"])
         self.assertEqual("not-run", result["sttStatus"])
         self.assertEqual("debug-transcript-not-real-speech", result["pass1Status"])
         self.assertFalse(result["pass1Ready"])
@@ -205,6 +210,45 @@ class VoiceTurnServerTest(unittest.TestCase):
                 stt = voice_turn_server._transcribe_with_hermes_stt(b"\x01\x02" * 160)
         loader.assert_not_called()
         self.assertEqual("subprocess words", stt.transcript)
+
+    def test_moonshine_command_stt_runs_before_hermes_fallback(self):
+        os.environ["OTOXAN_STT_PROVIDER"] = "moonshine-command"
+        os.environ["OTOXAN_MOONSHINE_STT_COMMAND"] = "moonshine-test --input {input} --output {output}"
+        completed = mock.Mock(returncode=0, stdout=b'{"success": true, "transcript": "moonshine heard xander"}')
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed) as run:
+            with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt_fallback") as fallback:
+                stt = voice_turn_server._transcribe_with_hermes_stt(b"\x01\x02" * 160)
+        fallback.assert_not_called()
+        self.assertEqual("moonshine heard xander", stt.transcript)
+        self.assertEqual("success", stt.status)
+        self.assertEqual("moonshine-stt", stt.provider)
+        command = run.call_args.args[0]
+        self.assertEqual("moonshine-test", command[0])
+        self.assertIn("--input", command)
+        self.assertIn("--output", command)
+
+    def test_moonshine_command_stt_falls_back_to_hermes_when_empty(self):
+        os.environ["OTOXAN_STT_PROVIDER"] = "moonshine-command"
+        os.environ["OTOXAN_MOONSHINE_STT_COMMAND"] = "moonshine-test --input {input}"
+        completed = mock.Mock(returncode=0, stdout=b'{"success": true, "transcript": ""}')
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed):
+            with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt_fallback", return_value=voice_turn_server.SttResult("fallback words", "success", 55)) as fallback:
+                stt = voice_turn_server._transcribe_with_hermes_stt(b"\x01\x02" * 160)
+        fallback.assert_called_once()
+        self.assertEqual("fallback words", stt.transcript)
+        self.assertEqual("hermes-stt", stt.provider)
+
+    def test_xander_transcript_reports_moonshine_source_when_local_stt_succeeds(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        route = voice_turn_server.RouteSummary("Ray-Ban", "TYPE_BLE_HEADSET", "Ray-Ban", "TYPE_BLE_HEADSET", True, "")
+        stt = voice_turn_server.SttResult("actual moonshine words", "success", 19, "moonshine-stt")
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
+            transcript = voice_turn_server._xander_transcript(b"\x01\x02" * 160, route)
+        self.assertEqual("actual moonshine words", transcript.transcript)
+        self.assertEqual("moonshine-stt", transcript.source)
+        self.assertEqual("moonshine-stt", transcript.stt_provider)
+        self.assertEqual("success", transcript.stt_status)
+        self.assertEqual(19, transcript.stt_latency_ms)
 
     def test_xander_turn_does_not_fake_response_when_stt_lane_empty(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)

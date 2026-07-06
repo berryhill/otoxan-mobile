@@ -57,6 +57,8 @@ XANDER_FAST_MAX_WORDS = 8
 XANDER_SPOKEN_MAX_CHARS = 72
 TTS_PROVIDER_DEFAULT = "android"
 TTS_PROVIDER_ALIASES = {"android", "none", "off", "kokoro", "kokoro-command"}
+STT_PROVIDER_DEFAULT = "hermes"
+STT_PROVIDER_ALIASES = {"hermes", "hermes-stt", "fallback", "moonshine", "moonshine-command", "local-command"}
 XANDER_MOBILE_VOICE_CONTRACT = """You are Xander on Otoxan Mobile.
 
 Identity:
@@ -106,6 +108,7 @@ class SttResult:
     transcript: str
     status: str
     latency_ms: int | None
+    provider: str = "hermes-stt"
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,7 @@ class TranscriptResult:
     source: str
     stt_status: str
     stt_latency_ms: int | None
+    stt_provider: str
 
 
 @dataclass(frozen=True)
@@ -125,6 +129,7 @@ class AssistantTurn:
     transcript_source: str
     stt_status: str
     stt_latency_ms: int | None
+    stt_provider: str
     timing: dict[str, Any]
 
 
@@ -165,6 +170,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "transcriptSource": turn.transcript_source,
         "sttStatus": turn.stt_status,
         "sttLatencyMs": turn.stt_latency_ms,
+        "sttProvider": turn.stt_provider,
         "pass1Status": _pass1_status(turn, stats),
         "pass1Ready": _pass1_ready(turn),
         "routeEvidence": {
@@ -197,7 +203,11 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _pass1_ready(turn: AssistantTurn) -> bool:
-    return turn.provider in {XANDER_PROVIDER, MOBILE_FAST_PROVIDER} and turn.transcript_source == "hermes-stt" and turn.stt_status == "success"
+    return (
+        turn.provider in {XANDER_PROVIDER, MOBILE_FAST_PROVIDER}
+        and turn.transcript_source in {"hermes-stt", "moonshine-stt"}
+        and turn.stt_status == "success"
+    )
 
 
 def _pass1_status(turn: AssistantTurn, stats: Mapping[str, Any]) -> str:
@@ -238,6 +248,7 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     transcript = _xander_transcript(pcm, route)
     timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
     timing["sttLatencyMs"] = transcript.stt_latency_ms
+    timing["sttProvider"] = transcript.stt_provider
     if _is_stt_fallback(transcript.transcript):
         timing["xanderSessionMs"] = None
         return AssistantTurn(
@@ -248,6 +259,7 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
             transcript_source=transcript.source,
             stt_status=transcript.stt_status,
             stt_latency_ms=transcript.stt_latency_ms,
+            stt_provider=transcript.stt_provider,
             timing=timing,
         )
     session_started = time.monotonic()
@@ -262,6 +274,7 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         transcript_source=transcript.source,
         stt_status=transcript.stt_status,
         stt_latency_ms=transcript.stt_latency_ms,
+        stt_provider=transcript.stt_provider,
         timing=timing,
     )
 
@@ -272,6 +285,7 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     transcript = _xander_transcript(pcm, route)
     timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
     timing["sttLatencyMs"] = transcript.stt_latency_ms
+    timing["sttProvider"] = transcript.stt_provider
     if _is_stt_fallback(transcript.transcript):
         timing["xanderSessionMs"] = None
         timing["xanderFastMs"] = None
@@ -283,6 +297,7 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
             transcript_source=transcript.source,
             stt_status=transcript.stt_status,
             stt_latency_ms=transcript.stt_latency_ms,
+            stt_provider=transcript.stt_provider,
             timing=timing,
         )
     fast_started = time.monotonic()
@@ -313,6 +328,7 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         transcript_source=transcript.source,
         stt_status=transcript.stt_status,
         stt_latency_ms=transcript.stt_latency_ms,
+        stt_provider=transcript.stt_provider,
         timing=timing,
     )
 
@@ -329,15 +345,17 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
             source="debug",
             stt_status="not-run",
             stt_latency_ms=None,
+            stt_provider="not-run",
         )
 
     stt = _transcribe_with_hermes_stt(pcm)
     if stt.transcript:
         return TranscriptResult(
             transcript=stt.transcript,
-            source="hermes-stt",
+            source=stt.provider,
             stt_status=stt.status,
             stt_latency_ms=stt.latency_ms,
+            stt_provider=stt.provider,
         )
 
     return TranscriptResult(
@@ -349,16 +367,91 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
         source="route-evidence-fallback",
         stt_status=stt.status,
         stt_latency_ms=stt.latency_ms,
+        stt_provider=stt.provider,
     )
 
 
 def _transcribe_with_hermes_stt(pcm: bytes) -> SttResult:
+    provider = os.environ.get("OTOXAN_STT_PROVIDER", STT_PROVIDER_DEFAULT).strip().lower() or STT_PROVIDER_DEFAULT
+    if provider not in STT_PROVIDER_ALIASES:
+        return SttResult("", "unsupported-provider", 0, provider)
+    if provider in {"moonshine", "moonshine-command", "local-command"}:
+        moonshine = _transcribe_with_moonshine_command(pcm)
+        if moonshine.transcript:
+            return moonshine
+    return _transcribe_with_hermes_stt_fallback(pcm)
+
+
+def _transcribe_with_hermes_stt_fallback(pcm: bytes) -> SttResult:
     mode = os.environ.get("OTOXAN_STT_MODE", "inprocess").strip().lower()
     if mode != "subprocess":
         inprocess = _transcribe_with_inprocess_stt(pcm)
         if inprocess.status != "inprocess-unavailable":
             return inprocess
     return _transcribe_with_subprocess_stt(pcm)
+
+
+def _transcribe_with_moonshine_command(pcm: bytes) -> SttResult:
+    started = time.monotonic()
+    command_template = os.environ.get("OTOXAN_MOONSHINE_STT_COMMAND", "").strip()
+    if not command_template:
+        return SttResult("", "not-configured", _elapsed_ms(started), "moonshine-stt")
+    timeout = float(os.environ.get("OTOXAN_STT_TIMEOUT_SECONDS", "20"))
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
+        input_path = wav_file.name
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+        output_path = out_file.name
+    try:
+        _write_pcm16_wav(input_path, pcm)
+        command = command_template.format(input=shlex.quote(input_path), output=shlex.quote(output_path))
+        try:
+            result = subprocess.run(
+                shlex.split(command),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False,
+            )
+        except FileNotFoundError:
+            return SttResult("", "file-not-found", _elapsed_ms(started), "moonshine-stt")
+        except subprocess.TimeoutExpired:
+            return SttResult("", "timeout", _elapsed_ms(started), "moonshine-stt")
+        latency_ms = _elapsed_ms(started)
+        if result.returncode != 0:
+            return SttResult("", "command-error", latency_ms, "moonshine-stt")
+        output = Path(output_path)
+        text = ""
+        if output.exists() and output.stat().st_size > 0:
+            text = _parse_stt_command_output(output.read_text(errors="replace"))
+        if not text:
+            text = _parse_stt_command_output((result.stdout or b"").decode("utf-8", errors="replace"))
+        return SttResult(text, "success" if text else "empty", latency_ms, "moonshine-stt")
+    except Exception:
+        return SttResult("", "error", _elapsed_ms(started), "moonshine-stt")
+    finally:
+        for path in (input_path, output_path):
+            try:
+                Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _parse_stt_command_output(raw: str) -> str:
+    text = raw.strip()
+    if not text:
+        return ""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return _clean(text.splitlines()[-1] if text.splitlines() else text, "")
+    if isinstance(data, Mapping):
+        if data.get("success") is False:
+            return ""
+        for key in ("transcript", "text", "utterance"):
+            transcript = _clean(data.get(key), "")
+            if transcript:
+                return transcript
+    return ""
 
 
 def _transcribe_with_inprocess_stt(pcm: bytes) -> SttResult:
@@ -837,9 +930,11 @@ def _proof_turn(pcm: bytes, route: RouteSummary, provider: str) -> AssistantTurn
         transcript_source="proof",
         stt_status="not-run",
         stt_latency_ms=None,
+        stt_provider="not-run",
         timing={
             "transcriptTotalMs": 0,
             "sttLatencyMs": None,
+            "sttProvider": "not-run",
             "xanderSessionMs": None,
             "proofToneBuildMs": _elapsed_ms(tone_started),
         },

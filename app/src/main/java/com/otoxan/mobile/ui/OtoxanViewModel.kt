@@ -362,6 +362,7 @@ class OtoxanViewModel(
                 ttsBytes = ttsBytes,
                 provider = result.provider,
                 transcriptSource = result.transcriptSource,
+                sttProvider = result.sttProvider,
                 sttStatus = result.sttStatus,
                 sttLatencyMs = result.sttLatencyMs,
                 pass1Status = result.pass1Status,
@@ -408,7 +409,7 @@ class OtoxanViewModel(
                 lastEvidence = if (result.provider == "stub") {
                     "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                 } else {
-                    "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
+                    "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
                 }
             )
         }
@@ -473,6 +474,7 @@ class OtoxanViewModel(
             responseBuildMs = result.responseBuildMs,
             provider = result.provider,
             transcriptSource = result.transcriptSource,
+            sttProvider = result.sttProvider,
             sttStatus = result.sttStatus,
             pass1Status = result.pass1Status,
             pass1Ready = result.pass1Ready,
@@ -585,7 +587,7 @@ class OtoxanViewModel(
                     pcm,
                     RouteEvidence.default("Backend self-test: no wearable route selected")
                 )
-                "OK provider=${result.provider ?: "unknown"}; backendReceived=${result.bytesReceived ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; pass1=${result.pass1Status ?: "unknown"}; endpoint=${BuildConfig.XANDER_VOICE_ENDPOINT.ifBlank { "stub" }}"
+                "OK provider=${result.provider ?: "unknown"}; backendReceived=${result.bytesReceived ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; pass1=${result.pass1Status ?: "unknown"}; endpoint=${BuildConfig.XANDER_VOICE_ENDPOINT.ifBlank { "stub" }}"
             }.onSuccess { status ->
                 _uiState.update {
                     it.copy(
