@@ -297,4 +297,6 @@ Android PCM -> repo-local /voice-turn adapter -> Hermes STT lane -> Hermes profi
 
 Current scope: this starts the live Xander turn through the configured Hermes model lane and attempts transcription through the configured Hermes STT lane, optionally trying the Moonshine-compatible local STT command first. If STT is unavailable or returns nothing, the helper falls back to route/byte evidence or `OTOXAN_DEBUG_TRANSCRIPT` so the physical loop still stays testable.
 
+Hardware validation closure is captured in [`docs/hardware-validation-gate.md`](docs/hardware-validation-gate.md). Treat source/build proof and real Ray-Ban hardware proof as separate evidence classes: only a real phone/Ray-Ban turn with `pass1Ready=true` and `pass1Status=real-speech-proven` closes the hardware gate.
+
 Pass 1 closeout evidence and the current keep-it-simple backend decision are captured in [`docs/pass1-closeout.md`](docs/pass1-closeout.md). The repo-local `/voice-turn` adapter remains the active edge while voice quality, Xander personality, and latency are hardened; avoid a large backend reorganization for now.
