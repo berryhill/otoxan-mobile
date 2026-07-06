@@ -1,5 +1,10 @@
 package com.otoxan.mobile.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -17,6 +23,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -51,6 +59,7 @@ fun OtoxanScreen(
         )
 
         RouteTruthCard(state)
+        VoiceActivityCard(state)
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = onRefreshRoute) {
@@ -125,6 +134,79 @@ private fun RouteTruthCard(state: OtoxanUiState) {
             Text("Output: ${state.selectedOutputName} (${state.selectedOutputType})")
             Spacer(Modifier.height(4.dp))
             Text("Evidence: ${state.lastEvidence}", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun VoiceActivityCard(state: OtoxanUiState) {
+    val stage = state.turnStage.lowercase()
+    val listening = state.conversationActive && ("listening" in stage || "speak now" in stage)
+    val speaking = state.conversationActive && ("speaking" in stage || "playing" in stage)
+    val thinking = state.conversationActive && ("thinking" in stage || "xander" in stage || "backend" in stage)
+    val activePulse = listening || speaking
+    val label = when {
+        listening -> "Listening — talk now"
+        speaking -> "Xander is speaking"
+        thinking -> "Thinking"
+        state.conversationActive -> "Session active"
+        else -> "Session idle"
+    }
+    val infinite = rememberInfiniteTransition(label = "voice-activity")
+    val bar1 by infinite.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(animation = tween(420), repeatMode = RepeatMode.Reverse),
+        label = "voice-bar-1"
+    )
+    val bar2 by infinite.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 0.95f,
+        animationSpec = infiniteRepeatable(animation = tween(520), repeatMode = RepeatMode.Reverse),
+        label = "voice-bar-2"
+    )
+    val bar3 by infinite.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(animation = tween(360), repeatMode = RepeatMode.Reverse),
+        label = "voice-bar-3"
+    )
+    val bars = if (activePulse) listOf(bar1, bar2, bar3, bar2, bar1) else listOf(0.22f, 0.22f, 0.22f, 0.22f, 0.22f)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (state.conversationActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.height(48.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                bars.forEach { level ->
+                    Spacer(
+                        modifier = Modifier
+                            .width(8.dp)
+                            .height((12f + (level * 34f)).dp)
+                            .background(
+                                color = if (state.conversationActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                    )
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(state.turnStage, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

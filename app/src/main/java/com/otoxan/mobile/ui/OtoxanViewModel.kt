@@ -17,6 +17,7 @@ import com.otoxan.mobile.voice.createXanderVoiceClient
 import com.otoxan.mobile.voice.expectedPcmBytes
 import com.otoxan.mobile.voice.isUsableVoiceCapture
 import com.otoxan.mobile.voice.peakPcm16Amplitude
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -129,18 +130,21 @@ class OtoxanViewModel(
                         delay(350L)
                     }
                     .onFailure { error ->
+                        if (error is CancellationException) throw error
                         val releaseEvidence = runCatching { releaseCommunicationRoute("Released communication route after failed conversation turn") }
                             .getOrElse { RouteEvidence.default("Communication route release failed after conversation turn") }
                         _uiState.update {
                             it.copy(
-                                conversationActive = false,
+                                conversationActive = true,
                                 wearableRouteActive = false,
-                                sessionState = VoiceSessionState.Error,
-                                turnStage = "Conversation turn failed; session stopped",
+                                sessionState = VoiceSessionState.ConversationActive,
+                                turnStage = "Turn failed; session still active and retrying",
+                                telemetryStatus = "Turn failed; next listen will retry",
                                 lastEvidence = releaseEvidence.message,
                                 lastError = error.message ?: error::class.java.simpleName
                             )
                         }
+                        delay(900L)
                     }
             }
         }
@@ -217,7 +221,7 @@ class OtoxanViewModel(
             if (!routeEvidence.wearableActive) {
                 error("Wearable route dropped before capture: ${routeEvidence.message}")
             }
-            _uiState.update { it.copy(turnStage = "Capturing speech from selected route (max 5 seconds)") }
+            _uiState.update { it.copy(turnStage = "Listening — speak now") }
             val captureConfig = VoiceCaptureConfig()
             val captureStarted = System.nanoTime()
             val capture = micCapture.recordPcmUntilSpeechSilence(captureConfig)
@@ -230,7 +234,7 @@ class OtoxanViewModel(
             if (!usable) {
                 error("Microphone capture unusable: captured=${pcm.size} bytes, minimum=$minimumUsableBytes, peak=$peak, stop=${capture.stopReason}, speech=${capture.speechDetected}")
             }
-            _uiState.update { it.copy(turnStage = "Posting ${pcm.size} bytes to Xander backend after ${capture.stopReason}") }
+            _uiState.update { it.copy(turnStage = "Thinking — ${pcm.size} bytes to Xander after ${capture.stopReason}") }
             val backendStarted = System.nanoTime()
             val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
             val backendRoundTripMs = elapsedMs(backendStarted)
@@ -244,7 +248,7 @@ class OtoxanViewModel(
                     turnStage = if (playbackMode == PlaybackMode.SilentAfterCapture) {
                         "Skipping playback by operator mode"
                     } else {
-                        "Playing assistant response with non-call playback policy"
+                        "Speaking Xander response"
                     }
                 )
             }
