@@ -204,7 +204,7 @@ Moonshine-compatible command mode:
 
 ```bash
 OTOXAN_STT_PROVIDER=moonshine-command \
-OTOXAN_MOONSHINE_STT_COMMAND='moonshine-transcribe --input {input}' \
+OTOXAN_MOONSHINE_STT_COMMAND='python3 tools/moonshine_stt_command.py --backend auto --input {input} --output {output}' \
 make backend
 ```
 
@@ -224,6 +224,33 @@ sttLatencyMs=<milliseconds>
 ```
 
 Fallback and no-speech behavior stay honest: if all STT lanes return empty, the backend says `Audio arrived, but words did not decode.` and does not call the Xander model lane with route evidence as fake speech.
+
+Phase 6 repo-local wrapper:
+
+```bash
+# Backend with Moonshine wrapper first, Hermes STT fallback second.
+make backend-moonshine
+
+# Wrapper-only tests; no Moonshine package is required for these.
+make test-moonshine-wrapper
+```
+
+`tools/moonshine_stt_command.py` is intentionally dependency-optional. It tries installed local packages in this order when `--backend auto` is used:
+
+1. `useful-moonshine-onnx` / import `moonshine_onnx`
+2. `useful-moonshine` / import `moonshine`
+3. `moonshine-voice` / import `moonshine_voice`
+
+Recommended optional local install outside the app dependency graph:
+
+```bash
+python3 -m venv .venv-moonshine
+. .venv-moonshine/bin/activate
+pip install useful-moonshine-onnx
+OTOXAN_STT_PROVIDER=moonshine-command \
+OTOXAN_MOONSHINE_STT_COMMAND='.venv-moonshine/bin/python tools/moonshine_stt_command.py --backend moonshine-onnx --input {input} --output {output}' \
+make backend
+```
 
 Provider modes:
 

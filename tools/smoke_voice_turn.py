@@ -50,6 +50,7 @@ def main() -> None:
         "audioFormat": data.get("audioFormat"),
         "audioStats": data.get("audioStats"),
         "transcriptSource": data.get("transcriptSource"),
+        "sttProvider": data.get("sttProvider"),
         "sttStatus": data.get("sttStatus"),
         "sttLatencyMs": data.get("sttLatencyMs"),
         "backendTotalMs": data.get("backendTotalMs"),

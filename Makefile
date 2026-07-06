@@ -10,7 +10,7 @@ GRADLE ?= ./gradlew
 PYTHON ?= $(shell if [ -x /home/silas/.hermes/hermes-agent/venv/bin/python ]; then echo /home/silas/.hermes/hermes-agent/venv/bin/python; else echo python3; fi)
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 
-.PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-xander backend-proof backend-realtime smoke-backend test-backend test-realtime test test-all endpoint doctor
+.PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-xander backend-proof backend-moonshine backend-realtime smoke-backend test-backend test-realtime test-moonshine-wrapper test test-all endpoint doctor
 
 help:
 	@printf '%s\n' \
@@ -19,6 +19,7 @@ help:
 	  '  make backend                  Run mobile-fast Xander backend on 0.0.0.0:8787' \
 	  '  make backend-xander           Explicitly require legacy Xander/Hermes session provider' \
 	  '  make backend-proof            Run deterministic proof backend only' \
+	  '  make backend-moonshine        Run mobile-fast backend with optional Moonshine STT wrapper first' \
 	  '  make backend-realtime         Run Phase 1 WebSocket realtime skeleton on 0.0.0.0:8788' \
 	  '  make smoke-backend            POST a fake Ray-Ban turn to VOICE_ENDPOINT' \
 	  '  make build                    Build debug APK with VOICE_ENDPOINT baked in' \
@@ -49,6 +50,9 @@ backend-xander:
 
 backend-proof:
 	OTOXAN_VOICE_PROVIDER=proof $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
+
+backend-moonshine:
+	OTOXAN_VOICE_PROVIDER=mobile-fast OTOXAN_STT_PROVIDER=moonshine-command OTOXAN_MOONSHINE_STT_COMMAND='$(PYTHON) tools/moonshine_stt_command.py --backend auto --input {input} --output {output}' $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
 
 backend-realtime:
 	$(PYTHON) tools/realtime_voice_server.py --host $(VOICE_HOST) --port $(REALTIME_PORT)
@@ -91,10 +95,14 @@ test-backend:
 test-realtime:
 	$(PYTHON) -m unittest app/src/test/python/test_realtime_voice_server.py -v
 
+test-moonshine-wrapper:
+	$(PYTHON) -m unittest app/src/test/python/test_moonshine_stt_command.py -v
+
 test:
 	$(GRADLE) :app:testDebugUnitTest
 	$(MAKE) test-backend
 	$(MAKE) test-realtime
+	$(MAKE) test-moonshine-wrapper
 
 test-all: test build
 
