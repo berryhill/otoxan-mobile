@@ -135,20 +135,20 @@ class OtoxanViewModel(
                     .onFailure { error ->
                         if (error is CancellationException) throw error
                         if (error is NoSpeechDetectedForTurn) {
+                            conversationJob = null
                             _uiState.update {
                                 it.copy(
-                                    conversationActive = true,
+                                    conversationActive = false,
                                     wearableRouteActive = false,
                                     liveVoicePeak = 0,
                                     liveVoiceLevel = 0f,
                                     liveSpeechDetected = false,
-                                    sessionState = VoiceSessionState.ConversationActive,
-                                    turnStage = "Still listening — no speech heard",
-                                    telemetryStatus = "Idle listen skipped; no backend turn sent",
+                                    sessionState = VoiceSessionState.Idle,
+                                    turnStage = "Session paused after idle silence",
+                                    telemetryStatus = "Idle silence stopped auto-listen; no backend turn sent",
                                     lastError = null
                                 )
                             }
-                            delay(500L)
                             return@onFailure
                         }
                         val releaseEvidence = runCatching { releaseCommunicationRoute("Released communication route after failed conversation turn") }
