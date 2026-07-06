@@ -4,9 +4,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val defaultXanderVoiceEndpoint = "http://100.126.0.110:8787/voice-turn"
+
 val xanderVoiceEndpoint: String = providers.gradleProperty("XANDER_VOICE_ENDPOINT")
     .orElse(providers.environmentVariable("XANDER_VOICE_ENDPOINT"))
-    .orElse("")
+    .orElse(defaultXanderVoiceEndpoint)
     .get()
 
 android {

@@ -75,9 +75,12 @@ For the first physical voice-loop test, use the repo-local Python helper instead
 python3 tools/voice_turn_server.py --host 0.0.0.0 --port 8787
 ```
 
-Build the Android app with the phone-reachable host IP. Either pass the Gradle property explicitly or export the environment variable; the Gradle property wins when both are present. The app accepts either the full `/voice-turn` URL or the base server URL and normalizes the capture endpoint to `/voice-turn`:
+Build the Android app with the default phone-reachable proof host, or override it for another LAN/Tailscale route. The checked-in debug default is `http://100.126.0.110:8787/voice-turn` so a normal debug build does not silently fall back to the stub client. Either pass the Gradle property explicitly or export the environment variable; the Gradle property wins when both are present. The app accepts either the full `/voice-turn` URL or the base server URL and normalizes the capture endpoint to `/voice-turn`:
 
 ```bash
+# default physical proof endpoint:
+./gradlew :app:assembleDebug
+# override with a different phone-reachable host:
 ./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn"
 # equivalent shortcut:
 ./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787"
