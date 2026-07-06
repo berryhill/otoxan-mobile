@@ -246,7 +246,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("mobile-fast", result["provider"])
         self.assertEqual("real-speech-proven", result["pass1Status"])
         self.assertTrue(result["pass1Ready"])
-        self.assertIn("voice loop is live", result["assistantText"])
+        self.assertIn("voice loop live", result["assistantText"])
         self.assertNotIn("Fast lane", result["assistantText"])
         self.assertNotIn("provider", result["assistantText"].lower())
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
@@ -291,7 +291,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         request = urlopen.call_args.args[0]
         body = voice_turn_server.json.loads(request.data.decode("utf-8"))
         self.assertEqual("fast-model", body["model"])
-        self.assertIn("max 16 words", body["messages"][0]["content"])
+        self.assertIn("max 10 words", body["messages"][0]["content"])
         self.assertEqual(256, body["max_tokens"])
         self.assertTrue(body["reasoning_split"])
         self.assertNotIn("test-key", str(body))
@@ -335,7 +335,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed) as run:
             text = voice_turn_server._ask_xander_session("Xander, say pineapple if you heard me", route)
 
-        self.assertIn("control loop", text)
+        self.assertEqual("I'm on the Ray-Ban route", text)
         command = run.call_args.args[0]
         prompt = command[command.index("-z") + 1]
         self.assertIn("Otoxan controller operator", prompt)
@@ -356,7 +356,11 @@ class VoiceTurnServerTest(unittest.TestCase):
         long = " ".join(f"word{i}" for i in range(30))
         shaped = voice_turn_server._shape_mobile_spoken_response(long)
         self.assertLessEqual(len(shaped.split()), voice_turn_server.XANDER_MOBILE_MAX_WORDS)
+        self.assertLessEqual(len(shaped), voice_turn_server.XANDER_SPOKEN_MAX_CHARS + 1)
         self.assertTrue(shaped.endswith("."))
+
+        semicolon = "The loop is live; this slower diagnostic clause should not be spoken."
+        self.assertEqual("The loop is live", voice_turn_server._shape_mobile_spoken_response(semicolon))
 
     def test_xander_session_returns_shaped_spoken_response(self):
         os.environ["OTOXAN_HERMES_BIN"] = "/bin/hermes-test"

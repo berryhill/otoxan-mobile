@@ -46,8 +46,9 @@ HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
 XANDER_FAST_TIMEOUT_SECONDS = 8
-XANDER_MOBILE_MAX_WORDS = 25
-XANDER_FAST_MAX_WORDS = 16
+XANDER_MOBILE_MAX_WORDS = 12
+XANDER_FAST_MAX_WORDS = 10
+XANDER_SPOKEN_MAX_CHARS = 72
 XANDER_MOBILE_VOICE_CONTRACT = """You are Xander on Otoxan Mobile.
 
 Identity:
@@ -57,7 +58,7 @@ Identity:
 Voice:
 - Direct, architectural, builder-first, evidence-driven.
 - Use first person as Xander.
-- Short enough for glasses audio: one spoken sentence, 25 words max.
+- Short enough for glasses audio: one spoken sentence, 12 words max.
 - No filler, no apologies, no 'happy to help', no 'as an AI'.
 - No provider/tool/API talk unless Matt explicitly asks.
 
@@ -518,12 +519,8 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
 
 
 def _mobile_fast_degraded_spoken_response(transcript: str) -> str:
-    spoken = _clean(transcript, "your words")
-    words = spoken.split()
-    if len(words) > 8:
-        spoken = " ".join(words[:8]) + "..."
     return _shape_mobile_spoken_response(
-        f"I heard {spoken}; the response lane is degraded, but the voice loop is live.",
+        "Heard you, voice loop live, response lane degraded.",
         max_words=XANDER_FAST_MAX_WORDS,
     )
 
@@ -586,9 +583,12 @@ def _shape_mobile_spoken_response(text: str, max_words: int = XANDER_MOBILE_MAX_
             break
     first_line = next((line.strip(" -\t") for line in cleaned.splitlines() if line.strip()), cleaned)
     sentence = _first_sentence(first_line)
+    sentence = sentence.split(";", 1)[0].strip() or sentence
     words = sentence.split()
     if len(words) > max_words:
         sentence = " ".join(words[:max_words]).rstrip(",;:-") + "."
+    if len(sentence) > XANDER_SPOKEN_MAX_CHARS:
+        sentence = sentence[:XANDER_SPOKEN_MAX_CHARS].rsplit(" ", 1)[0].rstrip(",;:-") + "."
     return sentence
 
 
