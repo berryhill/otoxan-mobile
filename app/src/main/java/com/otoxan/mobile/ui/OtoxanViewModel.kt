@@ -208,7 +208,7 @@ class OtoxanViewModel(
     fun recordFiveSecondProof() {
         val turnId = UUID.randomUUID().toString()
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { performVoiceTurn(turnId, requireExistingRoute = true) }
+            runCatching { performVoiceTurn(turnId, requireExistingRoute = false) }
                 .onSuccess { proof -> applyVoiceTurnSuccess(turnId, proof, keepConversationActive = false) }
                 .onFailure { error ->
                     _uiState.update {

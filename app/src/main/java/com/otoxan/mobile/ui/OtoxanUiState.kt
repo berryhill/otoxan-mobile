@@ -65,6 +65,9 @@ data class OtoxanUiState(
     val lastError: String? = null
 )
 
+val OtoxanUiState.voiceActivityActive: Boolean
+    get() = conversationActive || sessionState == VoiceSessionState.RecordingTest || sessionState == VoiceSessionState.PlayingTest
+
 enum class PermissionState {
     Unknown,
     Granted,

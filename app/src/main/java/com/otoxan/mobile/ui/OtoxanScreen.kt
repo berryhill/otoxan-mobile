@@ -96,7 +96,7 @@ fun OtoxanScreen(
 
         OutlinedButton(
             onClick = onRecordFiveSeconds,
-            enabled = state.permissionState == PermissionState.Granted && state.wearableRouteActive && !state.conversationActive
+            enabled = state.permissionState == PermissionState.Granted && !state.conversationActive
         ) {
             Text("Single turn test")
         }
@@ -141,17 +141,20 @@ private fun RouteTruthCard(state: OtoxanUiState) {
 @Composable
 private fun VoiceActivityCard(state: OtoxanUiState) {
     val stage = state.turnStage.lowercase()
-    val listening = state.conversationActive && ("listening" in stage || "speak now" in stage || "hearing you" in stage)
+    val activityActive = state.voiceActivityActive
+    val listening = activityActive && ("listening" in stage || "speak now" in stage || "hearing you" in stage || "capture" in stage)
     val hearingVoice = listening && state.liveSpeechDetected
-    val speaking = state.conversationActive && ("speaking" in stage || "playing" in stage)
-    val thinking = state.conversationActive && ("thinking" in stage || "xander" in stage || "backend" in stage)
-    val activePulse = hearingVoice || speaking
+    val speaking = activityActive && ("speaking" in stage || "playing" in stage)
+    val thinking = activityActive && ("thinking" in stage || "xander" in stage || "backend" in stage || "releasing" in stage)
+    val activePulse = listening || hearingVoice || speaking || thinking
     val label = when {
         hearingVoice -> "Hearing your voice"
         listening -> "Listening — talk now"
         speaking -> "Xander is speaking"
         thinking -> "Thinking"
         state.conversationActive -> "Session active"
+        state.sessionState == VoiceSessionState.RecordingTest -> "Single turn active"
+        state.sessionState == VoiceSessionState.PlayingTest -> "Route proof active"
         else -> "Session idle"
     }
     val infinite = rememberInfiniteTransition(label = "voice-activity")
@@ -189,7 +192,7 @@ private fun VoiceActivityCard(state: OtoxanUiState) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (state.conversationActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+            containerColor = if (activityActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
         )
     ) {
         Row(
@@ -210,7 +213,7 @@ private fun VoiceActivityCard(state: OtoxanUiState) {
                             .width(8.dp)
                             .height((12f + (level * 34f)).dp)
                             .background(
-                                color = if (state.conversationActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                color = if (activityActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                                 shape = RoundedCornerShape(8.dp)
                             )
                     )
@@ -219,7 +222,7 @@ private fun VoiceActivityCard(state: OtoxanUiState) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(state.turnStage, style = MaterialTheme.typography.bodySmall)
-                if (state.conversationActive) {
+                if (activityActive) {
                     Text("Mic peak: ${state.liveVoicePeak}", style = MaterialTheme.typography.bodySmall)
                 }
             }
