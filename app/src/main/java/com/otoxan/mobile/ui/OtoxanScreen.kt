@@ -28,7 +28,8 @@ fun OtoxanScreen(
     onRecordFiveSeconds: () -> Unit,
     onPlayTest: () -> Unit,
     onClearRoute: () -> Unit,
-    onBackendSelfTest: () -> Unit
+    onBackendSelfTest: () -> Unit,
+    onTogglePlaybackMode: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -58,8 +59,13 @@ fun OtoxanScreen(
             }
         }
 
-        OutlinedButton(onClick = onBackendSelfTest) {
-            Text("Backend self-test")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = onBackendSelfTest) {
+                Text("Backend self-test")
+            }
+            OutlinedButton(onClick = onTogglePlaybackMode) {
+                Text("Playback: ${state.playbackMode.label}")
+            }
         }
 
         Button(
@@ -140,8 +146,9 @@ private fun OperatorDebugCard(state: OtoxanUiState) {
             Text("Endpoint: ${state.voiceEndpoint}")
             Text("Backend self-test: ${state.backendSelfTestStatus}")
             Text("Route release policy: ${state.routeReleasePolicy}")
+            Text("Playback mode: ${state.playbackMode.label}")
             Text("Playback policy: ${state.playbackPolicy}")
-            Text("Physical acceptance: after Talk, Meta should leave call state after playback/release.")
+            Text("Physical acceptance: if normal mode wedges Meta, switch to Silent after capture and retest.")
         }
     }
 }

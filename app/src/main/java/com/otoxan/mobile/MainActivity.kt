@@ -38,7 +38,8 @@ class MainActivity : ComponentActivity() {
                 onRecordFiveSeconds = viewModel::recordFiveSecondProof,
                 onPlayTest = viewModel::playRouteProof,
                 onClearRoute = viewModel::clearRoute,
-                onBackendSelfTest = viewModel::runBackendSelfTest
+                onBackendSelfTest = viewModel::runBackendSelfTest,
+                onTogglePlaybackMode = viewModel::togglePlaybackMode
             )
         }
     }

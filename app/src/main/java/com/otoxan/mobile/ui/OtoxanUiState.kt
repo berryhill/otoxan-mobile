@@ -30,7 +30,8 @@ data class OtoxanUiState(
     val captureUsable: Boolean? = null,
     val backendSelfTestStatus: String = "Not run",
     val routeReleasePolicy: String = "Release communication route before playback; clear communication device twice; reset SCO and MODE_NORMAL",
-    val playbackPolicy: String = "Playback uses non-call speech audio attributes with transient audio focus",
+    val playbackMode: PlaybackMode = PlaybackMode.NonCallPlayback,
+    val playbackPolicy: String = PlaybackMode.NonCallPlayback.description,
     val turnStage: String = "Idle",
     val lastError: String? = null
 )
@@ -48,4 +49,21 @@ enum class VoiceSessionState {
     RecordingTest,
     PlayingTest,
     Error
+}
+
+
+enum class PlaybackMode(val label: String, val description: String) {
+    NonCallPlayback(
+        label = "Non-call playback",
+        description = "Playback uses non-call speech audio attributes with transient audio focus"
+    ),
+    SilentAfterCapture(
+        label = "Silent after capture",
+        description = "Capture and backend run, then playback is skipped to isolate whether capture alone wedges Meta"
+    );
+
+    fun next(): PlaybackMode = when (this) {
+        NonCallPlayback -> SilentAfterCapture
+        SilentAfterCapture -> NonCallPlayback
+    }
 }

@@ -45,6 +45,19 @@ class OtoxanViewModel(
         }
     }
 
+
+    fun togglePlaybackMode() {
+        _uiState.update {
+            val nextMode = it.playbackMode.next()
+            it.copy(
+                playbackMode = nextMode,
+                playbackPolicy = nextMode.description,
+                turnStage = "Playback mode set to ${nextMode.label}",
+                lastEvidence = "Playback mode: ${nextMode.description}"
+            )
+        }
+    }
+
     fun refreshRoute() {
         _uiState.update { it.copy(sessionState = VoiceSessionState.CheckingRoute, turnStage = "Selecting wearable route", lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
@@ -112,9 +125,20 @@ class OtoxanViewModel(
                     val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
                     _uiState.update { it.copy(turnStage = "Releasing call route before assistant playback") }
                     releaseEvidence = releaseCommunicationRoute("Released communication route before assistant playback")
-                    _uiState.update { it.copy(turnStage = "Playing assistant response with non-call playback policy") }
+                    val playbackMode = _uiState.value.playbackMode
+                    _uiState.update {
+                        it.copy(
+                            turnStage = if (playbackMode == PlaybackMode.SilentAfterCapture) {
+                                "Skipping playback by operator mode"
+                            } else {
+                                "Playing assistant response with non-call playback policy"
+                            }
+                        )
+                    }
                     val backendTts = result.ttsPcm16Mono16k
-                    if (backendTts != null && backendTts.isNotEmpty()) {
+                    if (playbackMode == PlaybackMode.SilentAfterCapture) {
+                        // Intentional diagnostic mode: isolate whether capture/route release alone wedges Meta call state.
+                    } else if (backendTts != null && backendTts.isNotEmpty()) {
                         speechPlayback.playPcm16Mono16k(backendTts)
                     } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
                         speechPlayback.speakText(result.assistantText)
@@ -162,7 +186,7 @@ class OtoxanViewModel(
                         expectedCaptureBytes = proof.expectedCaptureBytes,
                         capturePeakAmplitude = proof.capturePeakAmplitude,
                         captureUsable = proof.captureUsable,
-                        turnStage = "Turn complete; communication route released before playback",
+                        turnStage = if (it.playbackMode == PlaybackMode.SilentAfterCapture) "Turn complete; playback skipped by operator mode" else "Turn complete; communication route released before playback",
                         lastEvidence = if (result.provider == "stub") {
                             "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                         } else {

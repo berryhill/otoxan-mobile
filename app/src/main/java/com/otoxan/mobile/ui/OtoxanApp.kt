@@ -12,7 +12,8 @@ fun OtoxanApp(
     onRecordFiveSeconds: () -> Unit,
     onPlayTest: () -> Unit,
     onClearRoute: () -> Unit,
-    onBackendSelfTest: () -> Unit
+    onBackendSelfTest: () -> Unit,
+    onTogglePlaybackMode: () -> Unit
 ) {
     MaterialTheme(
         colorScheme = lightColorScheme(
@@ -28,7 +29,8 @@ fun OtoxanApp(
             onRecordFiveSeconds = onRecordFiveSeconds,
             onPlayTest = onPlayTest,
             onClearRoute = onClearRoute,
-            onBackendSelfTest = onBackendSelfTest
+            onBackendSelfTest = onBackendSelfTest,
+            onTogglePlaybackMode = onTogglePlaybackMode
         )
     }
 }
