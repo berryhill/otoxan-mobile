@@ -453,6 +453,18 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(1, latest["corruptLineCount"])
         self.assertEqual(2, latest["latest"]["n"])
 
+    def test_recent_metrics_returns_bounded_newest_first_records(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "metrics.jsonl"
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = str(path)
+            path.write_text(''.join(f'{{"n": {idx}}}\n' for idx in range(5)))
+
+            recent = voice_turn_server.recent_voice_turn_metrics(limit=3)
+
+        self.assertTrue(recent["ok"])
+        self.assertEqual(5, recent["count"])
+        self.assertEqual([4, 3, 2], [record["n"] for record in recent["records"]])
+
     def test_mobile_fast_direct_provider_shapes_response_without_leaking_reasoning(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
         fake_config = {

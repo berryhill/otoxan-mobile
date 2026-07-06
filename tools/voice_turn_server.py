@@ -31,6 +31,7 @@ import wave
 import uuid
 import urllib.error
 import urllib.request
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1079,10 +1080,23 @@ def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "")
 
 
 def latest_voice_turn_metrics() -> dict[str, Any]:
+    recent = recent_voice_turn_metrics(limit=1)
+    latest = recent["records"][0] if recent["records"] else None
+    return {
+        "ok": True,
+        "count": recent["count"],
+        "latest": latest,
+        "metricsPath": recent["metricsPath"],
+        "corruptLineCount": recent["corruptLineCount"],
+    }
+
+
+def recent_voice_turn_metrics(limit: int = 20) -> dict[str, Any]:
     path = Path(os.environ.get("OTOXAN_VOICE_METRICS_JSONL", METRICS_JSONL_DEFAULT))
+    bounded_limit = max(1, min(int(limit or 20), 100))
     if not path.exists():
-        return {"ok": True, "count": 0, "latest": None, "metricsPath": str(path), "corruptLineCount": 0}
-    latest = None
+        return {"ok": True, "count": 0, "records": [], "metricsPath": str(path), "corruptLineCount": 0}
+    records: list[dict[str, Any]] = []
     count = 0
     corrupt = 0
     with path.open("r", encoding="utf-8") as fh:
@@ -1091,10 +1105,15 @@ def latest_voice_turn_metrics() -> dict[str, Any]:
                 continue
             count += 1
             try:
-                latest = json.loads(line)
+                record = json.loads(line)
             except json.JSONDecodeError:
                 corrupt += 1
-    return {"ok": True, "count": count, "latest": latest, "metricsPath": str(path), "corruptLineCount": corrupt}
+                continue
+            records.append(record)
+            if len(records) > bounded_limit:
+                records.pop(0)
+    records.reverse()
+    return {"ok": True, "count": count, "records": records, "metricsPath": str(path), "corruptLineCount": corrupt}
 
 
 def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -1123,8 +1142,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/healthz":
             self._send_json(200, {"ok": True, "service": "otoxan-mobile-voice-turn"})
             return
-        if self.path == "/voice-turn-metrics/latest":
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/voice-turn-metrics/latest":
             self._send_json(200, latest_voice_turn_metrics())
+            return
+        if parsed.path == "/voice-turn-metrics/recent":
+            query = urllib.parse.parse_qs(parsed.query)
+            raw_limit = query.get("limit", ["20"])[0]
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                limit = 20
+            self._send_json(200, recent_voice_turn_metrics(limit=limit))
             return
         self._send_json(404, {"ok": False, "error": "not found"})
 
