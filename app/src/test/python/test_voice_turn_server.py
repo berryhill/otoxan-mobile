@@ -27,6 +27,8 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_HERMES_CWD",
                 "OTOXAN_XANDER_TIMEOUT_SECONDS",
                 "OTOXAN_VOICE_METRICS_JSONL",
+                "OTOXAN_MOBILE_FAST_PROVIDER",
+                "OTOXAN_XANDER_CONFIG",
             )
         }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
@@ -188,6 +190,68 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("real-speech-proven", result["pass1Status"])
         self.assertTrue(result["pass1Ready"])
         self.assertIn("pineapple", result["assistantText"].lower())
+
+    def test_mobile_fast_provider_uses_stt_and_fast_xander_lane(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
+        payload = self._payload()
+        stt = voice_turn_server.SttResult("give me the latency status", "success", 33)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
+            with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", return_value="Fast lane is live; telemetry will show the cut.") as ask:
+                result = voice_turn_server.handle_voice_turn(payload)
+
+        ask.assert_called_once()
+        self.assertEqual("mobile-fast", result["provider"])
+        self.assertEqual("hermes-stt", result["transcriptSource"])
+        self.assertEqual("success", result["sttStatus"])
+        self.assertEqual(33, result["sttLatencyMs"])
+        self.assertEqual(33, result["timing"]["sttLatencyMs"])
+        self.assertIsInstance(result["xanderSessionMs"], int)
+        self.assertIsInstance(result["timing"]["xanderFastMs"], int)
+        self.assertEqual("real-speech-proven", result["pass1Status"])
+        self.assertTrue(result["pass1Ready"])
+        self.assertIn("Fast lane", result["assistantText"])
+
+    def test_mobile_fast_direct_provider_shapes_response_without_leaking_reasoning(self):
+        route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
+        fake_config = {
+            "providers": {
+                "fast-test": {
+                    "base_url": "https://example.invalid/v1",
+                    "api_key": "test-key",
+                    "model": "fast-model",
+                }
+            }
+        }
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "<think>private reasoning</think>Sure, fast response works. Extra sentence removed."
+                    }
+                }
+            ]
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return voice_turn_server.json.dumps(response_body).encode("utf-8")
+
+        os.environ["OTOXAN_MOBILE_FAST_PROVIDER"] = "fast-test"
+        with mock.patch.object(voice_turn_server, "_load_xander_config", return_value=fake_config):
+            with mock.patch.object(voice_turn_server.urllib.request, "urlopen", return_value=FakeResponse()) as urlopen:
+                text = voice_turn_server._ask_xander_mobile_fast("test transcript", route)
+
+        self.assertEqual("fast response works.", text)
+        request = urlopen.call_args.args[0]
+        body = voice_turn_server.json.loads(request.data.decode("utf-8"))
+        self.assertEqual("fast-model", body["model"])
+        self.assertIn("max 16 words", body["messages"][0]["content"])
+        self.assertNotIn("test-key", str(body))
 
     def test_xander_session_prompt_preserves_mobile_xander_voice_contract(self):
         os.environ["OTOXAN_HERMES_BIN"] = "/bin/hermes-test"

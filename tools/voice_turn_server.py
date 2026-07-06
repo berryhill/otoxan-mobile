@@ -25,21 +25,29 @@ import tempfile
 import time
 import wave
 import uuid
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
 
+import yaml
+
 SUPPORTED_FORMAT = "pcm_s16le_16khz_mono"
 MAX_PCM_BYTES = 512_000
 SAMPLE_RATE = 16_000
 XANDER_PROVIDER = "xander-session"
+MOBILE_FAST_PROVIDER = "mobile-fast"
 XANDER_PROVIDER_ALIASES = {"xander", "xander-session", "hermes", "hermes-session"}
-SUPPORTED_PROVIDER_MODES = {"proof", *XANDER_PROVIDER_ALIASES}
+MOBILE_FAST_PROVIDER_ALIASES = {"mobile-fast", "fast", "xander-fast"}
+SUPPORTED_PROVIDER_MODES = {"proof", *XANDER_PROVIDER_ALIASES, *MOBILE_FAST_PROVIDER_ALIASES}
 HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
+XANDER_FAST_TIMEOUT_SECONDS = 12
 XANDER_MOBILE_MAX_WORDS = 25
+XANDER_FAST_MAX_WORDS = 16
 XANDER_MOBILE_VOICE_CONTRACT = """You are Xander on Otoxan Mobile.
 
 Identity:
@@ -168,7 +176,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _pass1_ready(turn: AssistantTurn) -> bool:
-    return turn.provider == XANDER_PROVIDER and turn.transcript_source == "hermes-stt" and turn.stt_status == "success"
+    return turn.provider in {XANDER_PROVIDER, MOBILE_FAST_PROVIDER} and turn.transcript_source == "hermes-stt" and turn.stt_status == "success"
 
 
 def _pass1_status(turn: AssistantTurn, stats: Mapping[str, Any]) -> str:
@@ -195,9 +203,12 @@ def _run_assistant_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         return _proof_turn(pcm, route, provider="proof")
 
     try:
+        if mode in MOBILE_FAST_PROVIDER_ALIASES:
+            return _xander_mobile_fast_turn(pcm, route)
         return _xander_session_turn(pcm, route)
     except Exception as exc:  # noqa: BLE001 - strict mode should fail loudly.
-        raise VoiceTurnError(f"Xander session provider failed: {exc}", 502) from exc
+        provider_name = MOBILE_FAST_PROVIDER if mode in MOBILE_FAST_PROVIDER_ALIASES else "Xander session"
+        raise VoiceTurnError(f"{provider_name} provider failed: {exc}", 502) from exc
 
 
 def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
@@ -229,6 +240,46 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         assistant_text=assistant_text,
         tts_pcm=b"",
         provider=XANDER_PROVIDER,
+        transcript_source=transcript.source,
+        stt_status=transcript.stt_status,
+        stt_latency_ms=transcript.stt_latency_ms,
+        timing=timing,
+    )
+
+
+def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
+    timing: dict[str, int | None] = {}
+    transcript_started = time.monotonic()
+    transcript = _xander_transcript(pcm, route)
+    timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
+    timing["sttLatencyMs"] = transcript.stt_latency_ms
+    if _is_stt_fallback(transcript.transcript):
+        timing["xanderSessionMs"] = None
+        timing["xanderFastMs"] = None
+        return AssistantTurn(
+            transcript=transcript.transcript,
+            assistant_text=(
+                f"I got audio from {route.input_name}, but couldn't decode words. "
+                "Try speaking again a little closer."
+            ),
+            tts_pcm=b"",
+            provider=MOBILE_FAST_PROVIDER,
+            transcript_source=transcript.source,
+            stt_status=transcript.stt_status,
+            stt_latency_ms=transcript.stt_latency_ms,
+            timing=timing,
+        )
+    fast_started = time.monotonic()
+    assistant_text = _ask_xander_mobile_fast(transcript.transcript, route)
+    fast_ms = _elapsed_ms(fast_started)
+    # Keep xanderSessionMs populated so existing Android telemetry charts compare old vs fast lane.
+    timing["xanderSessionMs"] = fast_ms
+    timing["xanderFastMs"] = fast_ms
+    return AssistantTurn(
+        transcript=transcript.transcript,
+        assistant_text=assistant_text,
+        tts_pcm=b"",
+        provider=MOBILE_FAST_PROVIDER,
         transcript_source=transcript.source,
         stt_status=transcript.stt_status,
         stt_latency_ms=transcript.stt_latency_ms,
@@ -385,6 +436,108 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
     return _shape_mobile_spoken_response(text)
 
 
+def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
+    provider_name = os.environ.get("OTOXAN_MOBILE_FAST_PROVIDER", "minimax").strip()
+    config = _load_xander_config()
+    provider = _configured_provider(config, provider_name)
+    base_url = str(provider.get("base_url", "")).rstrip("/")
+    api_key = str(provider.get("api_key", "")).strip()
+    model = os.environ.get("OTOXAN_MOBILE_FAST_MODEL", "").strip() or str(provider.get("model", "")).strip()
+    if not base_url or not api_key or not model:
+        raise VoiceTurnError(f"mobile-fast provider {provider_name!r} is missing base_url/api_key/model", 502)
+
+    timeout_raw = os.environ.get("OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS", str(XANDER_FAST_TIMEOUT_SECONDS)).strip()
+    try:
+        timeout = max(3.0, min(float(timeout_raw), 30.0))
+    except ValueError:
+        timeout = float(XANDER_FAST_TIMEOUT_SECONDS)
+
+    body = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are Xander, Otoxan controller operator, speaking through Ray-Ban Meta glasses. "
+                    f"Answer in one direct spoken sentence, max {XANDER_FAST_MAX_WORDS} words. "
+                    "Builder-first, concrete, no filler, no apologies, no reasoning, no XML tags."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Route evidence: "
+                    f"input={route.input_name} ({route.input_type}); output={route.output_name} ({route.output_type}).\n"
+                    f"Matt said: {transcript}\n"
+                    "Return only the spoken sentence."
+                ),
+            },
+        ],
+        "max_tokens": int(os.environ.get("OTOXAN_MOBILE_FAST_MAX_TOKENS", "160")),
+        "temperature": _mobile_fast_temperature(provider_name),
+    }
+    request = urllib.request.Request(
+        base_url + "/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:240]
+        raise VoiceTurnError(f"mobile-fast provider HTTP {exc.code}: {detail}", 502) from exc
+    except urllib.error.URLError as exc:
+        raise VoiceTurnError(f"mobile-fast provider connection failed: {exc.reason}", 502) from exc
+    except TimeoutError as exc:
+        raise VoiceTurnError(f"mobile-fast provider timed out after {timeout:.0f}s", 504) from exc
+
+    try:
+        text = data["choices"][0]["message"].get("content", "")
+    except (KeyError, IndexError, TypeError) as exc:
+        raise VoiceTurnError("mobile-fast provider returned an unexpected response shape", 502) from exc
+    text = _strip_reasoning_markup(str(text))
+    if not text.strip():
+        raise VoiceTurnError("mobile-fast provider returned no spoken text", 502)
+    return _shape_mobile_spoken_response(text, max_words=XANDER_FAST_MAX_WORDS)
+
+
+def _load_xander_config() -> Mapping[str, Any]:
+    config_path = Path(os.environ.get("OTOXAN_XANDER_CONFIG", "/home/silas/.hermes/profiles/xander/config.yaml"))
+    try:
+        return yaml.safe_load(config_path.read_text()) or {}
+    except FileNotFoundError as exc:
+        raise VoiceTurnError(f"Xander config not found at {config_path}", 502) from exc
+
+
+def _configured_provider(config: Mapping[str, Any], provider_name: str) -> Mapping[str, Any]:
+    providers = config.get("providers")
+    if not isinstance(providers, Mapping):
+        raise VoiceTurnError("Xander config has no providers map", 502)
+    provider = providers.get(provider_name)
+    if not isinstance(provider, Mapping):
+        raise VoiceTurnError(f"Xander config has no provider named {provider_name!r}", 502)
+    return provider
+
+
+def _mobile_fast_temperature(provider_name: str) -> float:
+    override = os.environ.get("OTOXAN_MOBILE_FAST_TEMPERATURE", "").strip()
+    if override:
+        return float(override)
+    return 1.0 if provider_name.strip().lower() == "kimi" else 0.2
+
+
+def _strip_reasoning_markup(text: str) -> str:
+    cleaned = text.strip()
+    lower = cleaned.lower()
+    if "</think>" in lower:
+        cleaned = cleaned[lower.rfind("</think>") + len("</think>"):].strip()
+    if cleaned.lower().startswith("<think>"):
+        return ""
+    return cleaned
+
+
 def _build_xander_mobile_prompt(transcript: str, route: RouteSummary) -> str:
     return (
         f"{XANDER_MOBILE_VOICE_CONTRACT}\n\n"
@@ -398,7 +551,7 @@ def _build_xander_mobile_prompt(transcript: str, route: RouteSummary) -> str:
     )
 
 
-def _shape_mobile_spoken_response(text: str) -> str:
+def _shape_mobile_spoken_response(text: str, max_words: int = XANDER_MOBILE_MAX_WORDS) -> str:
     cleaned = _clean(text, "").replace("\r", "\n").strip().strip('"“”')
     if not cleaned:
         return cleaned
@@ -409,8 +562,8 @@ def _shape_mobile_spoken_response(text: str) -> str:
     first_line = next((line.strip(" -\t") for line in cleaned.splitlines() if line.strip()), cleaned)
     sentence = _first_sentence(first_line)
     words = sentence.split()
-    if len(words) > XANDER_MOBILE_MAX_WORDS:
-        sentence = " ".join(words[:XANDER_MOBILE_MAX_WORDS]).rstrip(",;:-") + "."
+    if len(words) > max_words:
+        sentence = " ".join(words[:max_words]).rstrip(",;:-") + "."
     return sentence
 
 

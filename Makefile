@@ -15,8 +15,8 @@ help:
 	@printf '%s\n' \
 	  'Otoxan Mobile make targets:' \
 	  '' \
-	  '  make backend                  Run Xander/Hermes session backend on 0.0.0.0:8787' \
-	  '  make backend-xander           Explicitly require Xander/Hermes session provider' \
+	  '  make backend                  Run mobile-fast Xander backend on 0.0.0.0:8787' \
+	  '  make backend-xander           Explicitly require legacy Xander/Hermes session provider' \
 	  '  make backend-proof            Run deterministic proof backend only' \
 	  '  make smoke-backend            POST a fake Ray-Ban turn to VOICE_ENDPOINT' \
 	  '  make build                    Build debug APK with VOICE_ENDPOINT baked in' \
@@ -40,7 +40,7 @@ endpoint:
 	@echo 'ADB=$(ADB)'
 
 backend:
-	OTOXAN_VOICE_PROVIDER=xander-session $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
+	OTOXAN_VOICE_PROVIDER=mobile-fast $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
 
 backend-xander:
 	OTOXAN_VOICE_PROVIDER=xander-session $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
