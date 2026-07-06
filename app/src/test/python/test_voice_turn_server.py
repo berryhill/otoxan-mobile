@@ -157,8 +157,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertIsNone(result["xanderSessionMs"])
         self.assertEqual("stt-empty", result["pass1Status"])
         self.assertFalse(result["pass1Ready"])
-        self.assertIn("I got audio from Ray-Ban Meta", result["assistantText"])
-        self.assertIn("couldn't decode words", result["assistantText"])
+        self.assertEqual("Audio arrived, but words did not decode.", result["assistantText"])
+        self.assertLessEqual(len(result["assistantText"]), voice_turn_server.XANDER_SPOKEN_MAX_CHARS)
         self.assertIn("Hermes STT lane did not return", result["transcript"])
 
     def test_xander_provider_failure_is_session_framed(self):

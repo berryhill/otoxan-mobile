@@ -222,10 +222,7 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         timing["xanderSessionMs"] = None
         return AssistantTurn(
             transcript=transcript.transcript,
-            assistant_text=(
-                f"I got audio from {route.input_name}, but couldn't decode words. "
-                "Try speaking again a little closer."
-            ),
+            assistant_text="Audio arrived, but words did not decode.",
             tts_pcm=b"",
             provider=XANDER_PROVIDER,
             transcript_source=transcript.source,
@@ -259,10 +256,7 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         timing["xanderFastMs"] = None
         return AssistantTurn(
             transcript=transcript.transcript,
-            assistant_text=(
-                f"I got audio from {route.input_name}, but couldn't decode words. "
-                "Try speaking again a little closer."
-            ),
+            assistant_text="Audio arrived, but words did not decode.",
             tts_pcm=b"",
             provider=MOBILE_FAST_PROVIDER,
             transcript_source=transcript.source,
