@@ -165,6 +165,36 @@ silentChunks=<current quiet run>
 
 Important boundary: VAD events do not call Xander and do not commit audio. `/voice-turn` is still invoked only on `input_audio.commit`. The next Silero pass can replace the `EnergyVad` internals while preserving these wire event names.
 
+## Phase 4 local TTS seam
+
+The voice-turn helper now exposes a backend TTS provider seam while preserving Android TextToSpeech as the default fallback.
+
+Default behavior:
+
+```text
+OTOXAN_TTS_PROVIDER=android  # default
+assistantText -> Android/Ray-Ban TextToSpeech playback
+ttsPcm16Mono16kBase64 -> empty for Xander/mobile-fast turns
+```
+
+Kokoro-compatible command mode:
+
+```bash
+OTOXAN_TTS_PROVIDER=kokoro-command \
+OTOXAN_KOKORO_TTS_COMMAND='kokoro-tts --text {text} --output {output}' \
+make backend
+```
+
+The command may either write 16 kHz mono PCM16 WAV/raw PCM to `{output}` or return raw PCM on stdout. The helper reports:
+
+```text
+ttsProvider=android|kokoro-command|...
+ttsStatus=android-fallback|success|not-configured|error|unsupported
+ttsLatencyMs=<milliseconds>
+```
+
+TTS failure is non-fatal: empty PCM preserves the Android playback fallback so voice turns do not fail because a local TTS model is missing.
+
 Provider modes:
 
 ```bash

@@ -32,6 +32,9 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_MOBILE_FAST_SESSION_FALLBACK",
                 "OTOXAN_XANDER_CONFIG",
                 "OTOXAN_STT_MODE",
+                "OTOXAN_TTS_PROVIDER",
+                "OTOXAN_KOKORO_TTS_COMMAND",
+                "OTOXAN_TTS_TIMEOUT_SECONDS",
             )
         }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
@@ -121,6 +124,37 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("debug-transcript-not-real-speech", result["pass1Status"])
         self.assertFalse(result["pass1Ready"])
         self.assertEqual("Hello Matt, I hear you now.", result["assistantText"])
+
+    def test_xander_turn_preserves_android_tts_fallback_by_default(self):
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
+        os.environ["OTOXAN_DEBUG_TRANSCRIPT"] = "Matt says hello Xander"
+        with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="I am speaking through Android fallback."):
+            result = voice_turn_server.handle_voice_turn(self._payload())
+
+        self.assertEqual(b"", base64.b64decode(result["ttsPcm16Mono16kBase64"]))
+        self.assertEqual("android", result["ttsProvider"])
+        self.assertEqual("android-fallback", result["ttsStatus"])
+        self.assertIsInstance(result["ttsLatencyMs"], int)
+
+    def test_xander_turn_can_use_kokoro_command_tts_pcm(self):
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
+        os.environ["OTOXAN_DEBUG_TRANSCRIPT"] = "Matt says hello Xander"
+        os.environ["OTOXAN_TTS_PROVIDER"] = "kokoro-command"
+        os.environ["OTOXAN_KOKORO_TTS_COMMAND"] = "fake-kokoro --text {text} --output {output}"
+        fake_pcm = b"\x10\x00\x20\x00" * 80
+
+        completed = mock.Mock(returncode=0, stdout=fake_pcm)
+        with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="Kokoro path is wired."):
+            with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed) as run:
+                result = voice_turn_server.handle_voice_turn(self._payload())
+
+        self.assertEqual(fake_pcm, base64.b64decode(result["ttsPcm16Mono16kBase64"]))
+        self.assertEqual("kokoro-command", result["ttsProvider"])
+        self.assertEqual("success", result["ttsStatus"])
+        self.assertIsInstance(result["ttsLatencyMs"], int)
+        command = run.call_args.args[0]
+        self.assertEqual("fake-kokoro", command[0])
+        self.assertIn("--output", command)
 
     def test_xander_transcript_uses_hermes_stt_lane_before_evidence_fallback(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)

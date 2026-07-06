@@ -20,6 +20,7 @@ import json
 import math
 import os
 import queue
+import shlex
 import shutil
 import subprocess
 import sys
@@ -54,6 +55,8 @@ XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
 XANDER_MOBILE_MAX_WORDS = 12
 XANDER_FAST_MAX_WORDS = 8
 XANDER_SPOKEN_MAX_CHARS = 72
+TTS_PROVIDER_DEFAULT = "android"
+TTS_PROVIDER_ALIASES = {"android", "none", "off", "kokoro", "kokoro-command"}
 XANDER_MOBILE_VOICE_CONTRACT = """You are Xander on Otoxan Mobile.
 
 Identity:
@@ -122,12 +125,12 @@ class AssistantTurn:
     transcript_source: str
     stt_status: str
     stt_latency_ms: int | None
-    timing: dict[str, int | None]
+    timing: dict[str, Any]
 
 
 def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
     started = time.monotonic()
-    timing: dict[str, int | None] = {}
+    timing: dict[str, Any] = {}
     if not isinstance(payload, Mapping):
         raise VoiceTurnError("JSON object payload required", 400)
 
@@ -183,6 +186,9 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "xanderFastTimedOut": timing.get("xanderFastTimedOut"),
         "xanderFallbackSessionStatus": timing.get("xanderFallbackSessionStatus"),
         "xanderFallbackSkipped": timing.get("xanderFallbackSkipped"),
+        "ttsProvider": timing.get("ttsProvider"),
+        "ttsStatus": timing.get("ttsStatus"),
+        "ttsLatencyMs": timing.get("ttsLatencyMs"),
         "responseBuildMs": 0,
     }
     response["responseBuildMs"] = _elapsed_ms(started) - int(response.get("backendTotalMs") or 0)
@@ -227,7 +233,7 @@ def _run_assistant_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
 
 
 def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
-    timing: dict[str, int | None] = {}
+    timing: dict[str, Any] = {}
     transcript_started = time.monotonic()
     transcript = _xander_transcript(pcm, route)
     timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
@@ -247,10 +253,11 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     session_started = time.monotonic()
     assistant_text = _ask_xander_session(transcript.transcript, route)
     timing["xanderSessionMs"] = _elapsed_ms(session_started)
+    tts_pcm = _synthesize_optional_tts(assistant_text, timing)
     return AssistantTurn(
         transcript=transcript.transcript,
         assistant_text=assistant_text,
-        tts_pcm=b"",
+        tts_pcm=tts_pcm,
         provider=XANDER_PROVIDER,
         transcript_source=transcript.source,
         stt_status=transcript.stt_status,
@@ -260,7 +267,7 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
 
 
 def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
-    timing: dict[str, int | None] = {}
+    timing: dict[str, Any] = {}
     transcript_started = time.monotonic()
     transcript = _xander_transcript(pcm, route)
     timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
@@ -297,10 +304,11 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     # Keep xanderSessionMs populated so existing Android telemetry charts compare old vs fast lane.
     timing["xanderSessionMs"] = fast_ms
     timing["xanderFastMs"] = fast_ms
+    tts_pcm = _synthesize_optional_tts(assistant_text, timing)
     return AssistantTurn(
         transcript=transcript.transcript,
         assistant_text=assistant_text,
-        tts_pcm=b"",
+        tts_pcm=tts_pcm,
         provider=MOBILE_FAST_PROVIDER,
         transcript_source=transcript.source,
         stt_status=transcript.stt_status,
@@ -518,6 +526,74 @@ def _write_pcm16_wav(path: str, pcm: bytes) -> None:
         wav.setsampwidth(2)
         wav.setframerate(SAMPLE_RATE)
         wav.writeframes(pcm)
+
+
+def _synthesize_optional_tts(text: str, timing: dict[str, Any]) -> bytes:
+    started = time.monotonic()
+    provider = os.environ.get("OTOXAN_TTS_PROVIDER", TTS_PROVIDER_DEFAULT).strip().lower() or TTS_PROVIDER_DEFAULT
+    if provider not in TTS_PROVIDER_ALIASES:
+        timing["ttsProvider"] = provider
+        timing["ttsStatus"] = "unsupported"
+        timing["ttsLatencyMs"] = _elapsed_ms(started)
+        return b""
+    if provider in {"android", "none", "off"}:
+        # Android TextToSpeech remains the default playback fallback until a local voice is configured.
+        timing["ttsProvider"] = provider
+        timing["ttsStatus"] = "android-fallback"
+        timing["ttsLatencyMs"] = _elapsed_ms(started)
+        return b""
+    try:
+        pcm = _synthesize_with_kokoro_command(text)
+        timing["ttsProvider"] = provider
+        timing["ttsStatus"] = "success" if pcm else "not-configured"
+        timing["ttsLatencyMs"] = _elapsed_ms(started)
+        return pcm
+    except Exception:
+        # TTS must not break the conversation turn; empty PCM preserves Android TTS fallback.
+        timing["ttsProvider"] = provider
+        timing["ttsStatus"] = "error"
+        timing["ttsLatencyMs"] = _elapsed_ms(started)
+        return b""
+
+
+def _synthesize_with_kokoro_command(text: str) -> bytes:
+    command_template = os.environ.get("OTOXAN_KOKORO_TTS_COMMAND", "").strip()
+    if not command_template:
+        return b""
+    timeout = float(os.environ.get("OTOXAN_TTS_TIMEOUT_SECONDS", "20"))
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as out_file:
+        output_path = out_file.name
+    try:
+        command = command_template.format(text=shlex.quote(text), output=shlex.quote(output_path))
+        result = subprocess.run(
+            shlex.split(command),
+            input=text,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+        if result.returncode != 0:
+            return b""
+        output = Path(output_path)
+        if output.exists() and output.stat().st_size > 0:
+            return _read_tts_output(output)
+        return bytes(result.stdout or b"")
+    finally:
+        try:
+            Path(output_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _read_tts_output(path: Path) -> bytes:
+    data = path.read_bytes()
+    if data.startswith(b"RIFF"):
+        with wave.open(str(path), "rb") as wav:
+            if wav.getnchannels() != 1 or wav.getsampwidth() != 2 or wav.getframerate() != SAMPLE_RATE:
+                return b""
+            return wav.readframes(wav.getnframes())
+    return data
 
 
 def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
