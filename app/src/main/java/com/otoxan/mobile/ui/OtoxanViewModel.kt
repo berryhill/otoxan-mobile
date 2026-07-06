@@ -13,9 +13,10 @@ import com.otoxan.mobile.voice.SpeechPlayback
 import com.otoxan.mobile.voice.VoiceCaptureConfig
 import com.otoxan.mobile.voice.VoiceTurnTelemetryPacket
 import com.otoxan.mobile.voice.XanderVoiceClient
+import com.otoxan.mobile.voice.conversationVoiceCaptureConfig
 import com.otoxan.mobile.voice.createXanderVoiceClient
 import com.otoxan.mobile.voice.expectedPcmBytes
-import com.otoxan.mobile.voice.isUsableVoiceCapture
+import com.otoxan.mobile.voice.shouldSubmitVoiceTurn
 import com.otoxan.mobile.voice.peakPcm16Amplitude
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +30,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import java.util.UUID
+
+private class NoSpeechDetectedForTurn(message: String) : RuntimeException(message)
 
 class OtoxanViewModel(
     private val audioRouter: AudioRouter,
@@ -131,6 +134,23 @@ class OtoxanViewModel(
                     }
                     .onFailure { error ->
                         if (error is CancellationException) throw error
+                        if (error is NoSpeechDetectedForTurn) {
+                            _uiState.update {
+                                it.copy(
+                                    conversationActive = true,
+                                    wearableRouteActive = false,
+                                    liveVoicePeak = 0,
+                                    liveVoiceLevel = 0f,
+                                    liveSpeechDetected = false,
+                                    sessionState = VoiceSessionState.ConversationActive,
+                                    turnStage = "Still listening — no speech heard",
+                                    telemetryStatus = "Idle listen skipped; no backend turn sent",
+                                    lastError = null
+                                )
+                            }
+                            delay(500L)
+                            return@onFailure
+                        }
                         val releaseEvidence = runCatching { releaseCommunicationRoute("Released communication route after failed conversation turn") }
                             .getOrElse { RouteEvidence.default("Communication route release failed after conversation turn") }
                         _uiState.update {
@@ -225,7 +245,8 @@ class OtoxanViewModel(
                 error("Wearable route dropped before capture: ${routeEvidence.message}")
             }
             _uiState.update { it.copy(turnStage = "Listening — speak now") }
-            val captureConfig = VoiceCaptureConfig()
+            val conversationMode = _uiState.value.conversationActive
+            val captureConfig = if (conversationMode) conversationVoiceCaptureConfig() else VoiceCaptureConfig()
             val captureStarted = System.nanoTime()
             val capture = micCapture.recordPcmUntilSpeechSilence(captureConfig) { chunkPeak, capturedMillis, speechDetected ->
                 val level = (chunkPeak / 8_000f).coerceIn(0f, 1f)
@@ -247,8 +268,11 @@ class OtoxanViewModel(
             val expectedBytes = expectedPcmBytes(capture.maxCaptureMillis)
             val minimumUsableBytes = expectedPcmBytes(capture.minCaptureMillis)
             val peak = pcm.peakPcm16Amplitude()
-            val usable = isUsableVoiceCapture(pcm, minimumUsableBytes)
+            val usable = shouldSubmitVoiceTurn(capture, minimumUsableBytes, requireSpeechDetected = conversationMode)
             if (!usable) {
+                if (conversationMode && !capture.speechDetected) {
+                    throw NoSpeechDetectedForTurn("No speech detected; skipping backend turn")
+                }
                 error("Microphone capture unusable: captured=${pcm.size} bytes, minimum=$minimumUsableBytes, peak=$peak, stop=${capture.stopReason}, speech=${capture.speechDetected}")
             }
             _uiState.update { it.copy(turnStage = "Thinking — ${pcm.size} bytes to Xander after ${capture.stopReason}") }
@@ -270,10 +294,13 @@ class OtoxanViewModel(
                 )
             }
             val backendTts = result.ttsPcm16Mono16k
+            val silentEmptyTranscript = conversationMode && result.sttStatus == "empty"
             var playbackKind = "none"
             val playbackStarted = System.nanoTime()
             if (playbackMode == PlaybackMode.SilentAfterCapture) {
                 playbackKind = "silent"
+            } else if (silentEmptyTranscript) {
+                playbackKind = "stt_empty_silent"
             } else if (backendTts != null && backendTts.isNotEmpty()) {
                 playbackKind = "backend_pcm"
                 speechPlayback.playPcm16Mono16k(backendTts)

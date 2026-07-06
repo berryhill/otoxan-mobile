@@ -25,6 +25,36 @@ class PcmCaptureStatsTest {
     }
 
     @Test
+    fun shouldSubmitVoiceTurn_rejectsIdleConversationCaptureEvenWithRouteNoise() {
+        val pcm = ByteArray(160_000)
+        for (index in pcm.indices step 2) {
+            pcm[index] = 0x00
+            pcm[index + 1] = 0x02
+        }
+        val capture = VoiceCaptureResult(
+            pcm16Mono16k = pcm,
+            maxCaptureMillis = 5_000,
+            minCaptureMillis = 1_200,
+            actualCapturedMillis = 5_000,
+            stopReason = "max_duration",
+            speechDetected = false
+        )
+
+        assertFalse(shouldSubmitVoiceTurn(capture, minimumBytes = expectedPcmBytes(1_200), requireSpeechDetected = true))
+        assertTrue(shouldSubmitVoiceTurn(capture, minimumBytes = expectedPcmBytes(1_200), requireSpeechDetected = false))
+    }
+
+    @Test
+    fun conversationVoiceCaptureConfig_extendsIdleListenAndRaisesSpeechThreshold() {
+        val config = conversationVoiceCaptureConfig()
+
+        assertEquals(12_000, config.maxMillis)
+        assertEquals(700, config.minMillis)
+        assertEquals(850, config.silenceAfterSpeechMillis)
+        assertEquals(900, config.speechPeakAmplitude)
+    }
+
+    @Test
     fun pcmMillisConversion_usesMono16kPcmContract() {
         assertEquals(160_000, expectedPcmBytes(5_000))
         assertEquals(1_200, pcmBytesToMillis(expectedPcmBytes(1_200)))

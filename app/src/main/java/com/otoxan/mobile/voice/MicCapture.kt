@@ -106,6 +106,16 @@ data class VoiceCaptureConfig(
     val chunkMillis: Long = 100
 )
 
+fun conversationVoiceCaptureConfig(): VoiceCaptureConfig {
+    return VoiceCaptureConfig(
+        maxMillis = 12_000,
+        minMillis = 700,
+        silenceAfterSpeechMillis = 850,
+        speechPeakAmplitude = 900,
+        chunkMillis = 100
+    )
+}
+
 data class VoiceCaptureResult(
     val pcm16Mono16k: ByteArray,
     val maxCaptureMillis: Long,
@@ -124,6 +134,15 @@ fun expectedPcmBytes(durationMillis: Long): Int {
 
 fun pcmBytesToMillis(byteCount: Int): Long {
     return byteCount.toLong() * 1_000 / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+}
+
+fun shouldSubmitVoiceTurn(
+    capture: VoiceCaptureResult,
+    minimumBytes: Int,
+    requireSpeechDetected: Boolean
+): Boolean {
+    if (requireSpeechDetected && !capture.speechDetected) return false
+    return isUsableVoiceCapture(capture.pcm16Mono16k, minimumBytes)
 }
 
 fun isUsableVoiceCapture(
