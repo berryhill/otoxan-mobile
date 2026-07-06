@@ -35,6 +35,8 @@ class MainActivity : ComponentActivity() {
             OtoxanApp(
                 state = state,
                 onRefreshRoute = viewModel::refreshRoute,
+                onStartSession = viewModel::startConversationSession,
+                onEndSession = viewModel::endConversationSession,
                 onRecordFiveSeconds = viewModel::recordFiveSecondProof,
                 onPlayTest = viewModel::playRouteProof,
                 onClearRoute = viewModel::clearRoute,

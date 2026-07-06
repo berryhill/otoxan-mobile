@@ -9,6 +9,8 @@ import androidx.compose.ui.graphics.Color
 fun OtoxanApp(
     state: OtoxanUiState,
     onRefreshRoute: () -> Unit,
+    onStartSession: () -> Unit,
+    onEndSession: () -> Unit,
     onRecordFiveSeconds: () -> Unit,
     onPlayTest: () -> Unit,
     onClearRoute: () -> Unit,
@@ -26,6 +28,8 @@ fun OtoxanApp(
         OtoxanScreen(
             state = state,
             onRefreshRoute = onRefreshRoute,
+            onStartSession = onStartSession,
+            onEndSession = onEndSession,
             onRecordFiveSeconds = onRecordFiveSeconds,
             onPlayTest = onPlayTest,
             onClearRoute = onClearRoute,

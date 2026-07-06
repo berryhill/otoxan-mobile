@@ -33,6 +33,8 @@ data class OtoxanUiState(
     val routeReleasePolicy: String = "Release communication route before playback; clear communication device twice; reset SCO and MODE_NORMAL",
     val playbackMode: PlaybackMode = PlaybackMode.NonCallPlayback,
     val playbackPolicy: String = PlaybackMode.NonCallPlayback.description,
+    val conversationActive: Boolean = false,
+    val conversationTurnCount: Int = 0,
     val turnStage: String = "Idle",
     val turnTotalMs: Long? = null,
     val routeSelectMs: Long? = null,
@@ -69,6 +71,7 @@ enum class VoiceSessionState {
     Idle,
     CheckingRoute,
     Ready,
+    ConversationActive,
     RecordingTest,
     PlayingTest,
     Error

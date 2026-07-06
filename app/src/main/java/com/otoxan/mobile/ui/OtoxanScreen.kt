@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 fun OtoxanScreen(
     state: OtoxanUiState,
     onRefreshRoute: () -> Unit,
+    onStartSession: () -> Unit,
+    onEndSession: () -> Unit,
     onRecordFiveSeconds: () -> Unit,
     onPlayTest: () -> Unit,
     onClearRoute: () -> Unit,
@@ -68,14 +70,29 @@ fun OtoxanScreen(
             }
         }
 
-        Button(
-            onClick = onRecordFiveSeconds,
-            enabled = state.permissionState == PermissionState.Granted && state.wearableRouteActive
-        ) {
-            Text("Talk to Xander")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(
+                onClick = onStartSession,
+                enabled = state.permissionState == PermissionState.Granted && !state.conversationActive
+            ) {
+                Text("Start Xander session")
+            }
+            OutlinedButton(
+                onClick = onEndSession,
+                enabled = state.conversationActive
+            ) {
+                Text("End session")
+            }
         }
 
-        Button(onClick = onPlayTest) {
+        OutlinedButton(
+            onClick = onRecordFiveSeconds,
+            enabled = state.permissionState == PermissionState.Granted && state.wearableRouteActive && !state.conversationActive
+        ) {
+            Text("Single turn test")
+        }
+
+        Button(onClick = onPlayTest, enabled = !state.conversationActive) {
             Text("Play route proof")
         }
 
@@ -102,7 +119,7 @@ private fun RouteTruthCard(state: OtoxanUiState) {
             Text("Route status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(if (state.wearableRouteActive) "Wearable route active" else "Phone/default route or no wearable route")
             Text("Permission: ${state.permissionState}")
-            Text("Session: ${state.sessionState}")
+            Text("Session: ${state.sessionState}${if (state.conversationActive) " (${state.conversationTurnCount} turns)" else ""}")
             Text("Turn stage: ${state.turnStage}")
             Text("Input: ${state.selectedInputName} (${state.selectedInputType})")
             Text("Output: ${state.selectedOutputName} (${state.selectedOutputType})")
