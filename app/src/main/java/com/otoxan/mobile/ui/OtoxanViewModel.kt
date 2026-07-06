@@ -211,13 +211,39 @@ class OtoxanViewModel(
             runCatching { performVoiceTurn(turnId, requireExistingRoute = false) }
                 .onSuccess { proof -> applyVoiceTurnSuccess(turnId, proof, keepConversationActive = false) }
                 .onFailure { error ->
+                    val errorText = error.message ?: error::class.java.simpleName
+                    val telemetryResult = postFailureTelemetry(turnId, errorText, if (error is NoSpeechDetectedForTurn) "no_speech" else "failure")
+                    val telemetryText = if (telemetryResult.ok) {
+                        "Sent failure turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}"
+                    } else {
+                        "FAILED failure telemetry turnId=$turnId: ${telemetryResult.error ?: "unknown"}"
+                    }
                     _uiState.update {
-                        it.copy(
-                            sessionState = VoiceSessionState.Error,
-                            turnStage = "Voice turn failed",
-                            lastEvidence = "Capture failed",
-                            lastError = error.message ?: error::class.java.simpleName
-                        )
+                        if (error is NoSpeechDetectedForTurn) {
+                            it.copy(
+                                sessionState = VoiceSessionState.Idle,
+                                wearableRouteActive = false,
+                                liveVoicePeak = 0,
+                                liveVoiceLevel = 0f,
+                                liveSpeechDetected = false,
+                                turnStage = "No speech heard — tap single turn and speak after Listening appears",
+                                telemetryStatus = telemetryText,
+                                lastEvidence = "Single turn heard no usable speech; no backend turn sent",
+                                lastError = null
+                            )
+                        } else {
+                            it.copy(
+                                sessionState = VoiceSessionState.Error,
+                                wearableRouteActive = false,
+                                liveVoicePeak = 0,
+                                liveVoiceLevel = 0f,
+                                liveSpeechDetected = false,
+                                turnStage = "Voice turn failed before completion",
+                                telemetryStatus = telemetryText,
+                                lastEvidence = "Single turn failed before backend completion: $errorText",
+                                lastError = errorText
+                            )
+                        }
                     }
                 }
         }
@@ -240,14 +266,20 @@ class OtoxanViewModel(
         try {
             val turnStarted = System.nanoTime()
             val routeStarted = System.nanoTime()
-            val routeEvidence = audioRouter.inspectAndSelectWearable()
-            val routeSelectMs = elapsedMs(routeStarted)
+            var routeEvidence = audioRouter.inspectAndSelectWearable()
             if (!routeEvidence.wearableActive) {
-                error("Wearable route dropped before capture: ${routeEvidence.message}")
+                val firstFailure = routeEvidence.message
+                releaseCommunicationRoute("Reset communication route before retrying wearable selection")
+                delay(250L)
+                routeEvidence = audioRouter.inspectAndSelectWearable()
+                if (!routeEvidence.wearableActive) {
+                    error("Wearable route dropped before capture after retry: first=[$firstFailure]; retry=[${routeEvidence.message}]")
+                }
             }
+            val routeSelectMs = elapsedMs(routeStarted)
             _uiState.update { it.copy(turnStage = "Listening — speak now") }
             val conversationMode = _uiState.value.conversationActive
-            val captureConfig = if (conversationMode) conversationVoiceCaptureConfig() else VoiceCaptureConfig()
+            val captureConfig = conversationVoiceCaptureConfig()
             val captureStarted = System.nanoTime()
             val capture = micCapture.recordPcmUntilSpeechSilence(captureConfig) { chunkPeak, capturedMillis, speechDetected ->
                 val level = (chunkPeak / 8_000f).coerceIn(0f, 1f)
@@ -271,7 +303,8 @@ class OtoxanViewModel(
                 routeSelectMs = routeSelectMs,
                 captureReadMs = elapsedMs(captureStarted),
                 turnStarted = turnStarted,
-                conversationMode = conversationMode
+                conversationMode = conversationMode,
+                requireSpeechDetected = true
             )
             releaseEvidence = proof.releaseEvidence
             return proof
@@ -289,15 +322,16 @@ class OtoxanViewModel(
         routeSelectMs: Long,
         captureReadMs: Long,
         turnStarted: Long,
-        conversationMode: Boolean
+        conversationMode: Boolean,
+        requireSpeechDetected: Boolean
     ): VoiceTurnUiResult {
         val pcm = capture.pcm16Mono16k
         val expectedBytes = expectedPcmBytes(capture.maxCaptureMillis)
         val minimumUsableBytes = expectedPcmBytes(capture.minCaptureMillis)
         val peak = pcm.peakPcm16Amplitude()
-        val usable = shouldSubmitVoiceTurn(capture, minimumUsableBytes, requireSpeechDetected = conversationMode)
+        val usable = shouldSubmitVoiceTurn(capture, minimumUsableBytes, requireSpeechDetected = requireSpeechDetected)
         if (!usable) {
-            if (conversationMode && !capture.speechDetected) {
+            if (requireSpeechDetected && !capture.speechDetected) {
                 throw NoSpeechDetectedForTurn("No speech detected; skipping backend turn")
             }
             error("Microphone capture unusable: captured=${pcm.size} bytes, minimum=$minimumUsableBytes, peak=$peak, stop=${capture.stopReason}, speech=${capture.speechDetected}")
@@ -314,7 +348,7 @@ class OtoxanViewModel(
             if (conversationMode) {
                 "Released communication route before assistant playback; next listen will re-select Ray-Ban mic"
             } else {
-                "Released communication route before assistant playback"
+                "Released communication route before single-turn assistant playback"
             }
         )
         routeReleaseMs = elapsedMs(releaseStarted)
@@ -447,6 +481,22 @@ class OtoxanViewModel(
                 }
             )
         }
+    }
+
+    private suspend fun postFailureTelemetry(turnId: String, error: String, stage: String): com.otoxan.mobile.voice.VoiceTurnTelemetryResult {
+        val routeEvidence = audioRouter.currentEvidence()
+        return xanderVoiceClient.postVoiceTurnMetrics(
+            VoiceTurnTelemetryPacket(
+                turnId = turnId,
+                stage = stage,
+                success = false,
+                playbackMode = _uiState.value.playbackMode.name,
+                playbackKind = "none",
+                routeEvidence = routeEvidence,
+                releaseEvidence = null,
+                error = error
+            )
+        )
     }
 
     private fun buildTelemetryPacket(
