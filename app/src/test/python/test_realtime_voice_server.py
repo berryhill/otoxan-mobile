@@ -56,6 +56,10 @@ async def _read_json_event(reader):
     return json.loads(payload.decode("utf-8"))
 
 
+def _pcm_samples(*samples):
+    return struct.pack("<" + "h" * len(samples), *samples)
+
+
 class RealtimeVoiceServerUnitTest(unittest.TestCase):
     def setUp(self):
         self._old_provider = os.environ.get("OTOXAN_VOICE_PROVIDER")
@@ -108,8 +112,26 @@ class RealtimeVoiceServerUnitTest(unittest.TestCase):
             "pcm16Mono16kBase64": base64.b64encode(b"\x03\x04" * 40).decode("ascii"),
         }
         response = realtime_voice_server.handle_realtime_event(session, event)
-        self.assertEqual("input_audio.appended", response["type"])
-        self.assertEqual(80, response["bufferedBytes"])
+        self.assertEqual("input_audio.appended", response[-1]["type"])
+        self.assertEqual(80, response[-1]["bufferedBytes"])
+
+    def test_vad_emits_speech_start_and_end_boundaries_without_committing_turn(self):
+        session = realtime_voice_server.RealtimeSession(session_id="rt_test")
+        speech_events = session.append_audio_events(_pcm_samples(0, 1200, -1400, 0))
+        self.assertEqual("user.speech.started", speech_events[0]["type"])
+        self.assertEqual("input_audio.appended", speech_events[-1]["type"])
+        self.assertTrue(speech_events[-1]["vad"]["speechDetected"])
+        self.assertEqual("buffering", speech_events[-1]["state"])
+        self.assertEqual(0, session.committed_turns)
+
+        for _ in range(realtime_voice_server.VAD_SPEECH_END_SILENCE_CHUNKS - 1):
+            quiet_events = session.append_audio_events(_pcm_samples(0, 0, 0, 0))
+            self.assertEqual(["input_audio.appended"], [event["type"] for event in quiet_events])
+
+        ended_events = session.append_audio_events(_pcm_samples(0, 0, 0, 0))
+        self.assertEqual("user.speech.ended", ended_events[0]["type"])
+        self.assertEqual("input_audio.appended", ended_events[-1]["type"])
+        self.assertFalse(ended_events[-1]["vad"]["speechActive"])
 
 
 class RealtimeVoiceServerProtocolTest(unittest.IsolatedAsyncioTestCase):

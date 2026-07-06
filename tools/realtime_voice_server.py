@@ -22,13 +22,15 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import voice_turn_server
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 SUPPORTED_FORMAT = voice_turn_server.SUPPORTED_FORMAT
 MAX_BUFFERED_PCM_BYTES = int(os.environ.get("OTOXAN_REALTIME_MAX_PCM_BYTES", str(voice_turn_server.MAX_PCM_BYTES)))
+VAD_SPEECH_PEAK_THRESHOLD = int(os.environ.get("OTOXAN_REALTIME_VAD_PEAK_THRESHOLD", "700"))
+VAD_SPEECH_END_SILENCE_CHUNKS = int(os.environ.get("OTOXAN_REALTIME_VAD_END_SILENCE_CHUNKS", "3"))
 
 
 class WebSocketProtocolError(Exception):
@@ -83,6 +85,53 @@ class EventBus:
         return event.to_wire()
 
 
+def pcm16_peak_and_rms(pcm: bytes) -> tuple[int, float]:
+    usable = len(pcm) - (len(pcm) % 2)
+    if usable <= 0:
+        return 0, 0.0
+    peak = 0
+    square_sum = 0
+    count = usable // 2
+    for (sample,) in struct.iter_unpack("<h", pcm[:usable]):
+        amplitude = abs(int(sample))
+        peak = max(peak, amplitude)
+        square_sum += amplitude * amplitude
+    return peak, round((square_sum / count) ** 0.5, 2)
+
+
+@dataclass
+class EnergyVad:
+    peak_threshold: int = VAD_SPEECH_PEAK_THRESHOLD
+    end_silence_chunks: int = VAD_SPEECH_END_SILENCE_CHUNKS
+    speech_active: bool = False
+    silent_chunks: int = 0
+
+    def analyze(self, pcm: bytes) -> tuple[dict[str, Any], list[str]]:
+        peak, rms = pcm16_peak_and_rms(pcm)
+        speech_detected = peak >= self.peak_threshold
+        transitions: list[str] = []
+        if speech_detected:
+            if not self.speech_active:
+                transitions.append("started")
+            self.speech_active = True
+            self.silent_chunks = 0
+        elif self.speech_active:
+            self.silent_chunks += 1
+            if self.silent_chunks >= self.end_silence_chunks:
+                transitions.append("ended")
+                self.speech_active = False
+                self.silent_chunks = 0
+        return {
+            "provider": "energy-vad-phase3",
+            "peak": peak,
+            "rms": rms,
+            "speechDetected": speech_detected,
+            "speechActive": self.speech_active,
+            "threshold": self.peak_threshold,
+            "silentChunks": self.silent_chunks,
+        }, transitions
+
+
 @dataclass
 class RealtimeSession:
     session_id: str = field(default_factory=lambda: f"rt_{uuid.uuid4().hex}")
@@ -100,6 +149,7 @@ class RealtimeSession:
     committed_turns: int = 0
     state: RealtimeState = RealtimeState.CREATED
     bus: EventBus | None = None
+    vad: EnergyVad = field(default_factory=EnergyVad)
 
     def __post_init__(self) -> None:
         if self.bus is None:
@@ -126,7 +176,14 @@ class RealtimeSession:
                 "input_audio.clear",
                 "control.ping",
                 "session.close",
+                "user.speech.started",
+                "user.speech.ended",
             ],
+            vad={
+                "provider": "energy-vad-phase3",
+                "peakThreshold": self.vad.peak_threshold,
+                "endSilenceChunks": self.vad.end_silence_chunks,
+            },
         )
 
     def update(self, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -145,18 +202,35 @@ class RealtimeSession:
             routeEvidence=self.route_evidence,
         )
 
-    def append_audio(self, pcm: bytes) -> dict[str, Any]:
+    def append_audio_events(self, pcm: bytes) -> list[dict[str, Any]]:
         self._ensure_open()
         if pcm:
             if len(self.buffered_pcm) + len(pcm) > MAX_BUFFERED_PCM_BYTES:
                 raise ValueError(f"buffered PCM exceeds {MAX_BUFFERED_PCM_BYTES} bytes")
             self.buffered_pcm.extend(pcm)
+        vad_stats, transitions = self.vad.analyze(pcm)
         self._transition(RealtimeState.BUFFERING if self.buffered_pcm else self.state)
-        return self._emit(
-            "input_audio.appended",
-            bytesReceived=len(pcm),
-            bufferedBytes=len(self.buffered_pcm),
+        events: list[dict[str, Any]] = []
+        for transition in transitions:
+            events.append(
+                self._emit(
+                    f"user.speech.{transition}",
+                    vad=vad_stats,
+                    bufferedBytes=len(self.buffered_pcm),
+                )
+            )
+        events.append(
+            self._emit(
+                "input_audio.appended",
+                bytesReceived=len(pcm),
+                bufferedBytes=len(self.buffered_pcm),
+                vad=vad_stats,
+            )
         )
+        return events
+
+    def append_audio(self, pcm: bytes) -> dict[str, Any]:
+        return self.append_audio_events(pcm)[-1]
 
     def clear_audio(self) -> dict[str, Any]:
         self._ensure_open()
@@ -270,6 +344,16 @@ async def write_json(writer: asyncio.StreamWriter, event: Mapping[str, Any]) -> 
     await write_frame(writer, 0x1, json.dumps(event, separators=(",", ":")).encode("utf-8"))
 
 
+async def write_event_result(writer: asyncio.StreamWriter, result: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None) -> None:
+    if result is None:
+        return
+    if not isinstance(result, Mapping):
+        for event in result:
+            await write_json(writer, event)
+        return
+    await write_json(writer, result)
+
+
 async def handle_ws_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     session = RealtimeSession()
     try:
@@ -286,15 +370,14 @@ async def handle_ws_client(reader: asyncio.StreamReader, writer: asyncio.StreamW
                 await write_frame(writer, 0xA, payload)
                 continue
             if opcode == 0x2:  # binary PCM chunk
-                await write_json(writer, session.append_audio(payload))
+                await write_event_result(writer, session.append_audio_events(payload))
                 continue
             if opcode != 0x1:
                 await write_json(writer, session.error_event(f"unsupported opcode {opcode}"))
                 continue
             event = json.loads(payload.decode("utf-8"))
             response = handle_realtime_event(session, event)
-            if response is not None:
-                await write_json(writer, response)
+            await write_event_result(writer, response)
     except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
         pass
     except Exception as exc:  # noqa: BLE001 - dev skeleton returns an event before closing.
@@ -310,13 +393,13 @@ async def handle_ws_client(reader: asyncio.StreamReader, writer: asyncio.StreamW
             pass
 
 
-def handle_realtime_event(session: RealtimeSession, event: Mapping[str, Any]) -> dict[str, Any] | None:
+def handle_realtime_event(session: RealtimeSession, event: Mapping[str, Any]) -> dict[str, Any] | list[dict[str, Any]] | None:
     event_type = str(event.get("type", "")).strip()
     if event_type == "session.update":
         return session.update(event)
     if event_type == "input_audio.append":
         b64 = str(event.get("pcm16Mono16kBase64", ""))
-        return session.append_audio(base64.b64decode(b64) if b64 else b"")
+        return session.append_audio_events(base64.b64decode(b64) if b64 else b"")
     if event_type == "input_audio.commit":
         return session.commit_audio()
     if event_type == "input_audio.clear":

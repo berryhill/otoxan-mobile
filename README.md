@@ -140,6 +140,31 @@ invalid frame/event -> error/state=error
 
 This creates the control surface for Phase 3 VAD without changing the mobile `/voice-turn` HTTP fallback.
 
+## Phase 3 VAD boundary events
+
+The realtime server now runs a local energy-VAD boundary detector on every appended PCM chunk. This is a dependency-free Phase 3 seam for the later Silero ONNX provider; it gives the Android/client loop the same event contract before model integration.
+
+New emitted events:
+
+```text
+user.speech.started  # first chunk whose peak crosses threshold
+user.speech.ended    # after configured consecutive quiet chunks
+```
+
+Each `input_audio.appended` event carries a `vad` object:
+
+```text
+provider=energy-vad-phase3
+peak=<pcm16 peak>
+rms=<chunk rms>
+speechDetected=true|false
+speechActive=true|false
+threshold=<peak threshold>
+silentChunks=<current quiet run>
+```
+
+Important boundary: VAD events do not call Xander and do not commit audio. `/voice-turn` is still invoked only on `input_audio.commit`. The next Silero pass can replace the `EnergyVad` internals while preserving these wire event names.
+
 Provider modes:
 
 ```bash
