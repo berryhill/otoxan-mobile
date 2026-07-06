@@ -141,11 +141,13 @@ private fun RouteTruthCard(state: OtoxanUiState) {
 @Composable
 private fun VoiceActivityCard(state: OtoxanUiState) {
     val stage = state.turnStage.lowercase()
-    val listening = state.conversationActive && ("listening" in stage || "speak now" in stage)
+    val listening = state.conversationActive && ("listening" in stage || "speak now" in stage || "hearing you" in stage)
+    val hearingVoice = listening && state.liveSpeechDetected
     val speaking = state.conversationActive && ("speaking" in stage || "playing" in stage)
     val thinking = state.conversationActive && ("thinking" in stage || "xander" in stage || "backend" in stage)
-    val activePulse = listening || speaking
+    val activePulse = hearingVoice || speaking
     val label = when {
+        hearingVoice -> "Hearing your voice"
         listening -> "Listening — talk now"
         speaking -> "Xander is speaking"
         thinking -> "Thinking"
@@ -171,7 +173,18 @@ private fun VoiceActivityCard(state: OtoxanUiState) {
         animationSpec = infiniteRepeatable(animation = tween(360), repeatMode = RepeatMode.Reverse),
         label = "voice-bar-3"
     )
-    val bars = if (activePulse) listOf(bar1, bar2, bar3, bar2, bar1) else listOf(0.22f, 0.22f, 0.22f, 0.22f, 0.22f)
+    val liveBoost = state.liveVoiceLevel.coerceIn(0f, 1f)
+    val bars = if (activePulse) {
+        listOf(
+            (bar1 * 0.45f + liveBoost * 0.55f).coerceIn(0.12f, 1f),
+            (bar2 * 0.35f + liveBoost * 0.65f).coerceIn(0.12f, 1f),
+            (bar3 * 0.25f + liveBoost * 0.75f).coerceIn(0.12f, 1f),
+            (bar2 * 0.35f + liveBoost * 0.65f).coerceIn(0.12f, 1f),
+            (bar1 * 0.45f + liveBoost * 0.55f).coerceIn(0.12f, 1f)
+        )
+    } else {
+        listOf(0.22f, 0.22f, 0.22f, 0.22f, 0.22f)
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -206,6 +219,9 @@ private fun VoiceActivityCard(state: OtoxanUiState) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(state.turnStage, style = MaterialTheme.typography.bodySmall)
+                if (state.conversationActive) {
+                    Text("Mic peak: ${state.liveVoicePeak}", style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }

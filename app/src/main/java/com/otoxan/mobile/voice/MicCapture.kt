@@ -21,7 +21,10 @@ class MicCapture {
     }
 
     @SuppressLint("MissingPermission")
-    fun recordPcmUntilSpeechSilence(config: VoiceCaptureConfig = VoiceCaptureConfig()): VoiceCaptureResult {
+    fun recordPcmUntilSpeechSilence(
+        config: VoiceCaptureConfig = VoiceCaptureConfig(),
+        onChunkPeak: (peak: Int, capturedMillis: Long, speechDetected: Boolean) -> Unit = { _, _, _ -> }
+    ): VoiceCaptureResult {
         require(config.maxMillis >= config.minMillis) { "maxMillis must be >= minMillis" }
         require(config.chunkMillis in 20..500) { "chunkMillis must be between 20 and 500" }
         val maxBytes = expectedPcmBytes(config.maxMillis)
@@ -69,6 +72,7 @@ class MicCapture {
                     speechStarted = true
                     lastSpeechMs = capturedMs
                 }
+                onChunkPeak(chunkPeak, capturedMs, speechStarted)
                 if (
                     capturedMs >= config.minMillis &&
                     speechStarted &&

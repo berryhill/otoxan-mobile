@@ -137,6 +137,9 @@ class OtoxanViewModel(
                             it.copy(
                                 conversationActive = true,
                                 wearableRouteActive = false,
+                                liveVoicePeak = 0,
+                                liveVoiceLevel = 0f,
+                                liveSpeechDetected = false,
                                 sessionState = VoiceSessionState.ConversationActive,
                                 turnStage = "Turn failed; session still active and retrying",
                                 telemetryStatus = "Turn failed; next listen will retry",
@@ -224,7 +227,21 @@ class OtoxanViewModel(
             _uiState.update { it.copy(turnStage = "Listening — speak now") }
             val captureConfig = VoiceCaptureConfig()
             val captureStarted = System.nanoTime()
-            val capture = micCapture.recordPcmUntilSpeechSilence(captureConfig)
+            val capture = micCapture.recordPcmUntilSpeechSilence(captureConfig) { chunkPeak, capturedMillis, speechDetected ->
+                val level = (chunkPeak / 8_000f).coerceIn(0f, 1f)
+                _uiState.update {
+                    it.copy(
+                        liveVoicePeak = chunkPeak,
+                        liveVoiceLevel = level,
+                        liveSpeechDetected = speechDetected,
+                        turnStage = if (speechDetected) {
+                            "Hearing you — ${capturedMillis}ms captured"
+                        } else {
+                            "Listening — speak now"
+                        }
+                    )
+                }
+            }
             val pcm = capture.pcm16Mono16k
             val captureReadMs = elapsedMs(captureStarted)
             val expectedBytes = expectedPcmBytes(capture.maxCaptureMillis)
@@ -321,6 +338,9 @@ class OtoxanViewModel(
                 backendAudioRms = result.audioRms,
                 expectedCaptureBytes = proof.expectedCaptureBytes,
                 capturePeakAmplitude = proof.capturePeakAmplitude,
+                liveVoicePeak = 0,
+                liveVoiceLevel = 0f,
+                liveSpeechDetected = false,
                 captureUsable = proof.captureUsable,
                 turnTotalMs = proof.turnTotalMs,
                 routeSelectMs = proof.routeSelectMs,

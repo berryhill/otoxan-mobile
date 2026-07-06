@@ -374,7 +374,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         request = urlopen.call_args.args[0]
         body = voice_turn_server.json.loads(request.data.decode("utf-8"))
         self.assertEqual("fast-model", body["model"])
-        self.assertIn("max 10 words", body["messages"][0]["content"])
+        self.assertIn("max 8 words", body["messages"][0]["content"])
         self.assertEqual(256, body["max_tokens"])
         self.assertTrue(body["reasoning_split"])
         self.assertNotIn("test-key", str(body))

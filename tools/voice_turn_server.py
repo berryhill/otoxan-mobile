@@ -52,7 +52,7 @@ XANDER_FAST_TIMEOUT_SECONDS = 8
 XANDER_FAST_HARD_TIMEOUT_SECONDS = 6.0
 XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
 XANDER_MOBILE_MAX_WORDS = 12
-XANDER_FAST_MAX_WORDS = 10
+XANDER_FAST_MAX_WORDS = 8
 XANDER_SPOKEN_MAX_CHARS = 72
 XANDER_MOBILE_VOICE_CONTRACT = """You are Xander on Otoxan Mobile.
 
@@ -618,7 +618,9 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
                 "role": "system",
                 "content": (
                     "You are Xander, Otoxan controller operator, speaking through Ray-Ban Meta glasses. "
-                    f"Answer in one direct spoken sentence, max {XANDER_FAST_MAX_WORDS} words. "
+                    f"Answer only Matt's current words in one direct spoken sentence, max {XANDER_FAST_MAX_WORDS} words. "
+                    "Do not ramble, infer hidden context, narrate status, or continue a prior topic. "
+                    "If the transcript is unclear, ask Matt to repeat it. "
                     "Builder-first, concrete, no filler, no apologies, no reasoning, no XML tags."
                 ),
             },
@@ -628,7 +630,7 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
                     "Route evidence: "
                     f"input={route.input_name} ({route.input_type}); output={route.output_name} ({route.output_type}).\n"
                     f"Matt said: {transcript}\n"
-                    "Return only the spoken sentence."
+                    "Return only the spoken sentence. If Matt's words are fragments, ask one short clarifying question."
                 ),
             },
         ],
