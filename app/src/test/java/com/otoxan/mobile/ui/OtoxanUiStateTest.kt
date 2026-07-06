@@ -32,4 +32,32 @@ class OtoxanUiStateTest {
         assertNull(state.backendResponseReadyMs)
         assertNull(state.ttfaMs)
     }
+
+    @Test
+    fun latencyCardMetrics_showCaptureAckGapAndTtfaRowValues() {
+        val state = OtoxanUiState(
+            captureReadMs = 1180,
+            captureExpectedMs = 1200,
+            postCaptureAckDelayMs = 42,
+            localAckKind = "earcon_while_route_active",
+            localAckStartMs = 1222,
+            ttfaMs = 1222
+        )
+
+        val metrics = state.latencyCardMetrics
+
+        assertEquals(3, metrics.size)
+        assertEquals(LatencyCardMetric("Capture", "1180ms", "target 1200ms"), metrics[0])
+        assertEquals(LatencyCardMetric("Ack gap", "42ms", "after capture · earcon_while_route_active"), metrics[1])
+        assertEquals(LatencyCardMetric("TTFA", "1222ms", "local ack at 1222ms"), metrics[2])
+    }
+
+    @Test
+    fun latencyCardMetrics_keepUnknownValuesExplicit() {
+        val metrics = OtoxanUiState().latencyCardMetrics
+
+        assertEquals(LatencyCardMetric("Capture", "unknown", "target unknown"), metrics[0])
+        assertEquals(LatencyCardMetric("Ack gap", "unknown", "after capture · none"), metrics[1])
+        assertEquals(LatencyCardMetric("TTFA", "unknown", "first audio unknown"), metrics[2])
+    }
 }

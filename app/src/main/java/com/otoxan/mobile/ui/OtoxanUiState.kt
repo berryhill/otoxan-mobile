@@ -19,6 +19,12 @@ data class TelemetryPassSummary(
     val error: String? = null
 )
 
+data class LatencyCardMetric(
+    val label: String,
+    val value: String,
+    val detail: String
+)
+
 data class OtoxanUiState(
     val voiceEndpoint: String = "",
     val permissionState: PermissionState = PermissionState.Unknown,
@@ -94,6 +100,34 @@ data class OtoxanUiState(
 
 val OtoxanUiState.voiceActivityActive: Boolean
     get() = conversationActive || sessionState == VoiceSessionState.RecordingTest || sessionState == VoiceSessionState.PlayingTest
+
+val OtoxanUiState.latencyCardMetrics: List<LatencyCardMetric>
+    get() = listOf(
+        LatencyCardMetric(
+            label = "Capture",
+            value = captureReadMs.toLatencyMsText(),
+            detail = "target ${captureExpectedMs.toLatencyMsText()}"
+        ),
+        LatencyCardMetric(
+            label = "Ack gap",
+            value = postCaptureAckDelayMs.toLatencyMsText(),
+            detail = "after capture · $localAckKind"
+        ),
+        LatencyCardMetric(
+            label = "TTFA",
+            value = ttfaMs.toLatencyMsText(),
+            detail = firstAudioLatencyDetail
+        )
+    )
+
+private val OtoxanUiState.firstAudioLatencyDetail: String
+    get() = when {
+        localAckStartMs != null -> "local ack at ${localAckStartMs.toLatencyMsText()}"
+        assistantPlaybackStartMs != null -> "assistant at ${assistantPlaybackStartMs.toLatencyMsText()}"
+        else -> "first audio unknown"
+    }
+
+private fun Long?.toLatencyMsText(): String = this?.let { "${it}ms" } ?: "unknown"
 
 enum class PermissionState {
     Unknown,
