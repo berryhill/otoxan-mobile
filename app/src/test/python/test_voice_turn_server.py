@@ -66,6 +66,35 @@ class VoiceTurnServerTest(unittest.TestCase):
             },
         }
 
+
+    def test_recent_voice_turn_metrics_returns_latest_records_first(self):
+        with tempfile.NamedTemporaryFile(delete=False) as fh:
+            metrics_path = fh.name
+        try:
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = metrics_path
+            for index in range(3):
+                packet = {
+                    "type": "otoxan_mobile_voice_turn_metrics",
+                    "schemaVersion": 1,
+                    "turn": {"turnId": f"turn-{index}", "success": True, "stage": "complete"},
+                }
+                voice_turn_server.handle_voice_turn_metrics(packet, remote_addr="phone")
+
+            recent = voice_turn_server.recent_voice_turn_metrics(limit=2)
+
+            self.assertTrue(recent["ok"])
+            self.assertEqual(3, recent["count"])
+            self.assertEqual(2, len(recent["records"]))
+            self.assertEqual("turn-2", recent["records"][0]["payload"]["turn"]["turnId"])
+            self.assertEqual("turn-1", recent["records"][1]["payload"]["turn"]["turnId"])
+            self.assertEqual("turn-2", voice_turn_server.latest_voice_turn_metrics()["latest"]["payload"]["turn"]["turnId"])
+        finally:
+            Path(metrics_path).unlink(missing_ok=True)
+
+    def test_mobile_voice_contract_includes_xander_stanza(self):
+        self.assertIn("Otoxan controller builder", voice_turn_server.XANDER_MOBILE_VOICE_CONTRACT)
+        self.assertIn("Silas owns the live Frankenstein", voice_turn_server.XANDER_MOBILE_VOICE_CONTRACT)
+
     def test_handle_voice_turn_returns_mobile_contract(self):
         result = voice_turn_server.handle_voice_turn(self._payload())
 
@@ -589,11 +618,11 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("I'm on the Ray-Ban route", text)
         command = run.call_args.args[0]
         prompt = command[command.index("-z") + 1]
-        self.assertIn("Otoxan controller operator", prompt)
-        self.assertIn("not a generic assistant", prompt)
-        self.assertIn("builder-first", prompt)
-        self.assertIn("No filler", prompt)
-        self.assertIn("Matt said", prompt)
+        self.assertIn("Otoxan controller builder and fleet operator", prompt)
+        self.assertIn("Mobile/Ray-Ban work is a controller voice-loop surface, not a separate identity", prompt)
+        self.assertIn("direct, builder-first, operator-grade, concrete", prompt)
+        self.assertIn("One short spoken answer, not a report", prompt)
+        self.assertIn("Operator said", prompt)
         self.assertIn("Xander, say pineapple if you heard me", prompt)
         self.assertIn("RB Meta 03YS", prompt)
 

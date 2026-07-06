@@ -12,6 +12,7 @@ import com.otoxan.mobile.voice.RouteEvidence
 import com.otoxan.mobile.voice.SpeechPlayback
 import com.otoxan.mobile.voice.VoiceCaptureConfig
 import com.otoxan.mobile.voice.VoiceTurnTelemetryPacket
+import com.otoxan.mobile.voice.VoiceTurnTelemetryRecord
 import com.otoxan.mobile.voice.XanderVoiceClient
 import com.otoxan.mobile.voice.conversationVoiceCaptureConfig
 import com.otoxan.mobile.voice.createXanderVoiceClient
@@ -34,6 +35,24 @@ import kotlinx.coroutines.isActive
 import java.util.UUID
 
 private class NoSpeechDetectedForTurn(message: String) : RuntimeException(message)
+
+private fun VoiceTurnTelemetryRecord.toTelemetryPassSummary(): TelemetryPassSummary = TelemetryPassSummary(
+    turnId = turnId,
+    success = success,
+    pass1Status = pass1Status,
+    routeName = routeName,
+    totalMs = totalMs,
+    ttfaMs = ttfaMs,
+    backendMs = backendMs,
+    sttMs = sttMs,
+    xanderMs = xanderMs,
+    playbackMs = playbackMs,
+    capturedBytes = capturedBytes ?: 0,
+    peakAmplitude = peakAmplitude ?: 0,
+    transcriptSource = transcriptSource,
+    assistantTextLength = assistantTextLength ?: 0,
+    error = error
+)
 
 class OtoxanViewModel(
     private val audioRouter: AudioRouter,
@@ -535,12 +554,18 @@ class OtoxanViewModel(
         }
         val telemetry = buildTelemetryPacket(turnId, proof, success = true, error = null)
         val telemetryResult = xanderVoiceClient.postVoiceTurnMetrics(telemetry)
+        val recentTelemetry = xanderVoiceClient.fetchRecentVoiceTurnMetrics(limit = 24)
         _uiState.update {
             it.copy(
-                telemetryStatus = if (telemetryResult.ok) {
-                    "Sent turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}"
+                telemetryStatus = when {
+                    telemetryResult.ok && recentTelemetry.ok -> "Sent turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}; synced ${recentTelemetry.records.size}/${recentTelemetry.count} telemetry records"
+                    telemetryResult.ok -> "Sent turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}; recent telemetry sync failed: ${recentTelemetry.error ?: "unknown"}"
+                    else -> "FAILED turnId=$turnId: ${telemetryResult.error ?: "unknown"}"
+                },
+                telemetryHistory = if (recentTelemetry.ok && recentTelemetry.records.isNotEmpty()) {
+                    recentTelemetry.records.map { it.toTelemetryPassSummary() }
                 } else {
-                    "FAILED turnId=$turnId: ${telemetryResult.error ?: "unknown"}"
+                    it.telemetryHistory
                 }
             )
         }

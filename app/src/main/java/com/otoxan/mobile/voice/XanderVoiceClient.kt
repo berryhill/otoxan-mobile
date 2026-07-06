@@ -6,11 +6,43 @@ import java.net.URL
 import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 interface XanderVoiceClient {
     suspend fun sendVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult
     suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult
+    suspend fun fetchRecentVoiceTurnMetrics(limit: Int = 20): VoiceTurnTelemetryHistoryResult
 }
+
+
+data class VoiceTurnTelemetryHistoryResult(
+    val ok: Boolean,
+    val count: Int = 0,
+    val records: List<VoiceTurnTelemetryRecord> = emptyList(),
+    val error: String? = null
+)
+
+
+data class VoiceTurnTelemetryRecord(
+    val turnId: String,
+    val success: Boolean,
+    val stage: String?,
+    val error: String?,
+    val routeName: String,
+    val routeType: String?,
+    val receivedAtMs: Long?,
+    val totalMs: Long?,
+    val ttfaMs: Long?,
+    val backendMs: Long?,
+    val sttMs: Int?,
+    val xanderMs: Int?,
+    val playbackMs: Long?,
+    val capturedBytes: Int?,
+    val peakAmplitude: Int?,
+    val transcriptSource: String?,
+    val pass1Status: String?,
+    val assistantTextLength: Int?
+)
 
 
 data class VoiceTurnTelemetryResult(
@@ -245,6 +277,74 @@ class HttpXanderVoiceClient(
         }
     }
 
+
+    override suspend fun fetchRecentVoiceTurnMetrics(limit: Int): VoiceTurnTelemetryHistoryResult = withContext(Dispatchers.IO) {
+        val boundedLimit = limit.coerceIn(1, 100)
+        val recentUrl = endpointUrl.replace(Regex("/voice-turn/?$"), "/voice-turn-metrics/recent?limit=$boundedLimit")
+        val connection = (URL(recentUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = connectTimeoutMillis
+            readTimeout = 5_000
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            val responseCode = connection.responseCode
+            val responseBody = if (responseCode in 200..299) {
+                connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            } else {
+                connection.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+            }
+            if (responseCode !in 200..299) {
+                return@withContext VoiceTurnTelemetryHistoryResult(ok = false, error = "HTTP $responseCode: $responseBody")
+            }
+            val root = JSONObject(responseBody)
+            val records = root.optJSONArray("records")
+            val parsed = buildList {
+                if (records != null) {
+                    for (index in 0 until records.length()) {
+                        val record = records.optJSONObject(index) ?: continue
+                        val payload = record.optJSONObject("payload") ?: continue
+                        val turn = payload.optJSONObject("turn")
+                        val route = payload.optJSONObject("route")
+                        val totals = payload.optJSONObject("totals")
+                        val perceived = payload.optJSONObject("perceivedLatency")
+                        val backend = payload.optJSONObject("backend")
+                        val playback = payload.optJSONObject("playback")
+                        val capture = payload.optJSONObject("capture")
+                        val verdict = payload.optJSONObject("verdict")
+                        add(
+                            VoiceTurnTelemetryRecord(
+                                turnId = turn.optStringOrNull("turnId") ?: record.optStringOrNull("recordId") ?: "unknown",
+                                success = turn?.optBoolean("success") ?: false,
+                                stage = turn.optStringOrNull("stage"),
+                                error = turn.optStringOrNull("error"),
+                                routeName = route.optStringOrNull("inputName") ?: "unknown route",
+                                routeType = route.optStringOrNull("inputType"),
+                                receivedAtMs = record.optLongOrNull("receivedAtMs"),
+                                totalMs = totals.optLongOrNull("turnTotalMs"),
+                                ttfaMs = perceived.optLongOrNull("ttfaMs"),
+                                backendMs = backend.optLongOrNull("roundTripMs"),
+                                sttMs = backend.optIntOrNull("sttLatencyMs"),
+                                xanderMs = backend.optIntOrNull("xanderFastMs") ?: backend.optIntOrNull("xanderSessionMs"),
+                                playbackMs = playback.optLongOrNull("totalMs"),
+                                capturedBytes = capture.optIntOrNull("capturedBytes"),
+                                peakAmplitude = capture.optIntOrNull("peakAmplitude"),
+                                transcriptSource = verdict.optStringOrNull("transcriptSource"),
+                                pass1Status = verdict.optStringOrNull("pass1Status"),
+                                assistantTextLength = verdict.optIntOrNull("assistantTextLength")
+                            )
+                        )
+                    }
+                }
+            }
+            VoiceTurnTelemetryHistoryResult(ok = root.optBoolean("ok", true), count = root.optInt("count", parsed.size), records = parsed)
+        } catch (error: Exception) {
+            VoiceTurnTelemetryHistoryResult(ok = false, error = error.message ?: error::class.java.simpleName)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun buildRequestBody(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): String {
         return """
             {
@@ -377,6 +477,10 @@ class StubXanderVoiceClient : XanderVoiceClient {
     override suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult {
         return VoiceTurnTelemetryResult(ok = true, recordId = "stub")
     }
+
+    override suspend fun fetchRecentVoiceTurnMetrics(limit: Int): VoiceTurnTelemetryHistoryResult {
+        return VoiceTurnTelemetryHistoryResult(ok = true, count = 0, records = emptyList())
+    }
 }
 
 fun createXanderVoiceClient(endpointUrl: String): XanderVoiceClient {
@@ -385,6 +489,22 @@ fun createXanderVoiceClient(endpointUrl: String): XanderVoiceClient {
     } else {
         HttpXanderVoiceClient(endpointUrl = endpointUrl)
     }
+}
+
+
+private fun JSONObject?.optStringOrNull(name: String): String? {
+    if (this == null || isNull(name)) return null
+    return optString(name).takeIf { it.isNotBlank() }
+}
+
+private fun JSONObject?.optLongOrNull(name: String): Long? {
+    if (this == null || isNull(name)) return null
+    return optLong(name)
+}
+
+private fun JSONObject?.optIntOrNull(name: String): Int? {
+    if (this == null || isNull(name)) return null
+    return optInt(name)
 }
 
 private fun String.requiredJsonString(fieldName: String): String {

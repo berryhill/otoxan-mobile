@@ -300,4 +300,59 @@ class HttpXanderVoiceClientTest {
         assertTrue(!requestBody.contains("assistantText\""))
     }
 
+
+    @Test
+    fun fetchRecentVoiceTurnMetrics_parsesRecentServerTelemetry() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "ok": true,
+                      "count": 2,
+                      "records": [
+                        {
+                          "recordId": "record-2",
+                          "receivedAtMs": 12345,
+                          "payload": {
+                            "turn": {"turnId": "turn-2", "success": true, "stage": "complete", "error": null},
+                            "route": {"inputName": "RB Meta 03YS", "inputType": "TYPE_BLUETOOTH_SCO"},
+                            "totals": {"turnTotalMs": 12000},
+                            "perceivedLatency": {"ttfaMs": 5500},
+                            "backend": {"roundTripMs": 7400, "sttLatencyMs": 500, "xanderFastMs": 2600},
+                            "playback": {"totalMs": 4500},
+                            "capture": {"capturedBytes": 144000, "peakAmplitude": 9000},
+                            "verdict": {"transcriptSource": "hermes-stt", "pass1Status": "real-speech-proven", "assistantTextLength": 54}
+                          }
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+        )
+        server.start()
+
+        val client = HttpXanderVoiceClient(
+            endpointUrl = server.url("/voice-turn").toString(),
+            connectTimeoutMillis = 1_000,
+            readTimeoutMillis = 1_000
+        )
+        val result = kotlinx.coroutines.runBlocking { client.fetchRecentVoiceTurnMetrics(limit = 24) }
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/voice-turn-metrics/recent?limit=24", request.path)
+        assertTrue(result.error ?: "history fetch failed", result.ok)
+        assertEquals(2, result.count)
+        assertEquals(1, result.records.size)
+        val record = result.records.single()
+        assertEquals("turn-2", record.turnId)
+        assertEquals("RB Meta 03YS", record.routeName)
+        assertEquals(5500L, record.ttfaMs)
+        assertEquals(2600, record.xanderMs)
+        assertEquals("real-speech-proven", record.pass1Status)
+    }
+
 }

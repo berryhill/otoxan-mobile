@@ -299,7 +299,7 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
                 style = MaterialTheme.typography.bodySmall
             )
             if (state.telemetryHistory.isNotEmpty()) {
-                Text("Recent passes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("Recent server telemetry", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 state.telemetryHistory.asReversed().forEachIndexed { index, pass ->
                     TelemetryHistoryRow(index = index + 1, pass = pass)
                 }
@@ -370,7 +370,7 @@ private fun TelemetryHistoryRow(index: Int, pass: TelemetryPassSummary) {
             )
         }
         Text(
-            "backend=${pass.backendMs?.let { "${it}ms" } ?: "?"}; stt=${pass.sttMs?.let { "${it}ms" } ?: "?"}; xander=${pass.xanderMs?.let { "${it}ms" } ?: "?"}; playback=${pass.playbackMs?.let { "${it}ms" } ?: "?"}; pass1=${pass.pass1Status ?: "unknown"}; source=${pass.transcriptSource ?: "unknown"}; reply=${pass.assistantTextLength} chars",
+            "backend=${pass.backendMs?.let { "${it}ms" } ?: "?"}; stt=${pass.sttMs?.let { "${it}ms" } ?: "?"}; xander=${pass.xanderMs?.let { "${it}ms" } ?: "?"}; playback=${pass.playbackMs?.let { "${it}ms" } ?: "?"}; pass1=${pass.pass1Status ?: "unknown"}; source=${pass.transcriptSource ?: "unknown"}; reply=${pass.assistantTextLength} chars${pass.error?.let { "; error=$it" } ?: ""}",
             style = MaterialTheme.typography.bodySmall
         )
     }
