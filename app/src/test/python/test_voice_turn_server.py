@@ -212,21 +212,45 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertTrue(result["pass1Ready"])
         self.assertIn("Fast lane", result["assistantText"])
 
-    def test_mobile_fast_provider_returns_diagnostic_instead_of_hard_failing_after_stt(self):
+    def test_mobile_fast_provider_falls_back_to_session_instead_of_hard_failing_after_stt(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
         payload = self._payload()
         stt = voice_turn_server.SttResult("real words decoded", "success", 33)
         with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
             with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", side_effect=RuntimeError("provider exploded")):
-                result = voice_turn_server.handle_voice_turn(payload)
+                with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="Fallback session answered clearly.") as fallback:
+                    result = voice_turn_server.handle_voice_turn(payload)
+
+        fallback.assert_called_once()
+        self.assertTrue(result["ok"])
+        self.assertEqual("mobile-fast", result["provider"])
+        self.assertEqual("real-speech-proven", result["pass1Status"])
+        self.assertTrue(result["pass1Ready"])
+        self.assertEqual("Fallback session answered clearly.", result["assistantText"])
+        self.assertEqual(0, result["timing"]["xanderFastStatus"])
+        self.assertEqual(1, result["timing"]["xanderFallbackSessionStatus"])
+        self.assertIsInstance(result["xanderSessionMs"], int)
+
+    def test_mobile_fast_provider_returns_non_internal_degraded_response_if_all_model_lanes_fail(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
+        payload = self._payload()
+        stt = voice_turn_server.SttResult("real words decoded", "success", 33)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
+            with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", side_effect=RuntimeError("provider exploded")):
+                with mock.patch.object(voice_turn_server, "_ask_xander_session", side_effect=RuntimeError("fallback exploded")):
+                    result = voice_turn_server.handle_voice_turn(payload)
 
         self.assertTrue(result["ok"])
         self.assertEqual("mobile-fast", result["provider"])
         self.assertEqual("real-speech-proven", result["pass1Status"])
         self.assertTrue(result["pass1Ready"])
-        self.assertIn("Fast lane failed after STT", result["assistantText"])
+        self.assertIn("voice loop is live", result["assistantText"])
+        self.assertNotIn("Fast lane", result["assistantText"])
+        self.assertNotIn("provider", result["assistantText"].lower())
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
+        self.assertEqual(0, result["timing"]["xanderFallbackSessionStatus"])
         self.assertIsInstance(result["xanderSessionMs"], int)
 
     def test_mobile_fast_direct_provider_shapes_response_without_leaking_reasoning(self):
@@ -272,7 +296,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertTrue(body["reasoning_split"])
         self.assertNotIn("test-key", str(body))
 
-    def test_mobile_fast_reasoning_only_output_returns_diagnostic_instead_of_502(self):
+    def test_mobile_fast_reasoning_only_output_raises_for_fallback(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
         fake_config = {
             "providers": {
@@ -296,9 +320,10 @@ class VoiceTurnServerTest(unittest.TestCase):
         os.environ["OTOXAN_MOBILE_FAST_PROVIDER"] = "fast-test"
         with mock.patch.object(voice_turn_server, "_load_xander_config", return_value=fake_config):
             with mock.patch.object(voice_turn_server.urllib.request, "urlopen", return_value=FakeResponse()):
-                text = voice_turn_server._ask_xander_mobile_fast("test transcript", route)
+                with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
+                    voice_turn_server._ask_xander_mobile_fast("test transcript", route)
 
-        self.assertIn("model returned no spoken answer", text)
+        self.assertIn("no spoken content", str(raised.exception))
 
     def test_xander_session_prompt_preserves_mobile_xander_voice_contract(self):
         os.environ["OTOXAN_HERMES_BIN"] = "/bin/hermes-test"

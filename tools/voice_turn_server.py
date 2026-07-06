@@ -274,8 +274,13 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         assistant_text = _ask_xander_mobile_fast(transcript.transcript, route)
         timing["xanderFastStatus"] = 1
     except Exception as exc:  # noqa: BLE001 - mobile voice must return telemetry, not hard-fail.
-        assistant_text = f"Fast lane failed after STT: {str(exc)[:90]}."
         timing["xanderFastStatus"] = 0
+        try:
+            assistant_text = _ask_xander_session(transcript.transcript, route)
+            timing["xanderFallbackSessionStatus"] = 1
+        except Exception:
+            timing["xanderFallbackSessionStatus"] = 0
+            assistant_text = _mobile_fast_degraded_spoken_response(transcript.transcript)
     fast_ms = _elapsed_ms(fast_started)
     # Keep xanderSessionMs populated so existing Android telemetry charts compare old vs fast lane.
     timing["xanderSessionMs"] = fast_ms
@@ -508,8 +513,19 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
         raise VoiceTurnError("mobile-fast provider returned an unexpected response shape", 502) from exc
     text = _strip_reasoning_markup(str(text))
     if not text.strip():
-        return "Fast lane got your words, but the model returned no spoken answer."
+        raise VoiceTurnError("mobile-fast provider returned no spoken content", 502)
     return _shape_mobile_spoken_response(text, max_words=XANDER_FAST_MAX_WORDS)
+
+
+def _mobile_fast_degraded_spoken_response(transcript: str) -> str:
+    spoken = _clean(transcript, "your words")
+    words = spoken.split()
+    if len(words) > 8:
+        spoken = " ".join(words[:8]) + "..."
+    return _shape_mobile_spoken_response(
+        f"I heard {spoken}; the response lane is degraded, but the voice loop is live.",
+        max_words=XANDER_FAST_MAX_WORDS,
+    )
 
 
 def _load_xander_config() -> Mapping[str, Any]:
