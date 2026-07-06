@@ -37,7 +37,13 @@ class HttpXanderVoiceClientTest {
                       "sttLatencyMs": null,
                       "pass1Status": "proof-mode-not-real-speech",
                       "pass1Ready": false,
-                      "audioStats": {"bytes": 4, "samples": 2, "durationMs": 0, "peak": 513, "rms": 512.5}
+                      "audioStats": {"bytes": 4, "samples": 2, "durationMs": 0, "peak": 513, "rms": 512.5},
+                      "backendTotalMs": 123,
+                      "decodePcmMs": 2,
+                      "audioStatsMs": 3,
+                      "transcriptTotalMs": 4,
+                      "xanderSessionMs": 5,
+                      "responseBuildMs": 1
                     }
                     """.trimIndent()
                 )
@@ -84,6 +90,21 @@ class HttpXanderVoiceClientTest {
         assertEquals(0, result.audioDurationMs)
         assertEquals(513, result.audioPeak)
         assertEquals(512.5, result.audioRms!!, 0.01)
+        assertEquals(123, result.backendTotalMs)
+        assertEquals(2, result.decodePcmMs)
+        assertEquals(3, result.audioStatsMs)
+        assertEquals(4, result.transcriptTotalMs)
+        assertEquals(5, result.xanderSessionMs)
+        assertEquals(1, result.responseBuildMs)
+        assertEquals(200, result.httpStatusCode)
+        assertTrue(result.requestBytes!! > 0)
+        assertTrue(result.responseBytes!! > 0)
+        assertTrue(result.clientBackendRoundTripMs!! >= 0)
+        assertTrue(result.requestBuildMs!! >= 0)
+        assertTrue(result.uploadMs!! >= 0)
+        assertTrue(result.responseCodeWaitMs!! >= 0)
+        assertTrue(result.responseReadMs!! >= 0)
+        assertTrue(result.responseParseMs!! >= 0)
     }
 
     @Test

@@ -25,7 +25,22 @@ data class VoiceTurnResult(
     val audioFormat: String? = null,
     val audioDurationMs: Int? = null,
     val audioPeak: Int? = null,
-    val audioRms: Double? = null
+    val audioRms: Double? = null,
+    val backendTotalMs: Int? = null,
+    val decodePcmMs: Int? = null,
+    val audioStatsMs: Int? = null,
+    val transcriptTotalMs: Int? = null,
+    val xanderSessionMs: Int? = null,
+    val responseBuildMs: Int? = null,
+    val httpStatusCode: Int? = null,
+    val requestBytes: Int? = null,
+    val responseBytes: Int? = null,
+    val requestBuildMs: Long? = null,
+    val uploadMs: Long? = null,
+    val responseCodeWaitMs: Long? = null,
+    val responseReadMs: Long? = null,
+    val responseParseMs: Long? = null,
+    val clientBackendRoundTripMs: Long? = null
 )
 
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -49,25 +64,37 @@ class HttpXanderVoiceClient(
         }
 
         try {
+            val totalStarted = System.nanoTime()
+            val buildStarted = System.nanoTime()
             val body = buildRequestBody(pcm16Mono16k, routeEvidence)
+            val bodyBytes = body.toByteArray(Charsets.UTF_8)
+            val requestBuildMs = elapsedMs(buildStarted)
+            val uploadStarted = System.nanoTime()
             connection.outputStream.use { output ->
-                output.write(body.toByteArray(Charsets.UTF_8))
+                output.write(bodyBytes)
             }
+            val uploadMs = elapsedMs(uploadStarted)
 
+            val responseCodeStarted = System.nanoTime()
             val responseCode = connection.responseCode
+            val responseCodeWaitMs = elapsedMs(responseCodeStarted)
+            val responseReadStarted = System.nanoTime()
             val responseBody = if (responseCode in 200..299) {
                 connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
             } else {
                 val errorBody = connection.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
                 throw XanderVoiceClientException("Xander voice endpoint returned HTTP $responseCode: $errorBody")
             }
+            val responseReadMs = elapsedMs(responseReadStarted)
 
-            VoiceTurnResult(
+            val parseStarted = System.nanoTime()
+            val ttsPcm = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let {
+                decodeTtsPcm(it)
+            }
+            val result = VoiceTurnResult(
                 transcript = responseBody.requiredJsonString("transcript"),
                 assistantText = responseBody.requiredJsonString("assistantText"),
-                ttsPcm16Mono16k = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let {
-                    decodeTtsPcm(it)
-                },
+                ttsPcm16Mono16k = ttsPcm,
                 bytesReceived = responseBody.optionalJsonInt("bytesReceived"),
                 provider = responseBody.optionalJsonString("provider"),
                 transcriptSource = responseBody.optionalJsonString("transcriptSource"),
@@ -78,8 +105,24 @@ class HttpXanderVoiceClient(
                 audioFormat = responseBody.optionalJsonString("audioFormat"),
                 audioDurationMs = responseBody.optionalJsonInt("durationMs"),
                 audioPeak = responseBody.optionalJsonInt("peak"),
-                audioRms = responseBody.optionalJsonDouble("rms")
+                audioRms = responseBody.optionalJsonDouble("rms"),
+                backendTotalMs = responseBody.optionalJsonInt("backendTotalMs"),
+                decodePcmMs = responseBody.optionalJsonInt("decodePcmMs"),
+                audioStatsMs = responseBody.optionalJsonInt("audioStatsMs"),
+                transcriptTotalMs = responseBody.optionalJsonInt("transcriptTotalMs"),
+                xanderSessionMs = responseBody.optionalJsonInt("xanderSessionMs"),
+                responseBuildMs = responseBody.optionalJsonInt("responseBuildMs"),
+                httpStatusCode = responseCode,
+                requestBytes = bodyBytes.size,
+                responseBytes = responseBody.toByteArray(Charsets.UTF_8).size,
+                requestBuildMs = requestBuildMs,
+                uploadMs = uploadMs,
+                responseCodeWaitMs = responseCodeWaitMs,
+                responseReadMs = responseReadMs,
+                responseParseMs = elapsedMs(parseStarted),
+                clientBackendRoundTripMs = elapsedMs(totalStarted)
             )
+            result
         } catch (error: XanderVoiceClientException) {
             throw error
         } catch (error: Exception) {
@@ -156,6 +199,8 @@ private fun String.optionalJsonBoolean(fieldName: String): Boolean? {
     val regex = Regex("\\\"${Regex.escape(fieldName)}\\\"\\s*:\\s*(true|false)")
     return regex.find(this)?.groupValues?.get(1)?.toBooleanStrictOrNull()
 }
+
+private fun elapsedMs(startedNanos: Long): Long = ((System.nanoTime() - startedNanos) / 1_000_000L).coerceAtLeast(0L)
 
 private fun decodeTtsPcm(encoded: String): ByteArray {
     return try {

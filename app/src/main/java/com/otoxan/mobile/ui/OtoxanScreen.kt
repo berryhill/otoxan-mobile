@@ -81,6 +81,7 @@ fun OtoxanScreen(
 
         EvidenceBlock("Transcript", state.transcript.ifBlank { "No sample captured yet" })
         VoiceLoopEvidenceCard(state)
+        LatencyCard(state)
         OperatorDebugCard(state)
         EvidenceBlock("Assistant response", state.assistantResponse.ifBlank { "Configure XANDER_VOICE_ENDPOINT for a real backend turn" })
 
@@ -129,6 +130,26 @@ private fun VoiceLoopEvidenceCard(state: OtoxanUiState) {
             Text("Backend received: ${state.backendBytesReceived?.toString() ?: "unknown"} bytes")
             Text("Backend audio: ${state.audioFormat ?: "unknown"}; duration=${state.backendAudioDurationMs?.toString() ?: "unknown"}ms; peak=${state.backendAudioPeak?.toString() ?: "unknown"}; rms=${state.backendAudioRms?.toString() ?: "unknown"}")
             Text("TTS PCM: ${state.ttsBytes} bytes")
+        }
+    }
+}
+
+@Composable
+private fun LatencyCard(state: OtoxanUiState) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Latency", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Total turn: ${state.turnTotalMs?.let { "${it}ms" } ?: "unknown"}")
+            Text("Route select: ${state.routeSelectMs?.let { "${it}ms" } ?: "unknown"}; release: ${state.routeReleaseMs?.let { "${it}ms" } ?: "unknown"}")
+            Text("Capture: expected=${state.captureExpectedMs?.let { "${it}ms" } ?: "unknown"}; actual=${state.captureReadMs?.let { "${it}ms" } ?: "unknown"}")
+            Text("Backend: client=${state.backendRoundTripMs?.let { "${it}ms" } ?: "unknown"}; server=${state.backendTotalMs?.let { "${it}ms" } ?: "unknown"}; STT=${state.sttLatencyMs?.let { "${it}ms" } ?: "unknown"}; transcript=${state.transcriptTotalMs?.let { "${it}ms" } ?: "unknown"}; Xander=${state.xanderSessionMs?.let { "${it}ms" } ?: "not run"}")
+            Text("HTTP: status=${state.httpStatusCode?.toString() ?: "unknown"}; build=${state.requestBuildMs?.let { "${it}ms" } ?: "unknown"}; upload=${state.uploadMs?.let { "${it}ms" } ?: "unknown"}; wait=${state.responseCodeWaitMs?.let { "${it}ms" } ?: "unknown"}; read=${state.responseReadMs?.let { "${it}ms" } ?: "unknown"}; parse=${state.responseParseMs?.let { "${it}ms" } ?: "unknown"}")
+            Text("Payloads: request=${state.requestBytes?.toString() ?: "unknown"} bytes; response=${state.responseBytes?.toString() ?: "unknown"} bytes; tts=${state.ttsBytes} bytes")
+            Text("Playback: kind=${state.playbackKind}; total=${state.playbackTotalMs?.let { "${it}ms" } ?: "unknown"}")
         }
     }
 }

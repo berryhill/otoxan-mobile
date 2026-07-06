@@ -69,6 +69,13 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(513, result["audioStats"]["peak"])
         self.assertEqual(513.0, result["audioStats"]["rms"])
         self.assertGreater(len(base64.b64decode(result["ttsPcm16Mono16kBase64"])), 1000)
+        self.assertIsInstance(result["timing"], dict)
+        self.assertIsInstance(result["backendTotalMs"], int)
+        self.assertIsInstance(result["decodePcmMs"], int)
+        self.assertIsInstance(result["audioStatsMs"], int)
+        self.assertEqual(0, result["transcriptTotalMs"])
+        self.assertIsNone(result["xanderSessionMs"])
+        self.assertIsInstance(result["responseBuildMs"], int)
 
     def test_default_provider_calls_xander_session_not_proof(self):
         os.environ.pop("OTOXAN_VOICE_PROVIDER", None)
@@ -86,6 +93,9 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("I am live through the phone.", result["assistantText"])
         self.assertEqual(b"", base64.b64decode(result["ttsPcm16Mono16kBase64"]))
         self.assertEqual(320, result["bytesReceived"])
+        self.assertIsInstance(result["backendTotalMs"], int)
+        self.assertIsInstance(result["transcriptTotalMs"], int)
+        self.assertIsInstance(result["xanderSessionMs"], int)
 
     def test_xander_provider_can_use_debug_transcript(self):
         os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
@@ -138,6 +148,9 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("route-evidence-fallback", result["transcriptSource"])
         self.assertEqual("empty", result["sttStatus"])
         self.assertEqual(31, result["sttLatencyMs"])
+        self.assertEqual(31, result["timing"]["sttLatencyMs"])
+        self.assertIsInstance(result["transcriptTotalMs"], int)
+        self.assertIsNone(result["xanderSessionMs"])
         self.assertEqual("stt-empty", result["pass1Status"])
         self.assertFalse(result["pass1Ready"])
         self.assertIn("I got audio from Ray-Ban Meta", result["assistantText"])
@@ -168,6 +181,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("hermes-stt", result["transcriptSource"])
         self.assertEqual("success", result["sttStatus"])
         self.assertEqual(44, result["sttLatencyMs"])
+        self.assertEqual(44, result["timing"]["sttLatencyMs"])
+        self.assertIsInstance(result["xanderSessionMs"], int)
         self.assertEqual("real-speech-proven", result["pass1Status"])
         self.assertTrue(result["pass1Ready"])
         self.assertIn("pineapple", result["assistantText"].lower())

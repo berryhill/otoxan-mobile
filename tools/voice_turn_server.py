@@ -102,9 +102,12 @@ class AssistantTurn:
     transcript_source: str
     stt_status: str
     stt_latency_ms: int | None
+    timing: dict[str, int | None]
 
 
 def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
+    started = time.monotonic()
+    timing: dict[str, int | None] = {}
     if not isinstance(payload, Mapping):
         raise VoiceTurnError("JSON object payload required", 400)
 
@@ -112,12 +115,22 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
     if audio_format != SUPPORTED_FORMAT:
         raise VoiceTurnError(f"format must be {SUPPORTED_FORMAT}", 400)
 
+    step_started = time.monotonic()
     pcm = _decode_pcm(payload.get("pcm16Mono16kBase64"))
+    timing["decodePcmMs"] = _elapsed_ms(step_started)
+    step_started = time.monotonic()
     stats = _audio_stats(pcm)
+    timing["audioStatsMs"] = _elapsed_ms(step_started)
+    step_started = time.monotonic()
     route = _parse_route(payload.get("routeEvidence"))
+    timing["routeParseMs"] = _elapsed_ms(step_started)
+    step_started = time.monotonic()
     turn = _run_assistant_turn(pcm, route)
+    timing["assistantTurnMs"] = _elapsed_ms(step_started)
+    timing.update(turn.timing)
+    timing["backendTotalMs"] = _elapsed_ms(started)
 
-    return {
+    response = {
         "ok": True,
         "transcript": turn.transcript,
         "assistantText": turn.assistant_text,
@@ -139,7 +152,17 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
             "wearableActive": route.wearable_active,
             "message": route.message,
         },
+        "timing": timing,
+        "backendTotalMs": timing.get("backendTotalMs"),
+        "decodePcmMs": timing.get("decodePcmMs"),
+        "audioStatsMs": timing.get("audioStatsMs"),
+        "transcriptTotalMs": timing.get("transcriptTotalMs"),
+        "xanderSessionMs": timing.get("xanderSessionMs"),
+        "responseBuildMs": 0,
     }
+    response["responseBuildMs"] = _elapsed_ms(started) - int(response.get("backendTotalMs") or 0)
+    response["timing"]["responseBuildMs"] = response["responseBuildMs"]
+    return response
 
 
 def _pass1_ready(turn: AssistantTurn) -> bool:
@@ -176,8 +199,13 @@ def _run_assistant_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
 
 
 def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
+    timing: dict[str, int | None] = {}
+    transcript_started = time.monotonic()
     transcript = _xander_transcript(pcm, route)
+    timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
+    timing["sttLatencyMs"] = transcript.stt_latency_ms
     if _is_stt_fallback(transcript.transcript):
+        timing["xanderSessionMs"] = None
         return AssistantTurn(
             transcript=transcript.transcript,
             assistant_text=(
@@ -189,8 +217,11 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
             transcript_source=transcript.source,
             stt_status=transcript.stt_status,
             stt_latency_ms=transcript.stt_latency_ms,
+            timing=timing,
         )
+    session_started = time.monotonic()
     assistant_text = _ask_xander_session(transcript.transcript, route)
+    timing["xanderSessionMs"] = _elapsed_ms(session_started)
     return AssistantTurn(
         transcript=transcript.transcript,
         assistant_text=assistant_text,
@@ -199,6 +230,7 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         transcript_source=transcript.source,
         stt_status=transcript.stt_status,
         stt_latency_ms=transcript.stt_latency_ms,
+        timing=timing,
     )
 
 
@@ -391,14 +423,22 @@ def _first_sentence(text: str) -> str:
 def _proof_turn(pcm: bytes, route: RouteSummary, provider: str) -> AssistantTurn:
     transcript = f"Received {len(pcm)} bytes from {route.input_name} ({route.input_type})."
     assistant_text = f"Xander heard you. The Ray-Ban voice route is live on {route.output_name}."
+    tone_started = time.monotonic()
+    tts_pcm = _proof_tone_pcm()
     return AssistantTurn(
         transcript=transcript,
         assistant_text=assistant_text,
-        tts_pcm=_proof_tone_pcm(),
+        tts_pcm=tts_pcm,
         provider=provider,
         transcript_source="proof",
         stt_status="not-run",
         stt_latency_ms=None,
+        timing={
+            "transcriptTotalMs": 0,
+            "sttLatencyMs": None,
+            "xanderSessionMs": None,
+            "proofToneBuildMs": _elapsed_ms(tone_started),
+        },
     )
 
 
@@ -477,10 +517,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
+            request_started = time.monotonic()
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length).decode("utf-8") if length else "{}"
+            request_read_ms = _elapsed_ms(request_started)
+            parse_started = time.monotonic()
             payload = json.loads(body)
+            json_parse_ms = _elapsed_ms(parse_started)
             response = handle_voice_turn(payload)
+            response.setdefault("timing", {})["httpRequestReadMs"] = request_read_ms
+            response.setdefault("timing", {})["httpJsonParseMs"] = json_parse_ms
+            response["httpRequestReadMs"] = request_read_ms
+            response["httpJsonParseMs"] = json_parse_ms
             print(
                 "voice-turn ok "
                 f"provider={response.get('provider')} "
@@ -490,6 +538,8 @@ class Handler(BaseHTTPRequestHandler):
                 f"rms={response.get('audioStats', {}).get('rms')} "
                 f"sttStatus={response.get('sttStatus')} "
                 f"sttLatencyMs={response.get('sttLatencyMs')} "
+                f"backendTotalMs={response.get('backendTotalMs')} "
+                f"xanderSessionMs={response.get('xanderSessionMs')} "
                 f"transcriptSource={response.get('transcriptSource')} "
                 f"pass1Status={response.get('pass1Status')} "
                 f"input={response.get('routeEvidence', {}).get('inputName')} "

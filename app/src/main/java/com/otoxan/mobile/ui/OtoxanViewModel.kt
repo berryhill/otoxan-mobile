@@ -108,13 +108,18 @@ class OtoxanViewModel(
             runCatching {
                 var releaseEvidence = RouteEvidence.default("Communication route release not reached")
                 try {
+                    val turnStarted = System.nanoTime()
+                    val routeStarted = System.nanoTime()
                     val routeEvidence = audioRouter.inspectAndSelectWearable()
+                    val routeSelectMs = elapsedMs(routeStarted)
                     if (!routeEvidence.wearableActive) {
                         error("Wearable route dropped before capture: ${routeEvidence.message}")
                     }
                     _uiState.update { it.copy(turnStage = "Capturing 5 seconds from selected route") }
                     val captureMillis = 5_000L
+                    val captureStarted = System.nanoTime()
                     val pcm = micCapture.recordPcmForMillis(captureMillis)
+                    val captureReadMs = elapsedMs(captureStarted)
                     val expectedBytes = expectedPcmBytes(captureMillis)
                     val peak = pcm.peakPcm16Amplitude()
                     val usable = isUsableVoiceCapture(pcm, expectedBytes)
@@ -122,9 +127,13 @@ class OtoxanViewModel(
                         error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, peak=$peak, likely silent or truncated")
                     }
                     _uiState.update { it.copy(turnStage = "Posting ${pcm.size} bytes to Xander backend") }
+                    val backendStarted = System.nanoTime()
                     val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
+                    val backendRoundTripMs = elapsedMs(backendStarted)
                     _uiState.update { it.copy(turnStage = "Releasing call route before assistant playback") }
+                    val releaseStarted = System.nanoTime()
                     releaseEvidence = releaseCommunicationRoute("Released communication route before assistant playback")
+                    val routeReleaseMs = elapsedMs(releaseStarted)
                     val playbackMode = _uiState.value.playbackMode
                     _uiState.update {
                         it.copy(
@@ -136,13 +145,19 @@ class OtoxanViewModel(
                         )
                     }
                     val backendTts = result.ttsPcm16Mono16k
+                    var playbackKind = "none"
+                    val playbackStarted = System.nanoTime()
                     if (playbackMode == PlaybackMode.SilentAfterCapture) {
+                        playbackKind = "silent"
                         // Intentional diagnostic mode: isolate whether capture/route release alone wedges Meta call state.
                     } else if (backendTts != null && backendTts.isNotEmpty()) {
+                        playbackKind = "backend_pcm"
                         speechPlayback.playPcm16Mono16k(backendTts)
                     } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
+                        playbackKind = "android_tts"
                         speechPlayback.speakText(result.assistantText)
                     }
+                    val playbackTotalMs = elapsedMs(playbackStarted)
                     VoiceTurnUiResult(
                         routeEvidence = routeEvidence,
                         releaseEvidence = releaseEvidence,
@@ -150,7 +165,15 @@ class OtoxanViewModel(
                         expectedCaptureBytes = expectedBytes,
                         capturePeakAmplitude = peak,
                         captureUsable = usable,
-                        result = result
+                        result = result,
+                        turnTotalMs = elapsedMs(turnStarted),
+                        routeSelectMs = routeSelectMs,
+                        captureReadMs = captureReadMs,
+                        captureExpectedMs = captureMillis,
+                        backendRoundTripMs = backendRoundTripMs,
+                        routeReleaseMs = routeReleaseMs,
+                        playbackTotalMs = playbackTotalMs,
+                        playbackKind = playbackKind
                     )
                 } finally {
                     if (releaseEvidence.message == "Communication route release not reached") {
@@ -186,11 +209,33 @@ class OtoxanViewModel(
                         expectedCaptureBytes = proof.expectedCaptureBytes,
                         capturePeakAmplitude = proof.capturePeakAmplitude,
                         captureUsable = proof.captureUsable,
+                        turnTotalMs = proof.turnTotalMs,
+                        routeSelectMs = proof.routeSelectMs,
+                        captureReadMs = proof.captureReadMs,
+                        captureExpectedMs = proof.captureExpectedMs,
+                        backendRoundTripMs = proof.backendRoundTripMs,
+                        routeReleaseMs = proof.routeReleaseMs,
+                        playbackTotalMs = proof.playbackTotalMs,
+                        playbackKind = proof.playbackKind,
+                        httpStatusCode = result.httpStatusCode,
+                        requestBytes = result.requestBytes,
+                        responseBytes = result.responseBytes,
+                        requestBuildMs = result.requestBuildMs,
+                        uploadMs = result.uploadMs,
+                        responseCodeWaitMs = result.responseCodeWaitMs,
+                        responseReadMs = result.responseReadMs,
+                        responseParseMs = result.responseParseMs,
+                        backendTotalMs = result.backendTotalMs,
+                        decodePcmMs = result.decodePcmMs,
+                        audioStatsMs = result.audioStatsMs,
+                        transcriptTotalMs = result.transcriptTotalMs,
+                        xanderSessionMs = result.xanderSessionMs,
+                        responseBuildMs = result.responseBuildMs,
                         turnStage = if (it.playbackMode == PlaybackMode.SilentAfterCapture) "Turn complete; playback skipped by operator mode" else "Turn complete; communication route released before playback",
                         lastEvidence = if (result.provider == "stub") {
                             "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                         } else {
-                            "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
+                            "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
                         }
                     )
                 }
@@ -214,7 +259,15 @@ class OtoxanViewModel(
         val expectedCaptureBytes: Int,
         val capturePeakAmplitude: Int,
         val captureUsable: Boolean,
-        val result: com.otoxan.mobile.voice.VoiceTurnResult
+        val result: com.otoxan.mobile.voice.VoiceTurnResult,
+        val turnTotalMs: Long,
+        val routeSelectMs: Long,
+        val captureReadMs: Long,
+        val captureExpectedMs: Long,
+        val backendRoundTripMs: Long,
+        val routeReleaseMs: Long,
+        val playbackTotalMs: Long,
+        val playbackKind: String
     )
 
     fun playRouteProof() {
@@ -322,6 +375,8 @@ class OtoxanViewModel(
             }
         }
     }
+
+    private fun elapsedMs(startedNanos: Long): Long = ((System.nanoTime() - startedNanos) / 1_000_000L).coerceAtLeast(0L)
 
     private fun releaseCommunicationRoute(reason: String): RouteEvidence {
         val first = audioRouter.clearRoute()

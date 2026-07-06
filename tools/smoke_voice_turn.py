@@ -52,6 +52,13 @@ def main() -> None:
         "transcriptSource": data.get("transcriptSource"),
         "sttStatus": data.get("sttStatus"),
         "sttLatencyMs": data.get("sttLatencyMs"),
+        "backendTotalMs": data.get("backendTotalMs"),
+        "decodePcmMs": data.get("decodePcmMs"),
+        "audioStatsMs": data.get("audioStatsMs"),
+        "transcriptTotalMs": data.get("transcriptTotalMs"),
+        "xanderSessionMs": data.get("xanderSessionMs"),
+        "responseBuildMs": data.get("responseBuildMs"),
+        "timing": data.get("timing"),
         "pass1Status": data.get("pass1Status"),
         "pass1Ready": data.get("pass1Ready"),
         "transcript": data.get("transcript"),
@@ -69,6 +76,9 @@ def main() -> None:
         failures.append(f"bytesReceived {data.get('bytesReceived')!r} != sent {len(PCM_BYTES)}")
     if data.get("audioFormat") != "pcm_s16le_16khz_mono":
         failures.append(f"audioFormat {data.get('audioFormat')!r} mismatch")
+    for timing_field in ("backendTotalMs", "decodePcmMs", "audioStatsMs", "transcriptTotalMs", "responseBuildMs"):
+        if data.get(timing_field) is None:
+            failures.append(f"{timing_field} missing")
     if not str(data.get("transcript", "")).strip():
         failures.append("transcript missing")
     if not str(data.get("assistantText", "")).strip():
