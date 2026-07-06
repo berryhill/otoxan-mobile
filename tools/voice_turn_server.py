@@ -48,8 +48,8 @@ SUPPORTED_PROVIDER_MODES = {"proof", *XANDER_PROVIDER_ALIASES, *MOBILE_FAST_PROV
 HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
-XANDER_FAST_TIMEOUT_SECONDS = 8
-XANDER_FAST_HARD_TIMEOUT_SECONDS = 8.0
+XANDER_FAST_TIMEOUT_SECONDS = 12
+XANDER_FAST_HARD_TIMEOUT_SECONDS = 12.0
 XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
 XANDER_MOBILE_MAX_WORDS = 12
 XANDER_FAST_MAX_WORDS = 8
@@ -566,7 +566,7 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
 def _ask_xander_mobile_fast_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool]:
     timeout_raw = os.environ.get("OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS", str(XANDER_FAST_HARD_TIMEOUT_SECONDS)).strip()
     try:
-        hard_timeout = max(0.5, min(float(timeout_raw), 10.0))
+        hard_timeout = max(0.5, min(float(timeout_raw), 20.0))
     except ValueError:
         hard_timeout = float(XANDER_FAST_HARD_TIMEOUT_SECONDS)
 
@@ -668,7 +668,7 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
 
 def _mobile_fast_degraded_spoken_response(transcript: str) -> str:
     return _shape_mobile_spoken_response(
-        "Heard you, voice loop live, response lane degraded.",
+        "Say that again.",
         max_words=XANDER_FAST_MAX_WORDS,
     )
 

@@ -130,7 +130,7 @@ class OtoxanViewModel(
                 runCatching { performVoiceTurn(turnId, requireExistingRoute = false) }
                     .onSuccess { proof ->
                         applyVoiceTurnSuccess(turnId, proof, keepConversationActive = true)
-                        delay(350L)
+                        delay(1_200L)
                     }
                     .onFailure { error ->
                         if (error is CancellationException) throw error
@@ -271,6 +271,7 @@ class OtoxanViewModel(
             val usable = shouldSubmitVoiceTurn(capture, minimumUsableBytes, requireSpeechDetected = conversationMode)
             if (!usable) {
                 if (conversationMode && !capture.speechDetected) {
+                    releaseEvidence = RouteEvidence.default("Idle silence; communication route left open to avoid Bluetooth churn")
                     throw NoSpeechDetectedForTurn("No speech detected; skipping backend turn")
                 }
                 error("Microphone capture unusable: captured=${pcm.size} bytes, minimum=$minimumUsableBytes, peak=$peak, stop=${capture.stopReason}, speech=${capture.speechDetected}")
@@ -279,10 +280,16 @@ class OtoxanViewModel(
             val backendStarted = System.nanoTime()
             val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
             val backendRoundTripMs = elapsedMs(backendStarted)
-            _uiState.update { it.copy(turnStage = "Releasing call route before assistant playback") }
             val releaseStarted = System.nanoTime()
-            releaseEvidence = releaseCommunicationRoute("Released communication route before assistant playback")
-            val routeReleaseMs = elapsedMs(releaseStarted)
+            val routeReleaseMs: Long
+            if (conversationMode) {
+                releaseEvidence = RouteEvidence.default("Conversation route kept open between turns to avoid Bluetooth churn")
+                routeReleaseMs = 0L
+            } else {
+                _uiState.update { it.copy(turnStage = "Releasing call route before assistant playback") }
+                releaseEvidence = releaseCommunicationRoute("Released communication route before assistant playback")
+                routeReleaseMs = elapsedMs(releaseStarted)
+            }
             val playbackMode = _uiState.value.playbackMode
             _uiState.update {
                 it.copy(

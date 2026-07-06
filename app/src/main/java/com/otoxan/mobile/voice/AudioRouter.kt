@@ -27,15 +27,25 @@ class AudioRouter(private val context: Context) {
             ?: communicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
 
         lastEvidence = if (preferred != null) {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            val selected = audioManager.setCommunicationDevice(preferred)
+            val selectedBefore = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) audioManager.communicationDevice else null
+            val alreadySelected = selectedBefore?.id == preferred.id && selectedBefore.type == preferred.type
+            val selected = if (alreadySelected) {
+                true
+            } else {
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                audioManager.setCommunicationDevice(preferred)
+            }
             RouteEvidence(
                 inputName = preferred.safeProductName(),
                 inputType = preferred.type.label(),
                 outputName = preferred.safeProductName(),
                 outputType = preferred.type.label(),
                 wearableActive = selected,
-                message = "setCommunicationDevice=$selected; device=${preferred.safeProductName()}; type=${preferred.type.label()}"
+                message = if (alreadySelected) {
+                    "communicationDevice already selected; device=${preferred.safeProductName()}; type=${preferred.type.label()}"
+                } else {
+                    "setCommunicationDevice=$selected; device=${preferred.safeProductName()}; type=${preferred.type.label()}"
+                }
             )
         } else {
             RouteEvidence.default(
