@@ -361,28 +361,16 @@ class OtoxanViewModel(
         return coroutineScope {
             val backendStarted = System.nanoTime()
             val backendDeferred = async(Dispatchers.IO) { xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence) }
-            val releaseStarted = System.nanoTime()
-            val routeReleaseMs: Long
-            val releaseEvidence: RouteEvidence
-            _uiState.update { it.copy(turnStage = "Releasing call route before local acknowledgement") }
-            releaseEvidence = releaseCommunicationRoute(
-                if (conversationMode) {
-                    "Released communication route before local acknowledgement; next listen will re-select Ray-Ban mic"
-                } else {
-                    "Released communication route before single-turn local acknowledgement"
-                }
-            )
-            routeReleaseMs = elapsedMs(releaseStarted)
             val playbackMode = _uiState.value.playbackMode
             var localAckKind = "none"
             var localAckStartMs: Long? = null
             var localAckTotalMs: Long? = null
             if (playbackMode != PlaybackMode.SilentAfterCapture) {
-                _uiState.update { it.copy(turnStage = "Acknowledged locally — waiting on Xander") }
+                _uiState.update { it.copy(turnStage = "Acknowledged locally — releasing route for Xander playback") }
                 localAckStartMs = elapsedMs(turnStarted)
                 val ackStarted = System.nanoTime()
                 localAckKind = if (runCatching { speechPlayback.playAckEarcon() }.isSuccess) {
-                    "earcon"
+                    "earcon_while_route_active"
                 } else {
                     "failed"
                 }
@@ -390,6 +378,18 @@ class OtoxanViewModel(
             } else {
                 localAckKind = "silent_mode"
             }
+            val releaseStarted = System.nanoTime()
+            val routeReleaseMs: Long
+            val releaseEvidence: RouteEvidence
+            _uiState.update { it.copy(turnStage = "Releasing call route after local acknowledgement") }
+            releaseEvidence = releaseCommunicationRoute(
+                if (conversationMode) {
+                    "Released communication route after local acknowledgement; next listen will re-select Ray-Ban mic"
+                } else {
+                    "Released communication route after single-turn local acknowledgement"
+                }
+            )
+            routeReleaseMs = elapsedMs(releaseStarted)
 
             _uiState.update { it.copy(turnStage = "Waiting on Xander response") }
             val result = backendDeferred.await()
@@ -426,7 +426,7 @@ class OtoxanViewModel(
             }
             val playbackTotalMs = elapsedMs(playbackStarted)
             val ttfaMs = when {
-                localAckKind == "earcon" -> localAckStartMs
+                localAckKind.startsWith("earcon") -> localAckStartMs
                 assistantPlaybackStartMs != null -> assistantPlaybackStartMs
                 else -> null
             }
@@ -553,21 +553,28 @@ class OtoxanViewModel(
             )
         }
         val telemetry = buildTelemetryPacket(turnId, proof, success = true, error = null)
-        val telemetryResult = xanderVoiceClient.postVoiceTurnMetrics(telemetry)
-        val recentTelemetry = xanderVoiceClient.fetchRecentVoiceTurnMetrics(limit = 24)
-        _uiState.update {
-            it.copy(
-                telemetryStatus = when {
-                    telemetryResult.ok && recentTelemetry.ok -> "Sent turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}; synced ${recentTelemetry.records.size}/${recentTelemetry.count} telemetry records"
-                    telemetryResult.ok -> "Sent turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}; recent telemetry sync failed: ${recentTelemetry.error ?: "unknown"}"
-                    else -> "FAILED turnId=$turnId: ${telemetryResult.error ?: "unknown"}"
-                },
-                telemetryHistory = if (recentTelemetry.ok && recentTelemetry.records.isNotEmpty()) {
-                    recentTelemetry.records.map { it.toTelemetryPassSummary() }
-                } else {
-                    it.telemetryHistory
-                }
-            )
+        _uiState.update { it.copy(telemetryStatus = "Queued telemetry turnId=$turnId; next listen is not blocked by history sync") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val telemetryResult = xanderVoiceClient.postVoiceTurnMetrics(telemetry)
+            val recentTelemetry = if (telemetryResult.ok) {
+                xanderVoiceClient.fetchRecentVoiceTurnMetrics(limit = 24)
+            } else {
+                com.otoxan.mobile.voice.VoiceTurnTelemetryHistoryResult(ok = false, error = "metrics post failed")
+            }
+            _uiState.update {
+                it.copy(
+                    telemetryStatus = when {
+                        telemetryResult.ok && recentTelemetry.ok -> "Sent turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}; synced ${recentTelemetry.records.size}/${recentTelemetry.count} telemetry records async"
+                        telemetryResult.ok -> "Sent turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}; async recent telemetry sync failed: ${recentTelemetry.error ?: "unknown"}"
+                        else -> "FAILED turnId=$turnId: ${telemetryResult.error ?: "unknown"}"
+                    },
+                    telemetryHistory = if (recentTelemetry.ok && recentTelemetry.records.isNotEmpty()) {
+                        recentTelemetry.records.map { it.toTelemetryPassSummary() }
+                    } else {
+                        it.telemetryHistory
+                    }
+                )
+            }
         }
     }
 
@@ -626,6 +633,13 @@ class OtoxanViewModel(
             audioStatsMs = result.audioStatsMs,
             transcriptTotalMs = result.transcriptTotalMs,
             sttLatencyMs = result.sttLatencyMs,
+            primarySttStatus = result.primarySttStatus,
+            primarySttMs = result.primarySttMs,
+            primarySttProvider = result.primarySttProvider,
+            fallbackSttStatus = result.fallbackSttStatus,
+            fallbackSttMs = result.fallbackSttMs,
+            fallbackSttProvider = result.fallbackSttProvider,
+            sttBudgetRemainingMs = result.sttBudgetRemainingMs,
             xanderSessionMs = result.xanderSessionMs,
             xanderFastMs = result.xanderFastMs,
             xanderFastStatus = result.xanderFastStatus,

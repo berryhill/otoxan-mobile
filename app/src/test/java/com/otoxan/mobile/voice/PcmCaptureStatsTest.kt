@@ -65,7 +65,7 @@ class PcmCaptureStatsTest {
 
         assertEquals(12_000, config.maxMillis)
         assertEquals(700, config.minMillis)
-        assertEquals(850, config.silenceAfterSpeechMillis)
+        assertEquals(450, config.silenceAfterSpeechMillis)
         assertEquals(900, config.speechPeakAmplitude)
     }
 

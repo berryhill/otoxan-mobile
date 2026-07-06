@@ -128,6 +128,13 @@ class SttResult:
     status: str
     latency_ms: int | None
     provider: str = "hermes-stt"
+    primary_status: str | None = None
+    primary_latency_ms: int | None = None
+    primary_provider: str | None = None
+    fallback_status: str | None = None
+    fallback_latency_ms: int | None = None
+    fallback_provider: str | None = None
+    budget_remaining_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +144,13 @@ class TranscriptResult:
     stt_status: str
     stt_latency_ms: int | None
     stt_provider: str
+    primary_stt_status: str | None = None
+    primary_stt_ms: int | None = None
+    primary_stt_provider: str | None = None
+    fallback_stt_status: str | None = None
+    fallback_stt_ms: int | None = None
+    fallback_stt_provider: str | None = None
+    stt_budget_remaining_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -190,6 +204,13 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "sttStatus": turn.stt_status,
         "sttLatencyMs": turn.stt_latency_ms,
         "sttProvider": turn.stt_provider,
+        "primarySttStatus": timing.get("primarySttStatus"),
+        "primarySttMs": timing.get("primarySttMs"),
+        "primarySttProvider": timing.get("primarySttProvider"),
+        "fallbackSttStatus": timing.get("fallbackSttStatus"),
+        "fallbackSttMs": timing.get("fallbackSttMs"),
+        "fallbackSttProvider": timing.get("fallbackSttProvider"),
+        "sttBudgetRemainingMs": timing.get("sttBudgetRemainingMs"),
         "pass1Status": _pass1_status(turn, stats),
         "pass1Ready": _pass1_ready(turn),
         "routeEvidence": {
@@ -268,6 +289,13 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
     timing["sttLatencyMs"] = transcript.stt_latency_ms
     timing["sttProvider"] = transcript.stt_provider
+    timing["primarySttStatus"] = transcript.primary_stt_status
+    timing["primarySttMs"] = transcript.primary_stt_ms
+    timing["primarySttProvider"] = transcript.primary_stt_provider
+    timing["fallbackSttStatus"] = transcript.fallback_stt_status
+    timing["fallbackSttMs"] = transcript.fallback_stt_ms
+    timing["fallbackSttProvider"] = transcript.fallback_stt_provider
+    timing["sttBudgetRemainingMs"] = transcript.stt_budget_remaining_ms
     if _is_stt_fallback(transcript.transcript):
         timing["xanderSessionMs"] = None
         return AssistantTurn(
@@ -305,6 +333,13 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
     timing["sttLatencyMs"] = transcript.stt_latency_ms
     timing["sttProvider"] = transcript.stt_provider
+    timing["primarySttStatus"] = transcript.primary_stt_status
+    timing["primarySttMs"] = transcript.primary_stt_ms
+    timing["primarySttProvider"] = transcript.primary_stt_provider
+    timing["fallbackSttStatus"] = transcript.fallback_stt_status
+    timing["fallbackSttMs"] = transcript.fallback_stt_ms
+    timing["fallbackSttProvider"] = transcript.fallback_stt_provider
+    timing["sttBudgetRemainingMs"] = transcript.stt_budget_remaining_ms
     if _is_stt_fallback(transcript.transcript):
         timing["xanderSessionMs"] = None
         timing["xanderFastMs"] = None
@@ -365,6 +400,8 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
             stt_status="not-run",
             stt_latency_ms=None,
             stt_provider="not-run",
+            primary_stt_status="not-run",
+            primary_stt_provider="not-run",
         )
 
     stt = _transcribe_with_hermes_stt(pcm)
@@ -375,6 +412,13 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
             stt_status=stt.status,
             stt_latency_ms=stt.latency_ms,
             stt_provider=stt.provider,
+            primary_stt_status=stt.primary_status,
+            primary_stt_ms=stt.primary_latency_ms,
+            primary_stt_provider=stt.primary_provider,
+            fallback_stt_status=stt.fallback_status,
+            fallback_stt_ms=stt.fallback_latency_ms,
+            fallback_stt_provider=stt.fallback_provider,
+            stt_budget_remaining_ms=stt.budget_remaining_ms,
         )
 
     return TranscriptResult(
@@ -387,27 +431,85 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
         stt_status=stt.status,
         stt_latency_ms=stt.latency_ms,
         stt_provider=stt.provider,
+        primary_stt_status=stt.primary_status,
+        primary_stt_ms=stt.primary_latency_ms,
+        primary_stt_provider=stt.primary_provider,
+        fallback_stt_status=stt.fallback_status,
+        fallback_stt_ms=stt.fallback_latency_ms,
+        fallback_stt_provider=stt.fallback_provider,
+        stt_budget_remaining_ms=stt.budget_remaining_ms,
     )
 
 
 def _transcribe_with_hermes_stt(pcm: bytes) -> SttResult:
     provider = os.environ.get("OTOXAN_STT_PROVIDER", STT_PROVIDER_DEFAULT).strip().lower() or STT_PROVIDER_DEFAULT
+    total_started = time.monotonic()
+    total_budget = _bounded_seconds("OTOXAN_STT_TOTAL_BUDGET_SECONDS", 4.5, 0.5, 20.0)
     if provider not in STT_PROVIDER_ALIASES:
-        return SttResult("", "unsupported-provider", 0, provider)
+        return SttResult("", "unsupported-provider", 0, provider, budget_remaining_ms=int(total_budget * 1000))
+
     if provider in {"moonshine", "moonshine-command", "local-command"}:
         moonshine = _transcribe_with_moonshine_command(pcm)
+        elapsed = time.monotonic() - total_started
+        remaining = max(0.0, total_budget - elapsed)
         if moonshine.transcript:
-            return moonshine
-    return _transcribe_with_hermes_stt_fallback(pcm)
+            return SttResult(
+                moonshine.transcript,
+                moonshine.status,
+                _elapsed_ms(total_started),
+                moonshine.provider,
+                primary_status=moonshine.status,
+                primary_latency_ms=moonshine.latency_ms,
+                primary_provider=moonshine.provider,
+                budget_remaining_ms=int(remaining * 1000),
+            )
+        fallback_min = _bounded_seconds("OTOXAN_STT_FALLBACK_MIN_SECONDS", 0.75, 0.0, 5.0)
+        if remaining < fallback_min:
+            return SttResult(
+                "",
+                f"primary-{moonshine.status}-budget-exhausted",
+                _elapsed_ms(total_started),
+                moonshine.provider,
+                primary_status=moonshine.status,
+                primary_latency_ms=moonshine.latency_ms,
+                primary_provider=moonshine.provider,
+                budget_remaining_ms=int(remaining * 1000),
+            )
+        fallback = _transcribe_with_hermes_stt_fallback(pcm, timeout_seconds=remaining)
+        return SttResult(
+            fallback.transcript,
+            fallback.status,
+            _elapsed_ms(total_started),
+            fallback.provider,
+            primary_status=moonshine.status,
+            primary_latency_ms=moonshine.latency_ms,
+            primary_provider=moonshine.provider,
+            fallback_status=fallback.status,
+            fallback_latency_ms=fallback.latency_ms,
+            fallback_provider=fallback.provider,
+            budget_remaining_ms=max(0, int((total_budget - (time.monotonic() - total_started)) * 1000)),
+        )
+
+    fallback = _transcribe_with_hermes_stt_fallback(pcm, timeout_seconds=total_budget)
+    return SttResult(
+        fallback.transcript,
+        fallback.status,
+        fallback.latency_ms,
+        fallback.provider,
+        primary_status=fallback.status,
+        primary_latency_ms=fallback.latency_ms,
+        primary_provider=fallback.provider,
+        budget_remaining_ms=max(0, int((total_budget - (time.monotonic() - total_started)) * 1000)),
+    )
 
 
-def _transcribe_with_hermes_stt_fallback(pcm: bytes) -> SttResult:
+def _transcribe_with_hermes_stt_fallback(pcm: bytes, timeout_seconds: float | None = None) -> SttResult:
     mode = os.environ.get("OTOXAN_STT_MODE", "inprocess").strip().lower()
     if mode != "subprocess":
         inprocess = _transcribe_with_inprocess_stt(pcm)
         if inprocess.status != "inprocess-unavailable":
             return inprocess
-    return _transcribe_with_subprocess_stt(pcm)
+    return _transcribe_with_subprocess_stt(pcm, timeout_seconds=timeout_seconds)
 
 
 def _transcribe_with_moonshine_command(pcm: bytes) -> SttResult:
@@ -415,7 +517,7 @@ def _transcribe_with_moonshine_command(pcm: bytes) -> SttResult:
     command_template = os.environ.get("OTOXAN_MOONSHINE_STT_COMMAND", "").strip()
     if not command_template:
         return SttResult("", "not-configured", _elapsed_ms(started), "moonshine-stt")
-    timeout = float(os.environ.get("OTOXAN_STT_TIMEOUT_SECONDS", "20"))
+    timeout = _bounded_seconds("OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS", 1.2, 0.2, 8.0)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
         input_path = wav_file.name
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
@@ -550,7 +652,7 @@ def _load_inprocess_stt() -> Callable[[str], Mapping[str, Any]]:
         raise
 
 
-def _transcribe_with_subprocess_stt(pcm: bytes) -> SttResult:
+def _transcribe_with_subprocess_stt(pcm: bytes, timeout_seconds: float | None = None) -> SttResult:
     hermes_agent_home = Path(os.environ.get("OTOXAN_HERMES_AGENT_HOME", HERMES_AGENT_HOME_DEFAULT))
     hermes_home = os.environ.get("HERMES_HOME") or os.environ.get("OTOXAN_XANDER_HERMES_HOME", XANDER_HERMES_HOME_DEFAULT)
     hermes_python = os.environ.get("OTOXAN_HERMES_PYTHON", HERMES_PYTHON_DEFAULT)
@@ -604,7 +706,7 @@ except Exception:
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=float(os.environ.get("OTOXAN_STT_TIMEOUT_SECONDS", "45")),
+                timeout=max(0.2, timeout_seconds if timeout_seconds is not None else float(os.environ.get("OTOXAN_STT_TIMEOUT_SECONDS", "45"))),
                 check=False,
                 env=env,
             )

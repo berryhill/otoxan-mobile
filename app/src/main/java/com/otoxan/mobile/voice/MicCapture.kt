@@ -214,7 +214,7 @@ fun conversationVoiceCaptureConfig(): VoiceCaptureConfig {
     return VoiceCaptureConfig(
         maxMillis = 12_000,
         minMillis = 700,
-        silenceAfterSpeechMillis = 850,
+        silenceAfterSpeechMillis = 450,
         speechPeakAmplitude = 900,
         chunkMillis = 100
     )

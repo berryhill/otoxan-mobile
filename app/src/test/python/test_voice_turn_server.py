@@ -35,6 +35,9 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_STT_MODE",
                 "OTOXAN_STT_PROVIDER",
                 "OTOXAN_MOONSHINE_STT_COMMAND",
+                "OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS",
+                "OTOXAN_STT_TOTAL_BUDGET_SECONDS",
+                "OTOXAN_STT_FALLBACK_MIN_SECONDS",
                 "OTOXAN_TTS_PROVIDER",
                 "OTOXAN_KOKORO_TTS_COMMAND",
                 "OTOXAN_TTS_TIMEOUT_SECONDS",
@@ -267,6 +270,23 @@ class VoiceTurnServerTest(unittest.TestCase):
         fallback.assert_called_once()
         self.assertEqual("fallback words", stt.transcript)
         self.assertEqual("hermes-stt", stt.provider)
+
+    def test_moonshine_fallback_carries_split_latency_and_budget(self):
+        os.environ["OTOXAN_STT_PROVIDER"] = "moonshine-command"
+        os.environ["OTOXAN_STT_TOTAL_BUDGET_SECONDS"] = "4.5"
+        os.environ["OTOXAN_MOONSHINE_STT_COMMAND"] = "moonshine-test --input {input}"
+        completed = mock.Mock(returncode=0, stdout=b'{"success": true, "transcript": ""}')
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed):
+            with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt_fallback", return_value=voice_turn_server.SttResult("fallback words", "success", 55)) as fallback:
+                stt = voice_turn_server._transcribe_with_hermes_stt(b"" * 160)
+        self.assertEqual("fallback words", stt.transcript)
+        self.assertEqual("empty", stt.primary_status)
+        self.assertEqual("moonshine-stt", stt.primary_provider)
+        self.assertEqual("success", stt.fallback_status)
+        self.assertEqual(55, stt.fallback_latency_ms)
+        self.assertIsInstance(stt.budget_remaining_ms, int)
+        self.assertIn("timeout_seconds", fallback.call_args.kwargs)
+        self.assertLessEqual(fallback.call_args.kwargs["timeout_seconds"], 4.5)
 
     def test_xander_transcript_reports_moonshine_source_when_local_stt_succeeds(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
