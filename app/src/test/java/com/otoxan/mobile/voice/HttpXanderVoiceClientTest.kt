@@ -282,6 +282,7 @@ class HttpXanderVoiceClientTest {
                     ttfaRouteSelectMs = 12,
                     ttfaCaptureReadMs = 5010,
                     ttfaPostCaptureDispatchMs = 7,
+                    postCaptureAckDelayMs = 7,
                     ttfaBackendWaitAfterReleaseMs = 650
                 )
             )
@@ -302,6 +303,7 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"perceivedLatency\""))
         assertTrue(requestBody.contains("\"ttfaMs\":2400"))
         assertTrue(requestBody.contains("\"localAckKind\":\"earcon\""))
+        assertTrue(requestBody.contains("\"postCaptureAckDelayMs\":7"))
         assertTrue(requestBody.contains("\"assistantPlaybackStartMs\":5100"))
         assertTrue(requestBody.contains("\"backendResponseReadyMs\":4800"))
         assertTrue(requestBody.contains("\"breakdown\""))
@@ -335,7 +337,7 @@ class HttpXanderVoiceClientTest {
                             "turn": {"turnId": "turn-2", "success": true, "stage": "complete", "error": null},
                             "route": {"inputName": "RB Meta 03YS", "inputType": "TYPE_BLUETOOTH_SCO"},
                             "totals": {"turnTotalMs": 12000},
-                            "perceivedLatency": {"ttfaMs": 5500},
+                            "perceivedLatency": {"ttfaMs": 5500, "postCaptureAckDelayMs": 125},
                             "backend": {"roundTripMs": 7400, "sttLatencyMs": 500, "xanderFastMs": 2600},
                             "playback": {"totalMs": 4500},
                             "capture": {"capturedBytes": 144000, "peakAmplitude": 9000},
@@ -366,6 +368,7 @@ class HttpXanderVoiceClientTest {
         assertEquals("turn-2", record.turnId)
         assertEquals("RB Meta 03YS", record.routeName)
         assertEquals(5500L, record.ttfaMs)
+        assertEquals(125L, record.postCaptureAckDelayMs)
         assertEquals(2600, record.xanderMs)
         assertEquals("real-speech-proven", record.pass1Status)
     }

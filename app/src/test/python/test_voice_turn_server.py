@@ -714,6 +714,10 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "turn": {"turnId": "turn-123", "success": True, "stage": "complete"},
                 "totals": {"turnTotalMs": 1234},
                 "backend": {"roundTripMs": 456},
+                "perceivedLatency": {
+                    "ttfaMs": 900,
+                    "breakdown": {"postCaptureDispatchMs": 17},
+                },
                 "playback": {"kind": "android_tts"},
                 "verdict": {
                     "pass1Ready": True,
@@ -736,6 +740,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertNotIn("transcript", stored["payload"])
         self.assertNotIn("transcript", stored["payload"]["verdict"])
         self.assertNotIn("assistantText", stored["payload"]["verdict"])
+        self.assertEqual(17, stored["payload"]["perceivedLatency"]["postCaptureAckDelayMs"])
         self.assertEqual(12, stored["payload"]["verdict"]["transcriptLength"])
 
 

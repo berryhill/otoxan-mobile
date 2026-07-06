@@ -290,6 +290,7 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
             Text("Telemetry dashboard", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("Latest pass", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             TelemetryBar("TTFA", state.ttfaMs, targetMs = 1_500L)
+            TelemetryBar("Ack delay", state.postCaptureAckDelayMs, targetMs = 250L)
             TelemetryBar("Total", state.turnTotalMs, targetMs = 8_000L)
             TelemetryBar("Backend", state.backendRoundTripMs, targetMs = 4_000L)
             TelemetryBar("STT", state.sttLatencyMs?.toLong(), targetMs = 1_500L)
@@ -355,7 +356,7 @@ private fun TelemetryHistoryRow(index: Int, pass: TelemetryPassSummary) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("#$index ${pass.routeName}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-            Text("${pass.totalMs?.let { "${it}ms" } ?: "unknown"} · TTFA ${pass.ttfaMs?.let { "${it}ms" } ?: "?"}", style = MaterialTheme.typography.bodySmall)
+            Text("${pass.totalMs?.let { "${it}ms" } ?: "unknown"} · TTFA ${pass.ttfaMs?.let { "${it}ms" } ?: "?"} · ack ${pass.postCaptureAckDelayMs?.let { "${it}ms" } ?: "?"}", style = MaterialTheme.typography.bodySmall)
         }
         Box(
             modifier = Modifier
