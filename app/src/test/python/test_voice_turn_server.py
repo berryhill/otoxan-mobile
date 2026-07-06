@@ -452,8 +452,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         request = urlopen.call_args.args[0]
         body = voice_turn_server.json.loads(request.data.decode("utf-8"))
         self.assertEqual("fast-model", body["model"])
-        self.assertIn("max 8 words", body["messages"][0]["content"])
-        self.assertEqual(256, body["max_tokens"])
+        self.assertIn("max 16 words", body["messages"][0]["content"])
+        self.assertEqual(96, body["max_tokens"])
         self.assertTrue(body["reasoning_split"])
         self.assertNotIn("test-key", str(body))
 
@@ -487,6 +487,14 @@ class VoiceTurnServerTest(unittest.TestCase):
         request = urlopen.call_args.args[0]
         body = voice_turn_server.json.loads(request.data.decode("utf-8"))
         self.assertEqual("fast-model", body["model"])
+
+    def test_mobile_fast_shaper_allows_clear_spoken_reply_not_four_word_fragment(self):
+        text = voice_turn_server._shape_mobile_spoken_response(
+            "The backend is responding, but the slowest lane is speech recognition.",
+            max_words=voice_turn_server.XANDER_FAST_MAX_WORDS,
+        )
+
+        self.assertEqual("The backend is responding, but the slowest lane is speech recognition.", text)
 
     def test_mobile_fast_reasoning_only_output_raises_for_fallback(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")

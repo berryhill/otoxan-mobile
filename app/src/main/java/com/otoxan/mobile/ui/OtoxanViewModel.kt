@@ -707,10 +707,12 @@ class OtoxanViewModel(
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
                 val appContext = context.applicationContext
+                val speechPlayback = SpeechPlayback(appContext)
+                speechPlayback.warmUpTextToSpeech()
                 return OtoxanViewModel(
                     audioRouter = AudioRouter(appContext),
                     micCapture = MicCapture(),
-                    speechPlayback = SpeechPlayback(appContext),
+                    speechPlayback = speechPlayback,
                     xanderVoiceClient = createXanderVoiceClient(BuildConfig.XANDER_VOICE_ENDPOINT)
                 ) as T
             }

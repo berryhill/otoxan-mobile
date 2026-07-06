@@ -117,6 +117,11 @@ class SpeechPlayback(private val context: Context? = null) {
         }
     }
 
+    fun warmUpTextToSpeech() {
+        val appContext = context ?: return
+        runCatching { obtainTextToSpeech(appContext) }
+    }
+
     fun shutdown() {
         synchronized(ttsLock) {
             runCatching { sharedTts?.stop() }
@@ -144,11 +149,26 @@ class SpeechPlayback(private val context: Context? = null) {
         require(status == TextToSpeech.SUCCESS) { "TextToSpeech init failed with status $status" }
         val tts = synchronized(ttsLock) { requireNotNull(sharedTts) }
         tts.language = Locale.US
-        tts.setSpeechRate(0.92f)
-        tts.setPitch(0.96f)
+        choosePreferredVoice(tts)?.let { tts.voice = it }
+        tts.setSpeechRate(1.04f)
+        tts.setPitch(1.0f)
         tts.setAudioAttributes(playbackAudioAttributes())
         return tts
     }
+
+    private fun choosePreferredVoice(tts: TextToSpeech): android.speech.tts.Voice? = runCatching {
+        tts.voices
+            ?.filter { voice ->
+                voice.locale.language == Locale.US.language &&
+                    voice.locale.country == Locale.US.country &&
+                    !voice.isNetworkConnectionRequired
+            }
+            ?.sortedWith(
+                compareBy<android.speech.tts.Voice> { voice -> voice.latency }
+                    .thenByDescending { voice -> voice.quality }
+            )
+            ?.firstOrNull()
+    }.getOrNull()
 
     private fun withTransientPlaybackFocus(block: () -> Unit) {
         val manager = audioManager ?: return block()

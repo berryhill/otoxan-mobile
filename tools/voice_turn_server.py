@@ -52,9 +52,9 @@ XANDER_PROMPT_TIMEOUT_SECONDS = 25
 XANDER_FAST_TIMEOUT_SECONDS = 12
 XANDER_FAST_HARD_TIMEOUT_SECONDS = 12.0
 XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
-XANDER_MOBILE_MAX_WORDS = 12
-XANDER_FAST_MAX_WORDS = 8
-XANDER_SPOKEN_MAX_CHARS = 72
+XANDER_MOBILE_MAX_WORDS = 18
+XANDER_FAST_MAX_WORDS = 16
+XANDER_SPOKEN_MAX_CHARS = 140
 TTS_PROVIDER_DEFAULT = "android"
 TTS_PROVIDER_ALIASES = {"android", "none", "off", "kokoro", "kokoro-command"}
 STT_PROVIDER_DEFAULT = "hermes"
@@ -787,8 +787,9 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
                 "role": "system",
                 "content": (
                     "You are Xander, Otoxan controller operator, speaking through Ray-Ban Meta glasses. "
-                    f"Answer only Matt's current words in one direct spoken sentence, max {XANDER_FAST_MAX_WORDS} words. "
-                    "Do not ramble, infer hidden context, narrate status, or continue a prior topic. "
+                    f"Answer Matt's current transcript in one coherent spoken reply, max {XANDER_FAST_MAX_WORDS} words. "
+                    "Use enough words to be clear; do not answer with fragments. "
+                    "Do not infer hidden context, narrate status, or continue a prior topic. "
                     "If the transcript is unclear, ask Matt to repeat it. "
                     "Builder-first, concrete, no filler, no apologies, no reasoning, no XML tags."
                 ),
@@ -798,12 +799,12 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
                 "content": (
                     "Route evidence: "
                     f"input={route.input_name} ({route.input_type}); output={route.output_name} ({route.output_type}).\n"
-                    f"Matt said: {transcript}\n"
-                    "Return only the spoken sentence. If Matt's words are fragments, ask one short clarifying question."
+                    f"Matt transcript: <<< {transcript} >>>\n"
+                    "Return only the spoken reply."
                 ),
             },
         ],
-        "max_tokens": int(os.environ.get("OTOXAN_MOBILE_FAST_MAX_TOKENS", "256")),
+        "max_tokens": int(os.environ.get("OTOXAN_MOBILE_FAST_MAX_TOKENS", "96")),
         "temperature": _mobile_fast_temperature(provider_name),
         # MiniMax OpenAI-compatible API: split thinking out of message.content.
         "reasoning_split": True,
