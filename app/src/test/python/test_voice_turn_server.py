@@ -374,6 +374,37 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertTrue(body["reasoning_split"])
         self.assertNotIn("test-key", str(body))
 
+    def test_mobile_fast_default_provider_prefers_lowest_latency_configured_lane(self):
+        route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
+        fake_config = {
+            "providers": {
+                "api-z-ai": {
+                    "base_url": "https://example.invalid/v1",
+                    "api_key": "test-key",
+                    "model": "fast-model",
+                }
+            }
+        }
+        response_body = {"choices": [{"message": {"content": "Latency status is green."}}]}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return voice_turn_server.json.dumps(response_body).encode("utf-8")
+
+        os.environ.pop("OTOXAN_MOBILE_FAST_PROVIDER", None)
+        with mock.patch.object(voice_turn_server, "_load_xander_config", return_value=fake_config):
+            with mock.patch.object(voice_turn_server.urllib.request, "urlopen", return_value=FakeResponse()) as urlopen:
+                text = voice_turn_server._ask_xander_mobile_fast("test transcript", route)
+
+        self.assertEqual("Latency status is green.", text)
+        request = urlopen.call_args.args[0]
+        body = voice_turn_server.json.loads(request.data.decode("utf-8"))
+        self.assertEqual("fast-model", body["model"])
+
     def test_mobile_fast_reasoning_only_output_raises_for_fallback(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
         fake_config = {

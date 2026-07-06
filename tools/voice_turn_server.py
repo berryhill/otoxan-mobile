@@ -49,7 +49,8 @@ HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
 XANDER_FAST_TIMEOUT_SECONDS = 8
-XANDER_FAST_HARD_TIMEOUT_SECONDS = 2.5
+XANDER_FAST_HARD_TIMEOUT_SECONDS = 4.0
+XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
 XANDER_MOBILE_MAX_WORDS = 12
 XANDER_FAST_MAX_WORDS = 10
 XANDER_SPOKEN_MAX_CHARS = 72
@@ -587,9 +588,10 @@ def _mobile_fast_session_fallback_enabled() -> bool:
 
 
 def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
-    # MiniMax is fastest enough for this lane, but it can emit long <think> blocks;
-    # give it enough budget for the closing tag and guard against reasoning-only output.
-    provider_name = os.environ.get("OTOXAN_MOBILE_FAST_PROVIDER", "minimax").strip()
+    # api-z-ai has been the lowest-latency configured provider in live probes;
+    # other OpenAI-compatible providers can emit long <think> blocks, so the
+    # deadline wrapper still guards against reasoning-only or slow output.
+    provider_name = os.environ.get("OTOXAN_MOBILE_FAST_PROVIDER", XANDER_MOBILE_FAST_PROVIDER_DEFAULT).strip()
     config = _load_xander_config()
     provider = _configured_provider(config, provider_name)
     base_url = str(provider.get("base_url", "")).rstrip("/")
