@@ -49,7 +49,7 @@ HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
 XANDER_FAST_TIMEOUT_SECONDS = 8
-XANDER_FAST_HARD_TIMEOUT_SECONDS = 4.0
+XANDER_FAST_HARD_TIMEOUT_SECONDS = 6.0
 XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
 XANDER_MOBILE_MAX_WORDS = 12
 XANDER_FAST_MAX_WORDS = 10
@@ -178,6 +178,11 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "audioStatsMs": timing.get("audioStatsMs"),
         "transcriptTotalMs": timing.get("transcriptTotalMs"),
         "xanderSessionMs": timing.get("xanderSessionMs"),
+        "xanderFastMs": timing.get("xanderFastMs"),
+        "xanderFastStatus": timing.get("xanderFastStatus"),
+        "xanderFastTimedOut": timing.get("xanderFastTimedOut"),
+        "xanderFallbackSessionStatus": timing.get("xanderFallbackSessionStatus"),
+        "xanderFallbackSkipped": timing.get("xanderFallbackSkipped"),
         "responseBuildMs": 0,
     }
     response["responseBuildMs"] = _elapsed_ms(started) - int(response.get("backendTotalMs") or 0)

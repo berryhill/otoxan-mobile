@@ -43,6 +43,11 @@ class HttpXanderVoiceClientTest {
                       "audioStatsMs": 3,
                       "transcriptTotalMs": 4,
                       "xanderSessionMs": 5,
+                      "xanderFastMs": 6,
+                      "xanderFastStatus": 1,
+                      "xanderFastTimedOut": 0,
+                      "xanderFallbackSessionStatus": 0,
+                      "xanderFallbackSkipped": 0,
                       "responseBuildMs": 1
                     }
                     """.trimIndent()
@@ -95,6 +100,11 @@ class HttpXanderVoiceClientTest {
         assertEquals(3, result.audioStatsMs)
         assertEquals(4, result.transcriptTotalMs)
         assertEquals(5, result.xanderSessionMs)
+        assertEquals(6, result.xanderFastMs)
+        assertEquals(1, result.xanderFastStatus)
+        assertEquals(0, result.xanderFastTimedOut)
+        assertEquals(0, result.xanderFallbackSessionStatus)
+        assertEquals(0, result.xanderFallbackSkipped)
         assertEquals(1, result.responseBuildMs)
         assertEquals(200, result.httpStatusCode)
         assertTrue(result.requestBytes!! > 0)
@@ -240,6 +250,11 @@ class HttpXanderVoiceClientTest {
                     backendTotalMs = 3900,
                     sttLatencyMs = 900,
                     xanderSessionMs = 2500,
+                    xanderFastMs = 2500,
+                    xanderFastStatus = 0,
+                    xanderFastTimedOut = 1,
+                    xanderFallbackSessionStatus = 0,
+                    xanderFallbackSkipped = 1,
                     provider = "xander-session",
                     transcriptSource = "hermes-stt",
                     sttStatus = "success",
@@ -263,6 +278,8 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"turnId\":\"turn-1\""))
         assertTrue(requestBody.contains("\"transcriptLength\":32"))
         assertTrue(requestBody.contains("\"assistantTextLength\":44"))
+        assertTrue(requestBody.contains("\"xanderFastTimedOut\":1"))
+        assertTrue(requestBody.contains("\"xanderFallbackSkipped\":1"))
         assertTrue(requestBody.contains("\"stopReason\":\"speech_silence\""))
         assertTrue(!requestBody.contains("rawTranscript"))
         assertTrue(!requestBody.contains("assistantText\""))
