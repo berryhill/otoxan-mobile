@@ -19,6 +19,7 @@ import base64
 import json
 import math
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,7 @@ HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
 XANDER_FAST_TIMEOUT_SECONDS = 8
+XANDER_FAST_HARD_TIMEOUT_SECONDS = 2.5
 XANDER_MOBILE_MAX_WORDS = 12
 XANDER_FAST_MAX_WORDS = 10
 XANDER_SPOKEN_MAX_CHARS = 72
@@ -271,16 +273,19 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
             timing=timing,
         )
     fast_started = time.monotonic()
-    try:
-        assistant_text = _ask_xander_mobile_fast(transcript.transcript, route)
-        timing["xanderFastStatus"] = 1
-    except Exception as exc:  # noqa: BLE001 - mobile voice must return telemetry, not hard-fail.
-        timing["xanderFastStatus"] = 0
-        try:
-            assistant_text = _ask_xander_session(transcript.transcript, route)
-            timing["xanderFallbackSessionStatus"] = 1
-        except Exception:
-            timing["xanderFallbackSessionStatus"] = 0
+    assistant_text, fast_status, fast_timed_out = _ask_xander_mobile_fast_with_deadline(transcript.transcript, route)
+    timing["xanderFastStatus"] = 1 if fast_status == "success" else 0
+    timing["xanderFastTimedOut"] = 1 if fast_timed_out else 0
+    timing["xanderFallbackSessionStatus"] = 0
+    if fast_status != "success":
+        if _mobile_fast_session_fallback_enabled():
+            try:
+                assistant_text = _ask_xander_session(transcript.transcript, route)
+                timing["xanderFallbackSessionStatus"] = 1
+            except Exception:
+                assistant_text = _mobile_fast_degraded_spoken_response(transcript.transcript)
+        else:
+            timing["xanderFallbackSkipped"] = 1
             assistant_text = _mobile_fast_degraded_spoken_response(transcript.transcript)
     fast_ms = _elapsed_ms(fast_started)
     # Keep xanderSessionMs populated so existing Android telemetry charts compare old vs fast lane.
@@ -550,6 +555,35 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
     if not text:
         raise VoiceTurnError("Hermes/Xander session returned no text", 502)
     return _shape_mobile_spoken_response(text)
+
+
+def _ask_xander_mobile_fast_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool]:
+    timeout_raw = os.environ.get("OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS", str(XANDER_FAST_HARD_TIMEOUT_SECONDS)).strip()
+    try:
+        hard_timeout = max(0.5, min(float(timeout_raw), 10.0))
+    except ValueError:
+        hard_timeout = float(XANDER_FAST_HARD_TIMEOUT_SECONDS)
+
+    result_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            result_queue.put(("success", _ask_xander_mobile_fast(transcript, route)))
+        except Exception:
+            result_queue.put(("error", ""))
+
+    thread = threading.Thread(target=worker, name="otoxan-mobile-fast-provider", daemon=True)
+    thread.start()
+    try:
+        status, text = result_queue.get(timeout=hard_timeout)
+    except queue.Empty:
+        return "", "timeout", True
+    return text, status, False
+
+
+def _mobile_fast_session_fallback_enabled() -> bool:
+    raw = os.environ.get("OTOXAN_MOBILE_FAST_SESSION_FALLBACK", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
@@ -905,6 +939,8 @@ class Handler(BaseHTTPRequestHandler):
                 f"sttLatencyMs={response.get('sttLatencyMs')} "
                 f"backendTotalMs={response.get('backendTotalMs')} "
                 f"xanderSessionMs={response.get('xanderSessionMs')} "
+                f"xanderFastStatus={response.get('timing', {}).get('xanderFastStatus')} "
+                f"xanderFastTimedOut={response.get('timing', {}).get('xanderFastTimedOut')} "
                 f"transcriptSource={response.get('transcriptSource')} "
                 f"pass1Status={response.get('pass1Status')} "
                 f"input={response.get('routeEvidence', {}).get('inputName')} "
