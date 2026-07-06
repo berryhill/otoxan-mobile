@@ -266,6 +266,14 @@ private fun LatencyCard(state: OtoxanUiState) {
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Latency", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                state.latencyCardMetrics.forEach { metric ->
+                    LatencyMetricCard(metric, Modifier.weight(1f))
+                }
+            }
             Text("Total turn: ${state.turnTotalMs?.let { "${it}ms" } ?: "unknown"}")
             Text("Route select: ${state.routeSelectMs?.let { "${it}ms" } ?: "unknown"}; release: ${state.routeReleaseMs?.let { "${it}ms" } ?: "unknown"}")
             Text("Capture: expected=${state.captureExpectedMs?.let { "${it}ms" } ?: "unknown"}; actual=${state.captureReadMs?.let { "${it}ms" } ?: "unknown"}")
@@ -275,6 +283,21 @@ private fun LatencyCard(state: OtoxanUiState) {
             Text("Playback: kind=${state.playbackKind}; total=${state.playbackTotalMs?.let { "${it}ms" } ?: "unknown"}")
             Text("TTFA: ${state.ttfaMs?.let { "${it}ms" } ?: "unknown"}; ack=${state.localAckKind}; ackStart=${state.localAckStartMs?.let { "${it}ms" } ?: "none"}; assistantStart=${state.assistantPlaybackStartMs?.let { "${it}ms" } ?: "unknown"}")
             Text("TTFA decomposition: route=${state.routeSelectMs?.let { "${it}ms" } ?: "unknown"}; capture=${state.captureReadMs?.let { "${it}ms" } ?: "unknown"}; ack=${state.localAckTotalMs?.let { "${it}ms" } ?: "unknown"}; backendReady=${state.backendResponseReadyMs?.let { "${it}ms" } ?: "unknown"}")
+        }
+    }
+}
+
+@Composable
+private fun LatencyMetricCard(metric: LatencyCardMetric, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(metric.label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            Text(metric.value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(metric.detail, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
