@@ -82,17 +82,24 @@ class RealtimeVoiceServerUnitTest(unittest.TestCase):
             },
         })
         self.assertEqual("session.updated", updated["type"])
+        self.assertEqual("configured", updated["state"])
+        self.assertEqual(1, updated["sequence"])
 
         appended = session.append_audio(b"\x01\x02" * 160)
         self.assertEqual("input_audio.appended", appended["type"])
+        self.assertEqual("buffering", appended["state"])
+        self.assertEqual(2, appended["sequence"])
         self.assertEqual(320, appended["bufferedBytes"])
 
         completed = session.commit_audio()
         self.assertEqual("response.completed", completed["type"])
+        self.assertEqual("responding", completed["state"])
+        self.assertEqual(3, completed["sequence"])
         self.assertEqual(320, completed["bytesCommitted"])
         self.assertEqual("proof", completed["voiceTurn"]["provider"])
         self.assertEqual("pcm_s16le_16khz_mono", completed["voiceTurn"]["audioFormat"])
         self.assertEqual(0, len(session.buffered_pcm))
+        self.assertEqual(["session.updated", "input_audio.appended", "response.completed"], [event.type for event in session.bus.events])
 
     def test_json_audio_append_accepts_base64_payload(self):
         session = realtime_voice_server.RealtimeSession(session_id="rt_test")
@@ -138,7 +145,9 @@ class RealtimeVoiceServerProtocolTest(unittest.IsolatedAsyncioTestCase):
 
         created = await _read_json_event(reader)
         self.assertEqual("session.created", created["type"])
-        self.assertEqual("phase1-websocket-skeleton", created["phase"])
+        self.assertEqual("phase2-eventbus-state-machine", created["phase"])
+        self.assertEqual("created", created["state"])
+        self.assertEqual(1, created["sequence"])
 
         await _write_client_json(writer, {
             "type": "session.update",
@@ -153,15 +162,21 @@ class RealtimeVoiceServerProtocolTest(unittest.IsolatedAsyncioTestCase):
         })
         updated = await _read_json_event(reader)
         self.assertEqual("session.updated", updated["type"])
+        self.assertEqual("configured", updated["state"])
+        self.assertEqual(2, updated["sequence"])
 
         await _write_client_frame(writer, 0x2, b"\x01\x02" * 160)
         appended = await _read_json_event(reader)
         self.assertEqual("input_audio.appended", appended["type"])
+        self.assertEqual("buffering", appended["state"])
+        self.assertEqual(3, appended["sequence"])
         self.assertEqual(320, appended["bufferedBytes"])
 
         await _write_client_json(writer, {"type": "input_audio.commit"})
         completed = await _read_json_event(reader)
         self.assertEqual("response.completed", completed["type"])
+        self.assertEqual("responding", completed["state"])
+        self.assertEqual(4, completed["sequence"])
         self.assertEqual(320, completed["bytesCommitted"])
         self.assertEqual("proof", completed["voiceTurn"]["provider"])
         self.assertEqual("TYPE_BLUETOOTH_SCO", completed["voiceTurn"]["routeEvidence"]["inputType"])

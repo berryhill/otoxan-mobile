@@ -116,6 +116,30 @@ server -> {"type":"response.completed","voiceTurn":{...existing /voice-turn resp
 
 This is transport-only Phase 1. VAD, partial transcripts, barge-in, and WebRTC stay in later phases.
 
+## Phase 2 event/state contract
+
+The realtime skeleton now has a typed in-process event bus and session state machine. Every server JSON event carries:
+
+```text
+sequence: monotonically increasing session event number
+state: created | configured | buffering | committing | responding | closed | error
+sessionId: stable realtime session id
+```
+
+Current state transitions:
+
+```text
+connect -> session.created/state=created
+session.update -> session.updated/state=configured
+audio append -> input_audio.appended/state=buffering
+commit -> response.completed/state=responding
+clear -> input_audio.cleared/state=configured
+close -> session.closed/state=closed
+invalid frame/event -> error/state=error
+```
+
+This creates the control surface for Phase 3 VAD without changing the mobile `/voice-turn` HTTP fallback.
+
 Provider modes:
 
 ```bash

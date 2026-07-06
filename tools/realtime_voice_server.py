@@ -21,6 +21,7 @@ import struct
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Mapping
 
 import voice_turn_server
@@ -32,6 +33,54 @@ MAX_BUFFERED_PCM_BYTES = int(os.environ.get("OTOXAN_REALTIME_MAX_PCM_BYTES", str
 
 class WebSocketProtocolError(Exception):
     pass
+
+
+class RealtimeState(str, Enum):
+    CREATED = "created"
+    CONFIGURED = "configured"
+    BUFFERING = "buffering"
+    COMMITTING = "committing"
+    RESPONDING = "responding"
+    CLOSED = "closed"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class RealtimeEvent:
+    type: str
+    session_id: str
+    sequence: int
+    state: RealtimeState
+    payload: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_wire(self) -> dict[str, Any]:
+        data = {
+            "type": self.type,
+            "sessionId": self.session_id,
+            "sequence": self.sequence,
+            "state": self.state.value,
+        }
+        data.update(self.payload)
+        return data
+
+
+@dataclass
+class EventBus:
+    session_id: str
+    sequence: int = 0
+    events: list[RealtimeEvent] = field(default_factory=list)
+
+    def emit(self, event_type: str, state: RealtimeState, **payload: Any) -> dict[str, Any]:
+        self.sequence += 1
+        event = RealtimeEvent(
+            type=event_type,
+            session_id=self.session_id,
+            sequence=self.sequence,
+            state=state,
+            payload=payload,
+        )
+        self.events.append(event)
+        return event.to_wire()
 
 
 @dataclass
@@ -49,17 +98,39 @@ class RealtimeSession:
     buffered_pcm: bytearray = field(default_factory=bytearray)
     created_at: float = field(default_factory=time.monotonic)
     committed_turns: int = 0
+    state: RealtimeState = RealtimeState.CREATED
+    bus: EventBus | None = None
+
+    def __post_init__(self) -> None:
+        if self.bus is None:
+            self.bus = EventBus(self.session_id)
+
+    def _transition(self, state: RealtimeState) -> None:
+        self.state = state
+
+    def _emit(self, event_type: str, **payload: Any) -> dict[str, Any]:
+        assert self.bus is not None
+        return self.bus.emit(event_type, self.state, **payload)
 
     def created_event(self) -> dict[str, Any]:
-        return {
-            "type": "session.created",
-            "sessionId": self.session_id,
-            "audioFormat": self.audio_format,
-            "transport": "websocket",
-            "phase": "phase1-websocket-skeleton",
-        }
+        self._transition(RealtimeState.CREATED)
+        return self._emit(
+            "session.created",
+            audioFormat=self.audio_format,
+            transport="websocket",
+            phase="phase2-eventbus-state-machine",
+            supportedEvents=[
+                "session.update",
+                "input_audio.append",
+                "input_audio.commit",
+                "input_audio.clear",
+                "control.ping",
+                "session.close",
+            ],
+        )
 
     def update(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        self._ensure_open()
         audio_format = str(payload.get("audioFormat", self.audio_format)).strip() or self.audio_format
         if audio_format != SUPPORTED_FORMAT:
             raise ValueError(f"audioFormat must be {SUPPORTED_FORMAT}")
@@ -67,60 +138,71 @@ class RealtimeSession:
         route = payload.get("routeEvidence")
         if isinstance(route, Mapping):
             self.route_evidence = dict(route)
-        return {
-            "type": "session.updated",
-            "sessionId": self.session_id,
-            "audioFormat": self.audio_format,
-            "routeEvidence": self.route_evidence,
-        }
+        self._transition(RealtimeState.CONFIGURED)
+        return self._emit(
+            "session.updated",
+            audioFormat=self.audio_format,
+            routeEvidence=self.route_evidence,
+        )
 
     def append_audio(self, pcm: bytes) -> dict[str, Any]:
-        if not pcm:
-            return {
-                "type": "input_audio.appended",
-                "sessionId": self.session_id,
-                "bytesReceived": 0,
-                "bufferedBytes": len(self.buffered_pcm),
-            }
-        if len(self.buffered_pcm) + len(pcm) > MAX_BUFFERED_PCM_BYTES:
-            raise ValueError(f"buffered PCM exceeds {MAX_BUFFERED_PCM_BYTES} bytes")
-        self.buffered_pcm.extend(pcm)
-        return {
-            "type": "input_audio.appended",
-            "sessionId": self.session_id,
-            "bytesReceived": len(pcm),
-            "bufferedBytes": len(self.buffered_pcm),
-        }
+        self._ensure_open()
+        if pcm:
+            if len(self.buffered_pcm) + len(pcm) > MAX_BUFFERED_PCM_BYTES:
+                raise ValueError(f"buffered PCM exceeds {MAX_BUFFERED_PCM_BYTES} bytes")
+            self.buffered_pcm.extend(pcm)
+        self._transition(RealtimeState.BUFFERING if self.buffered_pcm else self.state)
+        return self._emit(
+            "input_audio.appended",
+            bytesReceived=len(pcm),
+            bufferedBytes=len(self.buffered_pcm),
+        )
 
     def clear_audio(self) -> dict[str, Any]:
+        self._ensure_open()
         cleared = len(self.buffered_pcm)
         self.buffered_pcm.clear()
-        return {
-            "type": "input_audio.cleared",
-            "sessionId": self.session_id,
-            "clearedBytes": cleared,
-        }
+        self._transition(RealtimeState.CONFIGURED)
+        return self._emit("input_audio.cleared", clearedBytes=cleared)
 
     def commit_audio(self) -> dict[str, Any]:
+        self._ensure_open()
         if not self.buffered_pcm:
             raise ValueError("no PCM buffered for commit")
         pcm = bytes(self.buffered_pcm)
         self.buffered_pcm.clear()
         self.committed_turns += 1
+        self._transition(RealtimeState.COMMITTING)
         payload = {
             "format": self.audio_format,
             "pcm16Mono16kBase64": base64.b64encode(pcm).decode("ascii"),
             "routeEvidence": self.route_evidence,
         }
         result = voice_turn_server.handle_voice_turn(payload)
-        return {
-            "type": "response.completed",
-            "sessionId": self.session_id,
-            "turnIndex": self.committed_turns,
-            "audioFormat": self.audio_format,
-            "bytesCommitted": len(pcm),
-            "voiceTurn": result,
-        }
+        self._transition(RealtimeState.RESPONDING)
+        return self._emit(
+            "response.completed",
+            turnIndex=self.committed_turns,
+            audioFormat=self.audio_format,
+            bytesCommitted=len(pcm),
+            voiceTurn=result,
+        )
+
+    def close_event(self) -> dict[str, Any]:
+        self._transition(RealtimeState.CLOSED)
+        return self._emit("session.closed", uptimeMs=int((time.monotonic() - self.created_at) * 1000))
+
+    def error_event(self, message: str) -> dict[str, Any]:
+        self._transition(RealtimeState.ERROR)
+        return self._emit("error", error=message)
+
+    def pong_event(self) -> dict[str, Any]:
+        self._ensure_open()
+        return self._emit("control.pong")
+
+    def _ensure_open(self) -> None:
+        if self.state in {RealtimeState.CLOSED, RealtimeState.ERROR}:
+            raise ValueError(f"session is {self.state.value}")
 
 
 def websocket_accept_key(client_key: str) -> str:
@@ -197,6 +279,7 @@ async def handle_ws_client(reader: asyncio.StreamReader, writer: asyncio.StreamW
         while True:
             opcode, payload = await read_frame(reader)
             if opcode == 0x8:  # close
+                await write_json(writer, session.close_event())
                 await write_frame(writer, 0x8, b"")
                 break
             if opcode == 0x9:  # ping
@@ -206,7 +289,7 @@ async def handle_ws_client(reader: asyncio.StreamReader, writer: asyncio.StreamW
                 await write_json(writer, session.append_audio(payload))
                 continue
             if opcode != 0x1:
-                await write_json(writer, {"type": "error", "sessionId": session.session_id, "error": f"unsupported opcode {opcode}"})
+                await write_json(writer, session.error_event(f"unsupported opcode {opcode}"))
                 continue
             event = json.loads(payload.decode("utf-8"))
             response = handle_realtime_event(session, event)
@@ -216,12 +299,15 @@ async def handle_ws_client(reader: asyncio.StreamReader, writer: asyncio.StreamW
         pass
     except Exception as exc:  # noqa: BLE001 - dev skeleton returns an event before closing.
         try:
-            await write_json(writer, {"type": "error", "sessionId": session.session_id, "error": str(exc)})
+            await write_json(writer, session.error_event(str(exc)))
         except Exception:
             pass
     finally:
         writer.close()
-        await writer.wait_closed()
+        try:
+            await writer.wait_closed()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 def handle_realtime_event(session: RealtimeSession, event: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -236,9 +322,9 @@ def handle_realtime_event(session: RealtimeSession, event: Mapping[str, Any]) ->
     if event_type == "input_audio.clear":
         return session.clear_audio()
     if event_type == "control.ping":
-        return {"type": "control.pong", "sessionId": session.session_id}
+        return session.pong_event()
     if event_type == "session.close":
-        return {"type": "session.closed", "sessionId": session.session_id}
+        return session.close_event()
     raise ValueError(f"unsupported realtime event type: {event_type or '<missing>'}")
 
 
