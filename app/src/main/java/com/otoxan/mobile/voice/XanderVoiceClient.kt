@@ -108,8 +108,12 @@ data class VoiceTurnTelemetryPacket(
     val ttsBytes: Int? = null,
     val playbackTotalMs: Long? = null,
     val localAckKind: String? = null,
+    val ttfaRouteSelectMs: Long? = null,
+    val ttfaCaptureReadMs: Long? = null,
+    val ttfaPostCaptureDispatchMs: Long? = null,
     val localAckStartMs: Long? = null,
     val localAckTotalMs: Long? = null,
+    val ttfaBackendWaitAfterReleaseMs: Long? = null,
     val assistantPlaybackStartMs: Long? = null,
     val backendResponseReadyMs: Long? = null,
     val ttfaMs: Long? = null,
@@ -164,17 +168,18 @@ data class VoiceTurnResult(
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
 class HttpXanderVoiceClient(
-    private val endpointUrl: String,
+    endpointUrl: String,
     private val connectTimeoutMillis: Int = 10_000,
     private val readTimeoutMillis: Int = 60_000
 ) : XanderVoiceClient {
-    private val metricsEndpointUrl = endpointUrl.replace(Regex("/voice-turn/?$"), "/voice-turn-metrics")
+    private val voiceTurnEndpointUrl = normalizeVoiceTurnEndpoint(endpointUrl)
+    private val metricsEndpointUrl = voiceTurnEndpointUrl.replace(Regex("/voice-turn/?$"), "/voice-turn-metrics")
 
     override suspend fun sendVoiceTurn(
         pcm16Mono16k: ByteArray,
         routeEvidence: RouteEvidence
     ): VoiceTurnResult = withContext(Dispatchers.IO) {
-        val connection = (URL(endpointUrl).openConnection() as HttpURLConnection).apply {
+        val connection = (URL(voiceTurnEndpointUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = connectTimeoutMillis
             readTimeout = readTimeoutMillis
@@ -301,7 +306,7 @@ class HttpXanderVoiceClient(
 
     override suspend fun fetchRecentVoiceTurnMetrics(limit: Int): VoiceTurnTelemetryHistoryResult = withContext(Dispatchers.IO) {
         val boundedLimit = limit.coerceIn(1, 100)
-        val recentUrl = endpointUrl.replace(Regex("/voice-turn/?$"), "/voice-turn-metrics/recent?limit=$boundedLimit")
+        val recentUrl = voiceTurnEndpointUrl.replace(Regex("/voice-turn/?$"), "/voice-turn-metrics/recent?limit=$boundedLimit")
         val connection = (URL(recentUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = connectTimeoutMillis
@@ -392,7 +397,7 @@ class HttpXanderVoiceClient(
               "device":{
                 "appId":"com.otoxan.mobile",
                 "buildType":"${com.otoxan.mobile.BuildConfig.BUILD_TYPE.jsonEscape()}",
-                "voiceEndpoint":"${endpointUrl.jsonEscape()}"
+                "voiceEndpoint":"${voiceTurnEndpointUrl.jsonEscape()}"
               },
               "turn":{
                 "turnId":"${packet.turnId.jsonEscape()}",
@@ -460,6 +465,12 @@ class HttpXanderVoiceClient(
               "perceivedLatency":{
                 "ttfaMs":${packet.ttfaMs.jsonValue()},
                 "localAckKind":${packet.localAckKind.jsonValue()},
+                "breakdown":{
+                  "routeSelectMs":${packet.ttfaRouteSelectMs.jsonValue()},
+                  "captureReadMs":${packet.ttfaCaptureReadMs.jsonValue()},
+                  "postCaptureDispatchMs":${packet.ttfaPostCaptureDispatchMs.jsonValue()},
+                  "backendWaitAfterReleaseMs":${packet.ttfaBackendWaitAfterReleaseMs.jsonValue()}
+                },
                 "localAckStartMs":${packet.localAckStartMs.jsonValue()},
                 "localAckTotalMs":${packet.localAckTotalMs.jsonValue()},
                 "assistantPlaybackStartMs":${packet.assistantPlaybackStartMs.jsonValue()},
@@ -515,8 +526,14 @@ fun createXanderVoiceClient(endpointUrl: String): XanderVoiceClient {
     return if (endpointUrl.isBlank()) {
         StubXanderVoiceClient()
     } else {
-        HttpXanderVoiceClient(endpointUrl = endpointUrl)
+        HttpXanderVoiceClient(endpointUrl = normalizeVoiceTurnEndpoint(endpointUrl))
     }
+}
+
+fun normalizeVoiceTurnEndpoint(endpointUrl: String): String {
+    val trimmed = endpointUrl.trim().trimEnd('/')
+    if (trimmed.isBlank()) return ""
+    return if (trimmed.endsWith("/voice-turn")) trimmed else "$trimmed/voice-turn"
 }
 
 

@@ -1181,6 +1181,8 @@ def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "")
         f"stage={turn.get('stage')} "
         f"totalMs={_nested_get(payload, 'totals', 'turnTotalMs')} "
         f"backendMs={_nested_get(payload, 'backend', 'roundTripMs')} "
+        f"ttfaMs={_nested_get(payload, 'perceivedLatency', 'ttfaMs')} "
+        f"ttfaCaptureMs={_nested_get(payload, 'perceivedLatency', 'breakdown', 'captureReadMs')} "
         f"playback={_nested_get(payload, 'playback', 'kind')} "
         f"path={path}"
     )

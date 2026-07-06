@@ -75,10 +75,12 @@ For the first physical voice-loop test, use the repo-local Python helper instead
 python3 tools/voice_turn_server.py --host 0.0.0.0 --port 8787
 ```
 
-Build the Android app with the phone-reachable host IP. Either pass the Gradle property explicitly or export the environment variable; the Gradle property wins when both are present:
+Build the Android app with the phone-reachable host IP. Either pass the Gradle property explicitly or export the environment variable; the Gradle property wins when both are present. The app accepts either the full `/voice-turn` URL or the base server URL and normalizes the capture endpoint to `/voice-turn`:
 
 ```bash
 ./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn"
+# equivalent shortcut:
+./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787"
 # or:
 XANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn" ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk

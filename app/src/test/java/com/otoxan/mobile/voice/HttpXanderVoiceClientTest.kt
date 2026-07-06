@@ -17,6 +17,12 @@ class HttpXanderVoiceClientTest {
     }
 
     @Test
+    fun normalizeVoiceTurnEndpoint_acceptsBaseHostOrExplicitPath() {
+        assertEquals("http://10.0.2.2:8787/voice-turn", normalizeVoiceTurnEndpoint(" http://10.0.2.2:8787 "))
+        assertEquals("http://10.0.2.2:8787/voice-turn", normalizeVoiceTurnEndpoint("http://10.0.2.2:8787/voice-turn/"))
+    }
+
+    @Test
     fun sendVoiceTurn_postsPcmAndRouteEvidenceAndParsesResponse() {
         val ttsBytes = Base64.getEncoder().encodeToString(byteArrayOf(9, 8, 7))
         server.enqueue(
@@ -272,7 +278,11 @@ class HttpXanderVoiceClientTest {
                     localAckTotalMs = 115,
                     assistantPlaybackStartMs = 5100,
                     backendResponseReadyMs = 4800,
-                    ttfaMs = 2400
+                    ttfaMs = 2400,
+                    ttfaRouteSelectMs = 12,
+                    ttfaCaptureReadMs = 5010,
+                    ttfaPostCaptureDispatchMs = 7,
+                    ttfaBackendWaitAfterReleaseMs = 650
                 )
             )
         }
@@ -294,6 +304,11 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"localAckKind\":\"earcon\""))
         assertTrue(requestBody.contains("\"assistantPlaybackStartMs\":5100"))
         assertTrue(requestBody.contains("\"backendResponseReadyMs\":4800"))
+        assertTrue(requestBody.contains("\"breakdown\""))
+        assertTrue(requestBody.contains("\"routeSelectMs\":12"))
+        assertTrue(requestBody.contains("\"captureReadMs\":5010"))
+        assertTrue(requestBody.contains("\"postCaptureDispatchMs\":7"))
+        assertTrue(requestBody.contains("\"backendWaitAfterReleaseMs\":650"))
         assertTrue(requestBody.contains("\"sttProvider\":\"moonshine-stt\""))
         assertTrue(requestBody.contains("\"stopReason\":\"speech_silence\""))
         assertTrue(!requestBody.contains("rawTranscript"))

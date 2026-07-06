@@ -274,6 +274,7 @@ private fun LatencyCard(state: OtoxanUiState) {
             Text("Payloads: request=${state.requestBytes?.toString() ?: "unknown"} bytes; response=${state.responseBytes?.toString() ?: "unknown"} bytes; tts=${state.ttsBytes} bytes")
             Text("Playback: kind=${state.playbackKind}; total=${state.playbackTotalMs?.let { "${it}ms" } ?: "unknown"}")
             Text("TTFA: ${state.ttfaMs?.let { "${it}ms" } ?: "unknown"}; ack=${state.localAckKind}; ackStart=${state.localAckStartMs?.let { "${it}ms" } ?: "none"}; assistantStart=${state.assistantPlaybackStartMs?.let { "${it}ms" } ?: "unknown"}")
+            Text("TTFA decomposition: route=${state.routeSelectMs?.let { "${it}ms" } ?: "unknown"}; capture=${state.captureReadMs?.let { "${it}ms" } ?: "unknown"}; ack=${state.localAckTotalMs?.let { "${it}ms" } ?: "unknown"}; backendReady=${state.backendResponseReadyMs?.let { "${it}ms" } ?: "unknown"}")
         }
     }
 }

@@ -430,6 +430,13 @@ class OtoxanViewModel(
                 assistantPlaybackStartMs != null -> assistantPlaybackStartMs
                 else -> null
             }
+            val ttfaPostCaptureDispatchMs = localAckStartMs?.let {
+                (it - routeSelectMs - captureReadMs).coerceAtLeast(0L)
+            }
+            val ttfaBackendWaitAfterReleaseMs = backendResponseReadyMs.let {
+                val beforeBackendWait = (localAckStartMs ?: 0L) + (localAckTotalMs ?: 0L) + routeReleaseMs
+                (it - beforeBackendWait).coerceAtLeast(0L)
+            }
             VoiceTurnUiResult(
                 routeEvidence = routeEvidence,
                 releaseEvidence = releaseEvidence,
@@ -448,6 +455,8 @@ class OtoxanViewModel(
                 playbackTotalMs = playbackTotalMs,
                 playbackKind = playbackKind,
                 localAckKind = localAckKind,
+                ttfaPostCaptureDispatchMs = ttfaPostCaptureDispatchMs,
+                ttfaBackendWaitAfterReleaseMs = ttfaBackendWaitAfterReleaseMs,
                 localAckStartMs = localAckStartMs,
                 localAckTotalMs = localAckTotalMs,
                 assistantPlaybackStartMs = assistantPlaybackStartMs,
@@ -658,8 +667,12 @@ class OtoxanViewModel(
             ttsBytes = result.ttsPcm16Mono16k?.size ?: 0,
             playbackTotalMs = proof.playbackTotalMs,
             localAckKind = proof.localAckKind,
+            ttfaRouteSelectMs = proof.routeSelectMs,
+            ttfaCaptureReadMs = proof.captureReadMs,
+            ttfaPostCaptureDispatchMs = proof.ttfaPostCaptureDispatchMs,
             localAckStartMs = proof.localAckStartMs,
             localAckTotalMs = proof.localAckTotalMs,
+            ttfaBackendWaitAfterReleaseMs = proof.ttfaBackendWaitAfterReleaseMs,
             assistantPlaybackStartMs = proof.assistantPlaybackStartMs,
             backendResponseReadyMs = proof.backendResponseReadyMs,
             ttfaMs = proof.ttfaMs,
@@ -685,6 +698,8 @@ class OtoxanViewModel(
         val playbackTotalMs: Long,
         val playbackKind: String,
         val localAckKind: String,
+        val ttfaPostCaptureDispatchMs: Long?,
+        val ttfaBackendWaitAfterReleaseMs: Long?,
         val localAckStartMs: Long?,
         val localAckTotalMs: Long?,
         val assistantPlaybackStartMs: Long?,
