@@ -482,6 +482,8 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
         ],
         "max_tokens": int(os.environ.get("OTOXAN_MOBILE_FAST_MAX_TOKENS", "256")),
         "temperature": _mobile_fast_temperature(provider_name),
+        # MiniMax OpenAI-compatible API: split thinking out of message.content.
+        "reasoning_split": True,
     }
     request = urllib.request.Request(
         base_url + "/chat/completions",
