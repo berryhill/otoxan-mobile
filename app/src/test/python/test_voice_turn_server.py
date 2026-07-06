@@ -268,7 +268,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         body = voice_turn_server.json.loads(request.data.decode("utf-8"))
         self.assertEqual("fast-model", body["model"])
         self.assertIn("max 16 words", body["messages"][0]["content"])
-        self.assertEqual(1024, body["max_tokens"])
+        self.assertEqual(256, body["max_tokens"])
         self.assertNotIn("test-key", str(body))
 
     def test_mobile_fast_reasoning_only_output_returns_diagnostic_instead_of_502(self):

@@ -45,7 +45,7 @@ SUPPORTED_PROVIDER_MODES = {"proof", *XANDER_PROVIDER_ALIASES, *MOBILE_FAST_PROV
 HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
-XANDER_FAST_TIMEOUT_SECONDS = 12
+XANDER_FAST_TIMEOUT_SECONDS = 8
 XANDER_MOBILE_MAX_WORDS = 25
 XANDER_FAST_MAX_WORDS = 16
 XANDER_MOBILE_VOICE_CONTRACT = """You are Xander on Otoxan Mobile.
@@ -480,7 +480,7 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
                 ),
             },
         ],
-        "max_tokens": int(os.environ.get("OTOXAN_MOBILE_FAST_MAX_TOKENS", "1024")),
+        "max_tokens": int(os.environ.get("OTOXAN_MOBILE_FAST_MAX_TOKENS", "256")),
         "temperature": _mobile_fast_temperature(provider_name),
     }
     request = urllib.request.Request(
