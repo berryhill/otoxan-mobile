@@ -2,6 +2,7 @@ import base64
 import importlib.util
 import os
 import sys
+import tempfile
 from pathlib import Path
 from unittest import mock
 import unittest
@@ -25,6 +26,7 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_HERMES_BIN",
                 "OTOXAN_HERMES_CWD",
                 "OTOXAN_XANDER_TIMEOUT_SECONDS",
+                "OTOXAN_VOICE_METRICS_JSONL",
             )
         }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
@@ -261,6 +263,40 @@ class VoiceTurnServerTest(unittest.TestCase):
                     voice_turn_server.handle_voice_turn(payload)
                 self.assertEqual(400, raised.exception.status)
                 self.assertIn("routeEvidence", str(raised.exception))
+
+    def test_voice_turn_metrics_persists_sanitized_jsonl(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "metrics.jsonl"
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = str(path)
+            payload = {
+                "type": "otoxan_mobile_voice_turn_metrics",
+                "schemaVersion": 1,
+                "turn": {"turnId": "turn-123", "success": True, "stage": "complete"},
+                "totals": {"turnTotalMs": 1234},
+                "backend": {"roundTripMs": 456},
+                "playback": {"kind": "android_tts"},
+                "verdict": {
+                    "pass1Ready": True,
+                    "transcriptLength": 12,
+                    "assistantTextLength": 34,
+                    "transcript": "do not persist raw speech",
+                    "assistantText": "do not persist assistant text",
+                },
+                "transcript": "top level raw speech should be stripped",
+            }
+
+            result = voice_turn_server.handle_voice_turn_metrics(payload, remote_addr="127.0.0.1")
+            latest = voice_turn_server.latest_voice_turn_metrics()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, latest["count"])
+        stored = latest["latest"]
+        self.assertEqual("127.0.0.1", stored["remoteAddr"])
+        self.assertEqual("turn-123", stored["payload"]["turn"]["turnId"])
+        self.assertNotIn("transcript", stored["payload"])
+        self.assertNotIn("transcript", stored["payload"]["verdict"])
+        self.assertNotIn("assistantText", stored["payload"]["verdict"])
+        self.assertEqual(12, stored["payload"]["verdict"]["transcriptLength"])
 
 
 if __name__ == "__main__":

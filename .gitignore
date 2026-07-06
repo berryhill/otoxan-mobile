@@ -10,6 +10,10 @@ local.properties
 
 # Kotlin/Java
 *.class
+__pycache__/
+
+# Repo-local runtime telemetry
+/tools/data/
 
 # OS/editor
 .DS_Store

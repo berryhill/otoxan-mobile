@@ -10,6 +10,7 @@ import com.otoxan.mobile.voice.AudioRouter
 import com.otoxan.mobile.voice.MicCapture
 import com.otoxan.mobile.voice.RouteEvidence
 import com.otoxan.mobile.voice.SpeechPlayback
+import com.otoxan.mobile.voice.VoiceTurnTelemetryPacket
 import com.otoxan.mobile.voice.XanderVoiceClient
 import com.otoxan.mobile.voice.createXanderVoiceClient
 import com.otoxan.mobile.voice.expectedPcmBytes
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class OtoxanViewModel(
     private val audioRouter: AudioRouter,
@@ -103,7 +105,8 @@ class OtoxanViewModel(
             return
         }
 
-        _uiState.update { it.copy(sessionState = VoiceSessionState.RecordingTest, turnStage = "Starting Ray-Ban route capture", lastError = null) }
+        val turnId = UUID.randomUUID().toString()
+        _uiState.update { it.copy(sessionState = VoiceSessionState.RecordingTest, turnStage = "Starting Ray-Ban route capture", telemetryStatus = "Pending turnId=$turnId", lastError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 var releaseEvidence = RouteEvidence.default("Communication route release not reached")
@@ -239,6 +242,17 @@ class OtoxanViewModel(
                         }
                     )
                 }
+                val telemetry = buildTelemetryPacket(turnId, proof, success = true, error = null)
+                val telemetryResult = xanderVoiceClient.postVoiceTurnMetrics(telemetry)
+                _uiState.update {
+                    it.copy(
+                        telemetryStatus = if (telemetryResult.ok) {
+                            "Sent turnId=$turnId record=${telemetryResult.recordId ?: "unknown"}"
+                        } else {
+                            "FAILED turnId=$turnId: ${telemetryResult.error ?: "unknown"}"
+                        }
+                    )
+                }
             }.onFailure { error ->
                 _uiState.update {
                     it.copy(
@@ -250,6 +264,59 @@ class OtoxanViewModel(
                 }
             }
         }
+    }
+
+    private fun buildTelemetryPacket(
+        turnId: String,
+        proof: VoiceTurnUiResult,
+        success: Boolean,
+        error: String?
+    ): VoiceTurnTelemetryPacket {
+        val result = proof.result
+        return VoiceTurnTelemetryPacket(
+            turnId = turnId,
+            stage = if (success) "complete" else "failure",
+            success = success,
+            playbackMode = _uiState.value.playbackMode.name,
+            playbackKind = proof.playbackKind,
+            routeEvidence = proof.routeEvidence,
+            releaseEvidence = proof.releaseEvidence,
+            capturedBytes = proof.capturedBytes,
+            expectedCaptureBytes = proof.expectedCaptureBytes,
+            capturePeakAmplitude = proof.capturePeakAmplitude,
+            captureUsable = proof.captureUsable,
+            captureExpectedMs = proof.captureExpectedMs,
+            captureReadMs = proof.captureReadMs,
+            routeSelectMs = proof.routeSelectMs,
+            routeReleaseMs = proof.routeReleaseMs,
+            turnTotalMs = proof.turnTotalMs,
+            backendRoundTripMs = proof.backendRoundTripMs,
+            httpStatusCode = result.httpStatusCode,
+            requestBytes = result.requestBytes,
+            responseBytes = result.responseBytes,
+            requestBuildMs = result.requestBuildMs,
+            uploadMs = result.uploadMs,
+            responseCodeWaitMs = result.responseCodeWaitMs,
+            responseReadMs = result.responseReadMs,
+            responseParseMs = result.responseParseMs,
+            backendTotalMs = result.backendTotalMs,
+            decodePcmMs = result.decodePcmMs,
+            audioStatsMs = result.audioStatsMs,
+            transcriptTotalMs = result.transcriptTotalMs,
+            sttLatencyMs = result.sttLatencyMs,
+            xanderSessionMs = result.xanderSessionMs,
+            responseBuildMs = result.responseBuildMs,
+            provider = result.provider,
+            transcriptSource = result.transcriptSource,
+            sttStatus = result.sttStatus,
+            pass1Status = result.pass1Status,
+            pass1Ready = result.pass1Ready,
+            transcriptLength = result.transcript.length,
+            assistantTextLength = result.assistantText.length,
+            ttsBytes = result.ttsPcm16Mono16k?.size ?: 0,
+            playbackTotalMs = proof.playbackTotalMs,
+            error = error
+        )
     }
 
     private data class VoiceTurnUiResult(

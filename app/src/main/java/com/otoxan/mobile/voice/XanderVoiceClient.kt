@@ -9,7 +9,60 @@ import kotlinx.coroutines.withContext
 
 interface XanderVoiceClient {
     suspend fun sendVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult
+    suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult
 }
+
+
+data class VoiceTurnTelemetryResult(
+    val ok: Boolean,
+    val recordId: String? = null,
+    val error: String? = null
+)
+
+data class VoiceTurnTelemetryPacket(
+    val turnId: String,
+    val stage: String,
+    val success: Boolean,
+    val playbackMode: String,
+    val playbackKind: String,
+    val routeEvidence: RouteEvidence?,
+    val releaseEvidence: RouteEvidence?,
+    val capturedBytes: Int? = null,
+    val expectedCaptureBytes: Int? = null,
+    val capturePeakAmplitude: Int? = null,
+    val captureUsable: Boolean? = null,
+    val captureExpectedMs: Long? = null,
+    val captureReadMs: Long? = null,
+    val routeSelectMs: Long? = null,
+    val routeReleaseMs: Long? = null,
+    val turnTotalMs: Long? = null,
+    val backendRoundTripMs: Long? = null,
+    val httpStatusCode: Int? = null,
+    val requestBytes: Int? = null,
+    val responseBytes: Int? = null,
+    val requestBuildMs: Long? = null,
+    val uploadMs: Long? = null,
+    val responseCodeWaitMs: Long? = null,
+    val responseReadMs: Long? = null,
+    val responseParseMs: Long? = null,
+    val backendTotalMs: Int? = null,
+    val decodePcmMs: Int? = null,
+    val audioStatsMs: Int? = null,
+    val transcriptTotalMs: Int? = null,
+    val sttLatencyMs: Int? = null,
+    val xanderSessionMs: Int? = null,
+    val responseBuildMs: Int? = null,
+    val provider: String? = null,
+    val transcriptSource: String? = null,
+    val sttStatus: String? = null,
+    val pass1Status: String? = null,
+    val pass1Ready: Boolean? = null,
+    val transcriptLength: Int? = null,
+    val assistantTextLength: Int? = null,
+    val ttsBytes: Int? = null,
+    val playbackTotalMs: Long? = null,
+    val error: String? = null
+)
 
 data class VoiceTurnResult(
     val transcript: String,
@@ -50,6 +103,8 @@ class HttpXanderVoiceClient(
     private val connectTimeoutMillis: Int = 10_000,
     private val readTimeoutMillis: Int = 60_000
 ) : XanderVoiceClient {
+    private val metricsEndpointUrl = endpointUrl.replace(Regex("/voice-turn/?$"), "/voice-turn-metrics")
+
     override suspend fun sendVoiceTurn(
         pcm16Mono16k: ByteArray,
         routeEvidence: RouteEvidence
@@ -132,6 +187,39 @@ class HttpXanderVoiceClient(
         }
     }
 
+    override suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult = withContext(Dispatchers.IO) {
+        val connection = (URL(metricsEndpointUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = connectTimeoutMillis
+            readTimeout = 5_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            val bodyBytes = buildMetricsBody(packet).toByteArray(Charsets.UTF_8)
+            connection.outputStream.use { it.write(bodyBytes) }
+            val responseCode = connection.responseCode
+            val responseBody = if (responseCode in 200..299) {
+                connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            } else {
+                connection.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+            }
+            if (responseCode in 200..299) {
+                VoiceTurnTelemetryResult(
+                    ok = responseBody.optionalJsonBoolean("ok") ?: true,
+                    recordId = responseBody.optionalJsonString("recordId")
+                )
+            } else {
+                VoiceTurnTelemetryResult(ok = false, error = "HTTP $responseCode: $responseBody")
+            }
+        } catch (error: Exception) {
+            VoiceTurnTelemetryResult(ok = false, error = error.message ?: error::class.java.simpleName)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun buildRequestBody(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): String {
         return """
             {
@@ -144,6 +232,85 @@ class HttpXanderVoiceClient(
                 "outputType":"${routeEvidence.outputType.jsonEscape()}",
                 "wearableActive":${routeEvidence.wearableActive},
                 "message":"${routeEvidence.message.jsonEscape()}"
+              }
+            }
+        """.trimIndent().replace("\n", "").replace("  ", "")
+    }
+
+    private fun buildMetricsBody(packet: VoiceTurnTelemetryPacket): String {
+        return """
+            {
+              "type":"otoxan_mobile_voice_turn_metrics",
+              "schemaVersion":1,
+              "sentAtMs":${System.currentTimeMillis()},
+              "device":{
+                "appId":"com.otoxan.mobile",
+                "buildType":"${com.otoxan.mobile.BuildConfig.BUILD_TYPE.jsonEscape()}",
+                "voiceEndpoint":"${endpointUrl.jsonEscape()}"
+              },
+              "turn":{
+                "turnId":"${packet.turnId.jsonEscape()}",
+                "stage":"${packet.stage.jsonEscape()}",
+                "success":${packet.success},
+                "playbackMode":"${packet.playbackMode.jsonEscape()}",
+                "playbackKind":"${packet.playbackKind.jsonEscape()}",
+                "error":${packet.error.jsonValue()}
+              },
+              "route":{
+                "inputName":${packet.routeEvidence?.inputName.jsonValue()},
+                "inputType":${packet.routeEvidence?.inputType.jsonValue()},
+                "outputName":${packet.routeEvidence?.outputName.jsonValue()},
+                "outputType":${packet.routeEvidence?.outputType.jsonValue()},
+                "wearableActiveAtCapture":${packet.routeEvidence?.wearableActive.jsonValue()},
+                "routeMessage":${packet.routeEvidence?.message.jsonValue()},
+                "releaseEvidence":${packet.releaseEvidence?.message.jsonValue()}
+              },
+              "capture":{
+                "capturedBytes":${packet.capturedBytes.jsonValue()},
+                "expectedBytes":${packet.expectedCaptureBytes.jsonValue()},
+                "peakAmplitude":${packet.capturePeakAmplitude.jsonValue()},
+                "usable":${packet.captureUsable.jsonValue()},
+                "expectedMs":${packet.captureExpectedMs.jsonValue()},
+                "actualMs":${packet.captureReadMs.jsonValue()}
+              },
+              "http":{
+                "statusCode":${packet.httpStatusCode.jsonValue()},
+                "requestBytes":${packet.requestBytes.jsonValue()},
+                "responseBytes":${packet.responseBytes.jsonValue()},
+                "requestBuildMs":${packet.requestBuildMs.jsonValue()},
+                "uploadMs":${packet.uploadMs.jsonValue()},
+                "responseCodeWaitMs":${packet.responseCodeWaitMs.jsonValue()},
+                "responseReadMs":${packet.responseReadMs.jsonValue()},
+                "responseParseMs":${packet.responseParseMs.jsonValue()}
+              },
+              "backend":{
+                "roundTripMs":${packet.backendRoundTripMs.jsonValue()},
+                "serverTotalMs":${packet.backendTotalMs.jsonValue()},
+                "decodePcmMs":${packet.decodePcmMs.jsonValue()},
+                "audioStatsMs":${packet.audioStatsMs.jsonValue()},
+                "transcriptTotalMs":${packet.transcriptTotalMs.jsonValue()},
+                "sttLatencyMs":${packet.sttLatencyMs.jsonValue()},
+                "xanderSessionMs":${packet.xanderSessionMs.jsonValue()},
+                "responseBuildMs":${packet.responseBuildMs.jsonValue()}
+              },
+              "playback":{
+                "kind":"${packet.playbackKind.jsonEscape()}",
+                "ttsBytes":${packet.ttsBytes.jsonValue()},
+                "totalMs":${packet.playbackTotalMs.jsonValue()}
+              },
+              "verdict":{
+                "provider":${packet.provider.jsonValue()},
+                "transcriptSource":${packet.transcriptSource.jsonValue()},
+                "sttStatus":${packet.sttStatus.jsonValue()},
+                "pass1Status":${packet.pass1Status.jsonValue()},
+                "pass1Ready":${packet.pass1Ready.jsonValue()},
+                "transcriptLength":${packet.transcriptLength.jsonValue()},
+                "assistantTextLength":${packet.assistantTextLength.jsonValue()}
+              },
+              "totals":{
+                "turnTotalMs":${packet.turnTotalMs.jsonValue()},
+                "routeSelectMs":${packet.routeSelectMs.jsonValue()},
+                "routeReleaseMs":${packet.routeReleaseMs.jsonValue()}
               }
             }
         """.trimIndent().replace("\n", "").replace("  ", "")
@@ -164,6 +331,10 @@ class StubXanderVoiceClient : XanderVoiceClient {
             pass1Status = "stub-not-real-speech",
             pass1Ready = false
         )
+    }
+
+    override suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult {
+        return VoiceTurnTelemetryResult(ok = true, recordId = "stub")
     }
 }
 
@@ -209,6 +380,12 @@ private fun decodeTtsPcm(encoded: String): ByteArray {
         throw XanderVoiceClientException("Xander voice response field 'ttsPcm16Mono16kBase64' is not valid base64", error)
     }
 }
+
+private fun String?.jsonValue(): String = this?.let { "\"${it.jsonEscape()}\"" } ?: "null"
+
+private fun Number?.jsonValue(): String = this?.toString() ?: "null"
+
+private fun Boolean?.jsonValue(): String = this?.toString() ?: "null"
 
 private fun String.jsonEscape(): String = buildString {
     for (char in this@jsonEscape) {

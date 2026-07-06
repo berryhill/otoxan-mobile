@@ -198,4 +198,72 @@ class HttpXanderVoiceClientTest {
         assertTrue(error!!.message!!.contains("HTTP 503"))
         assertTrue(error.message!!.contains("backend unavailable"))
     }
+    @Test
+    fun postVoiceTurnMetrics_postsTelemetryWithoutRawTranscript() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"ok\":true,\"recordId\":\"record-1\"}")
+        )
+        server.start()
+
+        val client = HttpXanderVoiceClient(
+            endpointUrl = server.url("/voice-turn").toString(),
+            connectTimeoutMillis = 1_000,
+            readTimeoutMillis = 1_000
+        )
+        val result = kotlinx.coroutines.runBlocking {
+            client.postVoiceTurnMetrics(
+                VoiceTurnTelemetryPacket(
+                    turnId = "turn-1",
+                    stage = "complete",
+                    success = true,
+                    playbackMode = "NonCallPlayback",
+                    playbackKind = "android_tts",
+                    routeEvidence = RouteEvidence.default("route selected"),
+                    releaseEvidence = RouteEvidence.default("route released"),
+                    capturedBytes = 160000,
+                    expectedCaptureBytes = 160000,
+                    capturePeakAmplitude = 123,
+                    captureUsable = true,
+                    captureExpectedMs = 5000,
+                    captureReadMs = 5010,
+                    routeSelectMs = 12,
+                    routeReleaseMs = 710,
+                    turnTotalMs = 12000,
+                    backendRoundTripMs = 4000,
+                    httpStatusCode = 200,
+                    requestBytes = 200000,
+                    responseBytes = 1500,
+                    backendTotalMs = 3900,
+                    sttLatencyMs = 900,
+                    xanderSessionMs = 2500,
+                    provider = "xander-session",
+                    transcriptSource = "hermes-stt",
+                    sttStatus = "success",
+                    pass1Status = "real-speech-proven",
+                    pass1Ready = true,
+                    transcriptLength = 32,
+                    assistantTextLength = 44,
+                    ttsBytes = 0,
+                    playbackTotalMs = 1100
+                )
+            )
+        }
+
+        val request = server.takeRequest()
+        val requestBody = request.body.readUtf8()
+        assertEquals("POST", request.method)
+        assertEquals("/voice-turn-metrics", request.path)
+        assertEquals(true, result.ok)
+        assertEquals("record-1", result.recordId)
+        assertTrue(requestBody.contains("\"type\":\"otoxan_mobile_voice_turn_metrics\""))
+        assertTrue(requestBody.contains("\"turnId\":\"turn-1\""))
+        assertTrue(requestBody.contains("\"transcriptLength\":32"))
+        assertTrue(requestBody.contains("\"assistantTextLength\":44"))
+        assertTrue(!requestBody.contains("rawTranscript"))
+        assertTrue(!requestBody.contains("assistantText\""))
+    }
+
 }

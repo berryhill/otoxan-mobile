@@ -166,6 +166,7 @@ private fun OperatorDebugCard(state: OtoxanUiState) {
             Text("Operator debug", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("Endpoint: ${state.voiceEndpoint}")
             Text("Backend self-test: ${state.backendSelfTestStatus}")
+            Text("Telemetry: ${state.telemetryStatus}")
             Text("Route release policy: ${state.routeReleasePolicy}")
             Text("Playback mode: ${state.playbackMode.label}")
             Text("Playback policy: ${state.playbackPolicy}")

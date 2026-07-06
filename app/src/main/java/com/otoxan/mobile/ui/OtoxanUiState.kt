@@ -29,6 +29,7 @@ data class OtoxanUiState(
     val capturePeakAmplitude: Int = 0,
     val captureUsable: Boolean? = null,
     val backendSelfTestStatus: String = "Not run",
+    val telemetryStatus: String = "Not sent",
     val routeReleasePolicy: String = "Release communication route before playback; clear communication device twice; reset SCO and MODE_NORMAL",
     val playbackMode: PlaybackMode = PlaybackMode.NonCallPlayback,
     val playbackPolicy: String = PlaybackMode.NonCallPlayback.description,

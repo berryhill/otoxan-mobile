@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 import time
 import wave
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,6 +61,7 @@ Task:
 HERMES_AGENT_HOME_DEFAULT = "/home/silas/.hermes/hermes-agent"
 HERMES_PYTHON_DEFAULT = "/home/silas/.hermes/hermes-agent/venv/bin/python"
 XANDER_HERMES_HOME_DEFAULT = "/home/silas/.hermes/profiles/xander"
+METRICS_JSONL_DEFAULT = str(Path(__file__).resolve().parent / "data" / "voice_turn_metrics.jsonl")
 
 
 class VoiceTurnError(Exception):
@@ -503,15 +505,95 @@ def _proof_tone_pcm(duration_seconds: float = 0.8, frequency_hz: float = 660.0) 
 def _clean(value: Any, default: str) -> str:
     return str(value if value is not None else default).replace("\x00", "").strip()[:300]
 
+def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "") -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise VoiceTurnError("JSON object payload required", 400)
+    packet_type = str(payload.get("type", "")).strip()
+    if packet_type != "otoxan_mobile_voice_turn_metrics":
+        raise VoiceTurnError("type must be otoxan_mobile_voice_turn_metrics", 400)
+    schema_version = payload.get("schemaVersion")
+    if schema_version != 1:
+        raise VoiceTurnError("schemaVersion must be 1", 400)
+    turn = payload.get("turn")
+    if not isinstance(turn, Mapping):
+        raise VoiceTurnError("turn must be an object", 400)
+    turn_id = _clean(turn.get("turnId"), "")
+    if not turn_id:
+        raise VoiceTurnError("turn.turnId is required", 400)
+
+    record = {
+        "recordId": str(uuid.uuid4()),
+        "receivedAtMs": int(time.time() * 1000),
+        "remoteAddr": remote_addr,
+        "payload": _sanitize_metrics_payload(payload),
+    }
+    path = Path(os.environ.get("OTOXAN_VOICE_METRICS_JSONL", METRICS_JSONL_DEFAULT))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, sort_keys=True) + "\n")
+    print(
+        "voice-turn-metrics ok "
+        f"turnId={turn_id} "
+        f"success={turn.get('success')} "
+        f"stage={turn.get('stage')} "
+        f"totalMs={_nested_get(payload, 'totals', 'turnTotalMs')} "
+        f"backendMs={_nested_get(payload, 'backend', 'roundTripMs')} "
+        f"playback={_nested_get(payload, 'playback', 'kind')} "
+        f"path={path}",
+        flush=True,
+    )
+    return {"ok": True, "recordId": record["recordId"], "metricsPath": str(path)}
+
+
+def latest_voice_turn_metrics() -> dict[str, Any]:
+    path = Path(os.environ.get("OTOXAN_VOICE_METRICS_JSONL", METRICS_JSONL_DEFAULT))
+    if not path.exists():
+        return {"ok": True, "count": 0, "latest": None, "metricsPath": str(path)}
+    latest = None
+    count = 0
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                count += 1
+                latest = json.loads(line)
+    return {"ok": True, "count": count, "latest": latest, "metricsPath": str(path)}
+
+
+def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    # Do not persist raw spoken transcript/assistant text even if a future client accidentally sends it.
+    data = json.loads(json.dumps(payload))
+    for forbidden in ("transcript", "assistantText", "rawTranscript", "rawAssistantText"):
+        data.pop(forbidden, None)
+    verdict = data.get("verdict")
+    if isinstance(verdict, dict):
+        for forbidden in ("transcript", "assistantText", "rawTranscript", "rawAssistantText"):
+            verdict.pop(forbidden, None)
+    return data
+
+
+def _nested_get(value: Mapping[str, Any], *keys: str) -> Any:
+    current: Any = value
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    return current
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API.
         if self.path == "/healthz":
             self._send_json(200, {"ok": True, "service": "otoxan-mobile-voice-turn"})
             return
+        if self.path == "/voice-turn-metrics/latest":
+            self._send_json(200, latest_voice_turn_metrics())
+            return
         self._send_json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API.
+        if self.path == "/voice-turn-metrics":
+            self._handle_metrics_post()
+            return
         if self.path != "/voice-turn":
             self._send_json(404, {"ok": False, "error": "not found"})
             return
@@ -555,6 +637,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(exc.status, {"ok": False, "error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - dinky dev server; return concise failure.
             print(f"voice-turn error status=500 reason={str(exc)[:160]}", flush=True)
+            self._send_json(500, {"ok": False, "error": str(exc)})
+
+    def _handle_metrics_post(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8") if length else "{}"
+            payload = json.loads(body)
+            response = handle_voice_turn_metrics(payload, remote_addr=self.client_address[0])
+            self._send_json(200, response)
+        except json.JSONDecodeError:
+            print("voice-turn-metrics error status=400 reason=invalid-json", flush=True)
+            self._send_json(400, {"ok": False, "error": "Invalid JSON"})
+        except VoiceTurnError as exc:
+            print(f"voice-turn-metrics error status={exc.status} reason={str(exc)[:160]}", flush=True)
+            self._send_json(exc.status, {"ok": False, "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - dinky dev server; return concise failure.
+            print(f"voice-turn-metrics error status=500 reason={str(exc)[:160]}", flush=True)
             self._send_json(500, {"ok": False, "error": str(exc)})
 
     def log_message(self, fmt: str, *args: object) -> None:
