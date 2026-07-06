@@ -1,6 +1,8 @@
 package com.otoxan.mobile.ui
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -17,5 +19,17 @@ class OtoxanUiStateTest {
         assertFalse(OtoxanUiState(sessionState = VoiceSessionState.Idle).voiceActivityActive)
         assertFalse(OtoxanUiState(sessionState = VoiceSessionState.CheckingRoute).voiceActivityActive)
         assertFalse(OtoxanUiState(sessionState = VoiceSessionState.Ready).voiceActivityActive)
+    }
+
+    @Test
+    fun perceivedLatencyDefaults_doNotClaimFirstAudio() {
+        val state = OtoxanUiState()
+
+        assertEquals("none", state.localAckKind)
+        assertNull(state.localAckStartMs)
+        assertNull(state.localAckTotalMs)
+        assertNull(state.assistantPlaybackStartMs)
+        assertNull(state.backendResponseReadyMs)
+        assertNull(state.ttfaMs)
     }
 }

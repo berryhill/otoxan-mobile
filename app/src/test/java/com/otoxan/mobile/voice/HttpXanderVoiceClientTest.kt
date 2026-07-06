@@ -266,7 +266,13 @@ class HttpXanderVoiceClientTest {
                     transcriptLength = 32,
                     assistantTextLength = 44,
                     ttsBytes = 0,
-                    playbackTotalMs = 1100
+                    playbackTotalMs = 1100,
+                    localAckKind = "earcon",
+                    localAckStartMs = 2400,
+                    localAckTotalMs = 115,
+                    assistantPlaybackStartMs = 5100,
+                    backendResponseReadyMs = 4800,
+                    ttfaMs = 2400
                 )
             )
         }
@@ -283,6 +289,11 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"assistantTextLength\":44"))
         assertTrue(requestBody.contains("\"xanderFastTimedOut\":1"))
         assertTrue(requestBody.contains("\"xanderFallbackSkipped\":1"))
+        assertTrue(requestBody.contains("\"perceivedLatency\""))
+        assertTrue(requestBody.contains("\"ttfaMs\":2400"))
+        assertTrue(requestBody.contains("\"localAckKind\":\"earcon\""))
+        assertTrue(requestBody.contains("\"assistantPlaybackStartMs\":5100"))
+        assertTrue(requestBody.contains("\"backendResponseReadyMs\":4800"))
         assertTrue(requestBody.contains("\"sttProvider\":\"moonshine-stt\""))
         assertTrue(requestBody.contains("\"stopReason\":\"speech_silence\""))
         assertTrue(!requestBody.contains("rawTranscript"))

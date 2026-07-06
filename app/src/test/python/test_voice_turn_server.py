@@ -30,6 +30,7 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_MOBILE_FAST_PROVIDER",
                 "OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS",
                 "OTOXAN_MOBILE_FAST_SESSION_FALLBACK",
+                "OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS",
                 "OTOXAN_XANDER_CONFIG",
                 "OTOXAN_STT_MODE",
                 "OTOXAN_STT_PROVIDER",
@@ -413,6 +414,44 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
         self.assertEqual(0, result["timing"]["xanderFallbackSessionStatus"])
         self.assertIsInstance(result["xanderSessionMs"], int)
+
+
+    def test_mobile_fast_opt_in_session_fallback_is_bounded_by_deadline(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
+        os.environ["OTOXAN_MOBILE_FAST_SESSION_FALLBACK"] = "1"
+        os.environ["OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS"] = "0.5"
+        payload = self._payload()
+        stt = voice_turn_server.SttResult("real words decoded", "success", 33)
+
+        def slow_fallback(_transcript, _route):
+            voice_turn_server.time.sleep(2)
+            return "too late"
+
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
+            with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", side_effect=RuntimeError("provider exploded")):
+                with mock.patch.object(voice_turn_server, "_ask_xander_session", side_effect=slow_fallback):
+                    result = voice_turn_server.handle_voice_turn(payload)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("Say that again.", result["assistantText"])
+        self.assertEqual(0, result["timing"]["xanderFastStatus"])
+        self.assertEqual(0, result["timing"]["xanderFallbackSessionStatus"])
+        self.assertEqual(1, result["timing"]["xanderFallbackTimedOut"])
+        self.assertLess(result["xanderFastMs"], 1200)
+
+    def test_latest_metrics_skips_corrupt_jsonl_lines(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "metrics.jsonl"
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = str(path)
+            path.write_text('{"ok": true, "n": 1}\nnot-json\n{"ok": true, "n": 2}\n')
+
+            latest = voice_turn_server.latest_voice_turn_metrics()
+
+        self.assertTrue(latest["ok"])
+        self.assertEqual(3, latest["count"])
+        self.assertEqual(1, latest["corruptLineCount"])
+        self.assertEqual(2, latest["latest"]["n"])
 
     def test_mobile_fast_direct_provider_shapes_response_without_leaking_reasoning(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")

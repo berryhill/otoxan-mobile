@@ -93,6 +93,21 @@ class VoiceTurnError(Exception):
         self.status = status
 
 
+def _safe_log(message: str) -> None:
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _bounded_seconds(env_name: str, default: float, minimum: float, maximum: float) -> float:
+    raw = os.environ.get(env_name, str(default)).strip()
+    try:
+        return max(minimum, min(float(raw), maximum))
+    except ValueError:
+        return float(default)
+
+
 @dataclass(frozen=True)
 class RouteSummary:
     input_name: str
@@ -307,10 +322,10 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
     timing["xanderFallbackSessionStatus"] = 0
     if fast_status != "success":
         if _mobile_fast_session_fallback_enabled():
-            try:
-                assistant_text = _ask_xander_session(transcript.transcript, route)
-                timing["xanderFallbackSessionStatus"] = 1
-            except Exception:
+            assistant_text, fallback_status, fallback_timed_out = _ask_xander_session_with_deadline(transcript.transcript, route)
+            timing["xanderFallbackSessionStatus"] = 1 if fallback_status == "success" else 0
+            timing["xanderFallbackTimedOut"] = 1 if fallback_timed_out else 0
+            if fallback_status != "success":
                 assistant_text = _mobile_fast_degraded_spoken_response(transcript.transcript)
         else:
             timing["xanderFallbackSkipped"] = 1
@@ -733,11 +748,12 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
 
 
 def _ask_xander_mobile_fast_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool]:
-    timeout_raw = os.environ.get("OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS", str(XANDER_FAST_HARD_TIMEOUT_SECONDS)).strip()
-    try:
-        hard_timeout = max(0.5, min(float(timeout_raw), 20.0))
-    except ValueError:
-        hard_timeout = float(XANDER_FAST_HARD_TIMEOUT_SECONDS)
+    hard_timeout = _bounded_seconds(
+        "OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS",
+        XANDER_FAST_HARD_TIMEOUT_SECONDS,
+        0.5,
+        20.0,
+    )
 
     result_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
 
@@ -748,6 +764,30 @@ def _ask_xander_mobile_fast_with_deadline(transcript: str, route: RouteSummary) 
             result_queue.put(("error", ""))
 
     thread = threading.Thread(target=worker, name="otoxan-mobile-fast-provider", daemon=True)
+    thread.start()
+    try:
+        status, text = result_queue.get(timeout=hard_timeout)
+    except queue.Empty:
+        return "", "timeout", True
+    return text, status, False
+
+
+def _ask_xander_session_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool]:
+    hard_timeout = _bounded_seconds(
+        "OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS",
+        2.5,
+        0.5,
+        15.0,
+    )
+    result_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            result_queue.put(("success", _ask_xander_session(transcript, route)))
+        except Exception:
+            result_queue.put(("error", ""))
+
+    thread = threading.Thread(target=worker, name="otoxan-session-fallback-provider", daemon=True)
     thread.start()
     try:
         status, text = result_queue.get(timeout=hard_timeout)
@@ -774,11 +814,7 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
     if not base_url or not api_key or not model:
         raise VoiceTurnError(f"mobile-fast provider {provider_name!r} is missing base_url/api_key/model", 502)
 
-    timeout_raw = os.environ.get("OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS", str(XANDER_FAST_TIMEOUT_SECONDS)).strip()
-    try:
-        timeout = max(3.0, min(float(timeout_raw), 30.0))
-    except ValueError:
-        timeout = float(XANDER_FAST_TIMEOUT_SECONDS)
+    timeout = _bounded_seconds("OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS", XANDER_FAST_TIMEOUT_SECONDS, 0.5, 30.0)
 
     body = {
         "model": model,
@@ -1029,7 +1065,7 @@ def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, sort_keys=True) + "\n")
-    print(
+    _safe_log(
         "voice-turn-metrics ok "
         f"turnId={turn_id} "
         f"success={turn.get('success')} "
@@ -1037,8 +1073,7 @@ def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "")
         f"totalMs={_nested_get(payload, 'totals', 'turnTotalMs')} "
         f"backendMs={_nested_get(payload, 'backend', 'roundTripMs')} "
         f"playback={_nested_get(payload, 'playback', 'kind')} "
-        f"path={path}",
-        flush=True,
+        f"path={path}"
     )
     return {"ok": True, "recordId": record["recordId"], "metricsPath": str(path)}
 
@@ -1046,15 +1081,20 @@ def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "")
 def latest_voice_turn_metrics() -> dict[str, Any]:
     path = Path(os.environ.get("OTOXAN_VOICE_METRICS_JSONL", METRICS_JSONL_DEFAULT))
     if not path.exists():
-        return {"ok": True, "count": 0, "latest": None, "metricsPath": str(path)}
+        return {"ok": True, "count": 0, "latest": None, "metricsPath": str(path), "corruptLineCount": 0}
     latest = None
     count = 0
+    corrupt = 0
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
-            if line.strip():
-                count += 1
+            if not line.strip():
+                continue
+            count += 1
+            try:
                 latest = json.loads(line)
-    return {"ok": True, "count": count, "latest": latest, "metricsPath": str(path)}
+            except json.JSONDecodeError:
+                corrupt += 1
+    return {"ok": True, "count": count, "latest": latest, "metricsPath": str(path), "corruptLineCount": corrupt}
 
 
 def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -1109,7 +1149,7 @@ class Handler(BaseHTTPRequestHandler):
             response.setdefault("timing", {})["httpJsonParseMs"] = json_parse_ms
             response["httpRequestReadMs"] = request_read_ms
             response["httpJsonParseMs"] = json_parse_ms
-            print(
+            _safe_log(
                 "voice-turn ok "
                 f"provider={response.get('provider')} "
                 f"bytes={response.get('bytesReceived')} "
@@ -1125,18 +1165,17 @@ class Handler(BaseHTTPRequestHandler):
                 f"transcriptSource={response.get('transcriptSource')} "
                 f"pass1Status={response.get('pass1Status')} "
                 f"input={response.get('routeEvidence', {}).get('inputName')} "
-                f"type={response.get('routeEvidence', {}).get('inputType')}",
-                flush=True,
+                f"type={response.get('routeEvidence', {}).get('inputType')}"
             )
             self._send_json(200, response)
         except json.JSONDecodeError:
-            print("voice-turn error status=400 reason=invalid-json", flush=True)
+            _safe_log("voice-turn error status=400 reason=invalid-json")
             self._send_json(400, {"ok": False, "error": "Invalid JSON"})
         except VoiceTurnError as exc:
-            print(f"voice-turn error status={exc.status} reason={str(exc)[:160]}", flush=True)
+            _safe_log(f"voice-turn error status={exc.status} reason={str(exc)[:160]}")
             self._send_json(exc.status, {"ok": False, "error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - dinky dev server; return concise failure.
-            print(f"voice-turn error status=500 reason={str(exc)[:160]}", flush=True)
+            _safe_log(f"voice-turn error status=500 reason={str(exc)[:160]}")
             self._send_json(500, {"ok": False, "error": str(exc)})
 
     def _handle_metrics_post(self) -> None:
@@ -1147,17 +1186,17 @@ class Handler(BaseHTTPRequestHandler):
             response = handle_voice_turn_metrics(payload, remote_addr=self.client_address[0])
             self._send_json(200, response)
         except json.JSONDecodeError:
-            print("voice-turn-metrics error status=400 reason=invalid-json", flush=True)
+            _safe_log("voice-turn-metrics error status=400 reason=invalid-json")
             self._send_json(400, {"ok": False, "error": "Invalid JSON"})
         except VoiceTurnError as exc:
-            print(f"voice-turn-metrics error status={exc.status} reason={str(exc)[:160]}", flush=True)
+            _safe_log(f"voice-turn-metrics error status={exc.status} reason={str(exc)[:160]}")
             self._send_json(exc.status, {"ok": False, "error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - dinky dev server; return concise failure.
-            print(f"voice-turn-metrics error status=500 reason={str(exc)[:160]}", flush=True)
+            _safe_log(f"voice-turn-metrics error status=500 reason={str(exc)[:160]}")
             self._send_json(500, {"ok": False, "error": str(exc)})
 
     def log_message(self, fmt: str, *args: object) -> None:
-        print(f"{self.address_string()} - {fmt % args}")
+        _safe_log(f"{self.client_address[0]} - {fmt % args}")
 
     def _send_json(self, status: int, payload: Mapping[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -1168,7 +1207,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
-            print(f"voice-turn client disconnected before status={status} response completed", flush=True)
+            _safe_log(f"voice-turn client disconnected before status={status} response completed")
 
 
 def main() -> None:
@@ -1178,11 +1217,11 @@ def main() -> None:
     args = parser.parse_args()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Otoxan Mobile voice-turn server -> http://{args.host}:{args.port}/voice-turn")
+    _safe_log(f"Otoxan Mobile voice-turn server -> http://{args.host}:{args.port}/voice-turn")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopped.")
+        _safe_log("Stopped.")
     finally:
         server.server_close()
 

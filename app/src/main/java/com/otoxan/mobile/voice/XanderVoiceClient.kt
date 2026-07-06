@@ -68,6 +68,12 @@ data class VoiceTurnTelemetryPacket(
     val assistantTextLength: Int? = null,
     val ttsBytes: Int? = null,
     val playbackTotalMs: Long? = null,
+    val localAckKind: String? = null,
+    val localAckStartMs: Long? = null,
+    val localAckTotalMs: Long? = null,
+    val assistantPlaybackStartMs: Long? = null,
+    val backendResponseReadyMs: Long? = null,
+    val ttfaMs: Long? = null,
     val error: String? = null
 )
 
@@ -322,6 +328,14 @@ class HttpXanderVoiceClient(
                 "kind":"${packet.playbackKind.jsonEscape()}",
                 "ttsBytes":${packet.ttsBytes.jsonValue()},
                 "totalMs":${packet.playbackTotalMs.jsonValue()}
+              },
+              "perceivedLatency":{
+                "ttfaMs":${packet.ttfaMs.jsonValue()},
+                "localAckKind":${packet.localAckKind.jsonValue()},
+                "localAckStartMs":${packet.localAckStartMs.jsonValue()},
+                "localAckTotalMs":${packet.localAckTotalMs.jsonValue()},
+                "assistantPlaybackStartMs":${packet.assistantPlaybackStartMs.jsonValue()},
+                "backendResponseReadyMs":${packet.backendResponseReadyMs.jsonValue()}
               },
               "verdict":{
                 "provider":${packet.provider.jsonValue()},

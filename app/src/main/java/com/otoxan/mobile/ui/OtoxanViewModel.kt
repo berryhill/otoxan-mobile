@@ -20,6 +20,8 @@ import com.otoxan.mobile.voice.shouldSubmitVoiceTurn
 import com.otoxan.mobile.voice.peakPcm16Amplitude
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -337,65 +339,103 @@ class OtoxanViewModel(
             error("Microphone capture unusable: captured=${pcm.size} bytes, minimum=$minimumUsableBytes, peak=$peak, stop=${capture.stopReason}, speech=${capture.speechDetected}")
         }
         _uiState.update { it.copy(turnStage = "Thinking — ${pcm.size} bytes to Xander after ${capture.stopReason}") }
-        val backendStarted = System.nanoTime()
-        val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
-        val backendRoundTripMs = elapsedMs(backendStarted)
-        val releaseStarted = System.nanoTime()
-        val routeReleaseMs: Long
-        val releaseEvidence: RouteEvidence
-        _uiState.update { it.copy(turnStage = "Releasing call route before assistant playback") }
-        releaseEvidence = releaseCommunicationRoute(
-            if (conversationMode) {
-                "Released communication route before assistant playback; next listen will re-select Ray-Ban mic"
-            } else {
-                "Released communication route before single-turn assistant playback"
-            }
-        )
-        routeReleaseMs = elapsedMs(releaseStarted)
-        val playbackMode = _uiState.value.playbackMode
-        _uiState.update {
-            it.copy(
-                turnStage = if (playbackMode == PlaybackMode.SilentAfterCapture) {
-                    "Skipping playback by operator mode"
+        return coroutineScope {
+            val backendStarted = System.nanoTime()
+            val backendDeferred = async(Dispatchers.IO) { xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence) }
+            val releaseStarted = System.nanoTime()
+            val routeReleaseMs: Long
+            val releaseEvidence: RouteEvidence
+            _uiState.update { it.copy(turnStage = "Releasing call route before local acknowledgement") }
+            releaseEvidence = releaseCommunicationRoute(
+                if (conversationMode) {
+                    "Released communication route before local acknowledgement; next listen will re-select Ray-Ban mic"
                 } else {
-                    "Speaking Xander response"
+                    "Released communication route before single-turn local acknowledgement"
                 }
             )
+            routeReleaseMs = elapsedMs(releaseStarted)
+            val playbackMode = _uiState.value.playbackMode
+            var localAckKind = "none"
+            var localAckStartMs: Long? = null
+            var localAckTotalMs: Long? = null
+            if (playbackMode != PlaybackMode.SilentAfterCapture) {
+                _uiState.update { it.copy(turnStage = "Acknowledged locally — waiting on Xander") }
+                localAckStartMs = elapsedMs(turnStarted)
+                val ackStarted = System.nanoTime()
+                localAckKind = if (runCatching { speechPlayback.playAckEarcon() }.isSuccess) {
+                    "earcon"
+                } else {
+                    "failed"
+                }
+                localAckTotalMs = elapsedMs(ackStarted)
+            } else {
+                localAckKind = "silent_mode"
+            }
+
+            _uiState.update { it.copy(turnStage = "Waiting on Xander response") }
+            val result = backendDeferred.await()
+            val backendRoundTripMs = elapsedMs(backendStarted)
+            val backendResponseReadyMs = elapsedMs(turnStarted)
+            _uiState.update {
+                it.copy(
+                    turnStage = if (playbackMode == PlaybackMode.SilentAfterCapture) {
+                        "Skipping playback by operator mode"
+                    } else {
+                        "Speaking Xander response"
+                    }
+                )
+            }
+            val backendTts = result.ttsPcm16Mono16k
+            val silentEmptyTranscript = conversationMode && result.sttStatus == "empty"
+            var playbackKind = "none"
+            val playbackStarted = System.nanoTime()
+            var assistantPlaybackStartMs: Long? = null
+            if (playbackMode == PlaybackMode.SilentAfterCapture) {
+                playbackKind = "silent"
+            } else if (silentEmptyTranscript) {
+                playbackKind = "stt_empty_silent"
+            } else if (backendTts != null && backendTts.isNotEmpty()) {
+                playbackKind = "backend_pcm"
+                assistantPlaybackStartMs = elapsedMs(turnStarted)
+                runCatching { speechPlayback.playPcm16Mono16k(backendTts) }
+                    .onFailure { playbackKind = "backend_pcm_failed" }
+            } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
+                playbackKind = "android_tts"
+                assistantPlaybackStartMs = elapsedMs(turnStarted)
+                runCatching { speechPlayback.speakText(result.assistantText) }
+                    .onFailure { playbackKind = "android_tts_failed" }
+            }
+            val playbackTotalMs = elapsedMs(playbackStarted)
+            val ttfaMs = when {
+                localAckKind == "earcon" -> localAckStartMs
+                assistantPlaybackStartMs != null -> assistantPlaybackStartMs
+                else -> null
+            }
+            VoiceTurnUiResult(
+                routeEvidence = routeEvidence,
+                releaseEvidence = releaseEvidence,
+                capturedBytes = pcm.size,
+                expectedCaptureBytes = expectedBytes,
+                capturePeakAmplitude = peak,
+                captureUsable = usable,
+                result = result,
+                turnTotalMs = elapsedMs(turnStarted),
+                routeSelectMs = routeSelectMs,
+                captureReadMs = captureReadMs,
+                captureExpectedMs = capture.maxCaptureMillis,
+                captureStopReason = capture.stopReason,
+                backendRoundTripMs = backendRoundTripMs,
+                routeReleaseMs = routeReleaseMs,
+                playbackTotalMs = playbackTotalMs,
+                playbackKind = playbackKind,
+                localAckKind = localAckKind,
+                localAckStartMs = localAckStartMs,
+                localAckTotalMs = localAckTotalMs,
+                assistantPlaybackStartMs = assistantPlaybackStartMs,
+                backendResponseReadyMs = backendResponseReadyMs,
+                ttfaMs = ttfaMs
+            )
         }
-        val backendTts = result.ttsPcm16Mono16k
-        val silentEmptyTranscript = conversationMode && result.sttStatus == "empty"
-        var playbackKind = "none"
-        val playbackStarted = System.nanoTime()
-        if (playbackMode == PlaybackMode.SilentAfterCapture) {
-            playbackKind = "silent"
-        } else if (silentEmptyTranscript) {
-            playbackKind = "stt_empty_silent"
-        } else if (backendTts != null && backendTts.isNotEmpty()) {
-            playbackKind = "backend_pcm"
-            speechPlayback.playPcm16Mono16k(backendTts)
-        } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
-            playbackKind = "android_tts"
-            speechPlayback.speakText(result.assistantText)
-        }
-        val playbackTotalMs = elapsedMs(playbackStarted)
-        return VoiceTurnUiResult(
-            routeEvidence = routeEvidence,
-            releaseEvidence = releaseEvidence,
-            capturedBytes = pcm.size,
-            expectedCaptureBytes = expectedBytes,
-            capturePeakAmplitude = peak,
-            captureUsable = usable,
-            result = result,
-            turnTotalMs = elapsedMs(turnStarted),
-            routeSelectMs = routeSelectMs,
-            captureReadMs = captureReadMs,
-            captureExpectedMs = capture.maxCaptureMillis,
-            captureStopReason = capture.stopReason,
-            backendRoundTripMs = backendRoundTripMs,
-            routeReleaseMs = routeReleaseMs,
-            playbackTotalMs = playbackTotalMs,
-            playbackKind = playbackKind
-        )
     }
 
     private suspend fun applyVoiceTurnSuccess(turnId: String, proof: VoiceTurnUiResult, keepConversationActive: Boolean) {
@@ -442,6 +482,12 @@ class OtoxanViewModel(
                 routeReleaseMs = proof.routeReleaseMs,
                 playbackTotalMs = proof.playbackTotalMs,
                 playbackKind = proof.playbackKind,
+                localAckKind = proof.localAckKind,
+                localAckStartMs = proof.localAckStartMs,
+                localAckTotalMs = proof.localAckTotalMs,
+                assistantPlaybackStartMs = proof.assistantPlaybackStartMs,
+                backendResponseReadyMs = proof.backendResponseReadyMs,
+                ttfaMs = proof.ttfaMs,
                 httpStatusCode = result.httpStatusCode,
                 requestBytes = result.requestBytes,
                 responseBytes = result.responseBytes,
@@ -555,6 +601,12 @@ class OtoxanViewModel(
             assistantTextLength = result.assistantText.length,
             ttsBytes = result.ttsPcm16Mono16k?.size ?: 0,
             playbackTotalMs = proof.playbackTotalMs,
+            localAckKind = proof.localAckKind,
+            localAckStartMs = proof.localAckStartMs,
+            localAckTotalMs = proof.localAckTotalMs,
+            assistantPlaybackStartMs = proof.assistantPlaybackStartMs,
+            backendResponseReadyMs = proof.backendResponseReadyMs,
+            ttfaMs = proof.ttfaMs,
             error = error
         )
     }
@@ -575,7 +627,13 @@ class OtoxanViewModel(
         val backendRoundTripMs: Long,
         val routeReleaseMs: Long,
         val playbackTotalMs: Long,
-        val playbackKind: String
+        val playbackKind: String,
+        val localAckKind: String,
+        val localAckStartMs: Long?,
+        val localAckTotalMs: Long?,
+        val assistantPlaybackStartMs: Long?,
+        val backendResponseReadyMs: Long?,
+        val ttfaMs: Long?
     )
 
     fun playRouteProof() {

@@ -35,6 +35,10 @@ class SpeechPlayback(private val context: Context? = null) {
         playPcm16Mono16k(samples.toLittleEndianPcm16())
     }
 
+    fun playAckEarcon() {
+        playPcm16Mono16k(ackEarconPcm16Mono16k())
+    }
+
     fun playPcm16Mono16k(pcm16Mono16k: ByteArray) {
         require(pcm16Mono16k.isNotEmpty()) { "PCM playback buffer is empty" }
         require(pcm16Mono16k.size % BYTES_PER_PCM16_MONO_FRAME == 0) { "PCM playback buffer must be 16-bit aligned" }
@@ -111,8 +115,8 @@ class SpeechPlayback(private val context: Context? = null) {
             }
             val result = tts.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
             require(result == TextToSpeech.SUCCESS) { "TextToSpeech speak failed with status $result" }
-            val maxWaitSeconds = (cleanText.length / 12).coerceIn(3, 12).toLong()
-            require(done.await(maxWaitSeconds, TimeUnit.SECONDS)) { "TextToSpeech playback timed out" }
+            val maxWaitSeconds = (cleanText.length / 14).coerceIn(2, 6).toLong()
+            require(done.await(maxWaitSeconds, TimeUnit.SECONDS)) { "TextToSpeech playback timed out after ${maxWaitSeconds}s" }
             speakError?.let { error(it) }
         }
     }
@@ -218,6 +222,20 @@ internal fun playbackRoutePolicy(): PlaybackRoutePolicy = PlaybackRoutePolicy(
 
 private const val SAMPLE_RATE_16K = 16_000
 private const val BYTES_PER_PCM16_MONO_FRAME = 2
+
+internal fun ackEarconPcm16Mono16k(durationMillis: Int = 110, frequencyHz: Double = 880.0): ByteArray {
+    val sampleCount = ((SAMPLE_RATE_16K * durationMillis) / 1_000).coerceAtLeast(1)
+    val samples = ShortArray(sampleCount)
+    for (i in samples.indices) {
+        val envelope = when {
+            i < SAMPLE_RATE_16K / 200 -> i / (SAMPLE_RATE_16K / 200.0)
+            i > samples.lastIndex - SAMPLE_RATE_16K / 200 -> (samples.lastIndex - i).coerceAtLeast(0) / (SAMPLE_RATE_16K / 200.0)
+            else -> 1.0
+        }.coerceIn(0.0, 1.0)
+        samples[i] = (sin(2.0 * PI * frequencyHz * i / SAMPLE_RATE_16K) * Short.MAX_VALUE * 0.20 * envelope).toInt().toShort()
+    }
+    return samples.toLittleEndianPcm16()
+}
 
 private fun waitForQueuedAudio(track: AudioTrack, targetFrames: Int) {
     val expectedMillis = (targetFrames * 1_000L) / SAMPLE_RATE_16K
