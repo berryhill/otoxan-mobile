@@ -20,6 +20,10 @@ import kotlin.math.sin
 
 class SpeechPlayback(private val context: Context? = null) {
     private val audioManager: AudioManager? = context?.getSystemService(AudioManager::class.java)
+    private val ttsLock = Any()
+    private var sharedTts: TextToSpeech? = null
+    private var sharedTtsReady: CountDownLatch? = null
+    private var sharedTtsInitStatus: Int = TextToSpeech.ERROR
 
     fun playProofTone() {
         val sampleRate = SAMPLE_RATE_16K
@@ -81,58 +85,75 @@ class SpeechPlayback(private val context: Context? = null) {
         val cleanText = text.trim()
         require(cleanText.isNotEmpty()) { "TextToSpeech text is empty" }
 
-        val ready = CountDownLatch(1)
-        var initStatus = TextToSpeech.ERROR
-        val tts = TextToSpeech(appContext) { status ->
-            initStatus = status
-            ready.countDown()
-        }
+        val tts = obtainTextToSpeech(appContext)
+        withTransientPlaybackFocus {
+            val done = CountDownLatch(1)
+            val utteranceId = "otoxan-${UUID.randomUUID()}"
+            var speakError: String? = null
+            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
+                override fun onDone(utteranceId: String?) { done.countDown() }
 
-        try {
-            require(ready.await(2, TimeUnit.SECONDS)) { "TextToSpeech engine did not initialize" }
-            require(initStatus == TextToSpeech.SUCCESS) { "TextToSpeech init failed with status $initStatus" }
-            tts.language = Locale.US
-            tts.setAudioAttributes(playbackAudioAttributes())
-
-            withTransientPlaybackFocus {
-                val done = CountDownLatch(1)
-                val utteranceId = "otoxan-${UUID.randomUUID()}"
-                var speakError: String? = null
-                tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) = Unit
-                    override fun onDone(utteranceId: String?) { done.countDown() }
-
-                    @Deprecated("Deprecated in Android API")
-                    override fun onError(utteranceId: String?) {
-                        speakError = "TextToSpeech playback failed"
-                        done.countDown()
-                    }
-
-                    override fun onError(utteranceId: String?, errorCode: Int) {
-                        speakError = "TextToSpeech playback failed with code $errorCode"
-                        done.countDown()
-                    }
-                })
-
-                val params = Bundle().apply {
-                    putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
+                @Deprecated("Deprecated in Android API")
+                override fun onError(utteranceId: String?) {
+                    speakError = "TextToSpeech playback failed"
+                    done.countDown()
                 }
-                val result = tts.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
-                require(result == TextToSpeech.SUCCESS) { "TextToSpeech speak failed with status $result" }
-                val maxWaitSeconds = (cleanText.length / 12).coerceIn(3, 12).toLong()
-                require(done.await(maxWaitSeconds, TimeUnit.SECONDS)) { "TextToSpeech playback timed out" }
-                speakError?.let { error(it) }
+
+                override fun onError(utteranceId: String?, errorCode: Int) {
+                    speakError = "TextToSpeech playback failed with code $errorCode"
+                    done.countDown()
+                }
+            })
+
+            val params = Bundle().apply {
+                putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
             }
-        } finally {
-            runCatching { tts.stop() }
-            tts.shutdown()
+            val result = tts.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+            require(result == TextToSpeech.SUCCESS) { "TextToSpeech speak failed with status $result" }
+            val maxWaitSeconds = (cleanText.length / 12).coerceIn(3, 12).toLong()
+            require(done.await(maxWaitSeconds, TimeUnit.SECONDS)) { "TextToSpeech playback timed out" }
+            speakError?.let { error(it) }
         }
+    }
+
+    fun shutdown() {
+        synchronized(ttsLock) {
+            runCatching { sharedTts?.stop() }
+            runCatching { sharedTts?.shutdown() }
+            sharedTts = null
+            sharedTtsReady = null
+            sharedTtsInitStatus = TextToSpeech.ERROR
+        }
+    }
+
+    private fun obtainTextToSpeech(appContext: Context): TextToSpeech {
+        val ready: CountDownLatch
+        synchronized(ttsLock) {
+            sharedTts?.let { return it }
+            ready = CountDownLatch(1)
+            sharedTtsReady = ready
+            sharedTtsInitStatus = TextToSpeech.ERROR
+            sharedTts = TextToSpeech(appContext) { status ->
+                synchronized(ttsLock) { sharedTtsInitStatus = status }
+                ready.countDown()
+            }
+        }
+        require(ready.await(2, TimeUnit.SECONDS)) { "TextToSpeech engine did not initialize" }
+        val status = synchronized(ttsLock) { sharedTtsInitStatus }
+        require(status == TextToSpeech.SUCCESS) { "TextToSpeech init failed with status $status" }
+        val tts = synchronized(ttsLock) { requireNotNull(sharedTts) }
+        tts.language = Locale.US
+        tts.setSpeechRate(0.92f)
+        tts.setPitch(0.96f)
+        tts.setAudioAttributes(playbackAudioAttributes())
+        return tts
     }
 
     private fun withTransientPlaybackFocus(block: () -> Unit) {
         val manager = audioManager ?: return block()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                 .setAudioAttributes(playbackAudioAttributes())
                 .setWillPauseWhenDucked(false)
                 .build()
@@ -149,7 +170,7 @@ class SpeechPlayback(private val context: Context? = null) {
                 manager.requestAudioFocus(
                     null,
                     AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
                 )
                 block()
             } finally {

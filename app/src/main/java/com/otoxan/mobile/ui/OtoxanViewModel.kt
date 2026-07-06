@@ -588,6 +588,7 @@ class OtoxanViewModel(
 
     override fun onCleared() {
         conversationJob?.cancel()
+        speechPlayback.shutdown()
         audioRouter.clearRoute()
         super.onCleared()
     }
