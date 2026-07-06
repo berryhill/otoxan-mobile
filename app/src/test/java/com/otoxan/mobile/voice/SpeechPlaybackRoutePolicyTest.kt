@@ -30,4 +30,12 @@ class SpeechPlaybackRoutePolicyTest {
             .maxOf { kotlin.math.abs(it) }
         assertTrue("ack peak should stay below 30%", peak <= (Short.MAX_VALUE * 0.30).toInt())
     }
+
+
+    @Test
+    fun ttsPlaybackWaitSeconds_isBoundedButNotTooAggressiveForShortReplies() {
+        assertEquals(4L, ttsPlaybackWaitSeconds("short reply"))
+        assertEquals(6L, ttsPlaybackWaitSeconds("x".repeat(54)))
+        assertEquals(8L, ttsPlaybackWaitSeconds("x".repeat(200)))
+    }
 }

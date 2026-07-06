@@ -115,7 +115,7 @@ class SpeechPlayback(private val context: Context? = null) {
             }
             val result = tts.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
             require(result == TextToSpeech.SUCCESS) { "TextToSpeech speak failed with status $result" }
-            val maxWaitSeconds = (cleanText.length / 14).coerceIn(2, 6).toLong()
+            val maxWaitSeconds = ttsPlaybackWaitSeconds(cleanText)
             require(done.await(maxWaitSeconds, TimeUnit.SECONDS)) { "TextToSpeech playback timed out after ${maxWaitSeconds}s" }
             speakError?.let { error(it) }
         }
@@ -219,6 +219,8 @@ internal fun playbackRoutePolicy(): PlaybackRoutePolicy = PlaybackRoutePolicy(
     usage = AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY,
     contentType = AudioAttributes.CONTENT_TYPE_SPEECH
 )
+
+internal fun ttsPlaybackWaitSeconds(text: String): Long = (text.trim().length / 8).coerceIn(4, 8).toLong()
 
 private const val SAMPLE_RATE_16K = 16_000
 private const val BYTES_PER_PCM16_MONO_FRAME = 2
