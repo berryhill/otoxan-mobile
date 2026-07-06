@@ -33,6 +33,7 @@ data class VoiceTurnTelemetryPacket(
     val captureUsable: Boolean? = null,
     val captureExpectedMs: Long? = null,
     val captureReadMs: Long? = null,
+    val captureStopReason: String? = null,
     val routeSelectMs: Long? = null,
     val routeReleaseMs: Long? = null,
     val turnTotalMs: Long? = null,
@@ -271,7 +272,8 @@ class HttpXanderVoiceClient(
                 "peakAmplitude":${packet.capturePeakAmplitude.jsonValue()},
                 "usable":${packet.captureUsable.jsonValue()},
                 "expectedMs":${packet.captureExpectedMs.jsonValue()},
-                "actualMs":${packet.captureReadMs.jsonValue()}
+                "actualMs":${packet.captureReadMs.jsonValue()},
+                "stopReason":${packet.captureStopReason.jsonValue()}
               },
               "http":{
                 "statusCode":${packet.httpStatusCode.jsonValue()},

@@ -10,6 +10,7 @@ import com.otoxan.mobile.voice.AudioRouter
 import com.otoxan.mobile.voice.MicCapture
 import com.otoxan.mobile.voice.RouteEvidence
 import com.otoxan.mobile.voice.SpeechPlayback
+import com.otoxan.mobile.voice.VoiceCaptureConfig
 import com.otoxan.mobile.voice.VoiceTurnTelemetryPacket
 import com.otoxan.mobile.voice.XanderVoiceClient
 import com.otoxan.mobile.voice.createXanderVoiceClient
@@ -118,18 +119,20 @@ class OtoxanViewModel(
                     if (!routeEvidence.wearableActive) {
                         error("Wearable route dropped before capture: ${routeEvidence.message}")
                     }
-                    _uiState.update { it.copy(turnStage = "Capturing 5 seconds from selected route") }
-                    val captureMillis = 5_000L
+                    _uiState.update { it.copy(turnStage = "Capturing speech from selected route (max 5 seconds)") }
+                    val captureConfig = VoiceCaptureConfig()
                     val captureStarted = System.nanoTime()
-                    val pcm = micCapture.recordPcmForMillis(captureMillis)
+                    val capture = micCapture.recordPcmUntilSpeechSilence(captureConfig)
+                    val pcm = capture.pcm16Mono16k
                     val captureReadMs = elapsedMs(captureStarted)
-                    val expectedBytes = expectedPcmBytes(captureMillis)
+                    val expectedBytes = expectedPcmBytes(capture.maxCaptureMillis)
+                    val minimumUsableBytes = expectedPcmBytes(capture.minCaptureMillis)
                     val peak = pcm.peakPcm16Amplitude()
-                    val usable = isUsableVoiceCapture(pcm, expectedBytes)
+                    val usable = isUsableVoiceCapture(pcm, minimumUsableBytes)
                     if (!usable) {
-                        error("Microphone capture unusable: captured=${pcm.size} bytes, expected=$expectedBytes, peak=$peak, likely silent or truncated")
+                        error("Microphone capture unusable: captured=${pcm.size} bytes, minimum=$minimumUsableBytes, peak=$peak, stop=${capture.stopReason}, speech=${capture.speechDetected}")
                     }
-                    _uiState.update { it.copy(turnStage = "Posting ${pcm.size} bytes to Xander backend") }
+                    _uiState.update { it.copy(turnStage = "Posting ${pcm.size} bytes to Xander backend after ${capture.stopReason}") }
                     val backendStarted = System.nanoTime()
                     val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
                     val backendRoundTripMs = elapsedMs(backendStarted)
@@ -172,7 +175,8 @@ class OtoxanViewModel(
                         turnTotalMs = elapsedMs(turnStarted),
                         routeSelectMs = routeSelectMs,
                         captureReadMs = captureReadMs,
-                        captureExpectedMs = captureMillis,
+                        captureExpectedMs = capture.maxCaptureMillis,
+                        captureStopReason = capture.stopReason,
                         backendRoundTripMs = backendRoundTripMs,
                         routeReleaseMs = routeReleaseMs,
                         playbackTotalMs = playbackTotalMs,
@@ -238,7 +242,7 @@ class OtoxanViewModel(
                         lastEvidence = if (result.provider == "stub") {
                             "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                         } else {
-                            "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
+                            "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
                         }
                     )
                 }
@@ -287,6 +291,7 @@ class OtoxanViewModel(
             captureUsable = proof.captureUsable,
             captureExpectedMs = proof.captureExpectedMs,
             captureReadMs = proof.captureReadMs,
+            captureStopReason = proof.captureStopReason,
             routeSelectMs = proof.routeSelectMs,
             routeReleaseMs = proof.routeReleaseMs,
             turnTotalMs = proof.turnTotalMs,
@@ -331,6 +336,7 @@ class OtoxanViewModel(
         val routeSelectMs: Long,
         val captureReadMs: Long,
         val captureExpectedMs: Long,
+        val captureStopReason: String,
         val backendRoundTripMs: Long,
         val routeReleaseMs: Long,
         val playbackTotalMs: Long,

@@ -229,6 +229,7 @@ class HttpXanderVoiceClientTest {
                     captureUsable = true,
                     captureExpectedMs = 5000,
                     captureReadMs = 5010,
+                    captureStopReason = "speech_silence",
                     routeSelectMs = 12,
                     routeReleaseMs = 710,
                     turnTotalMs = 12000,
@@ -262,6 +263,7 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"turnId\":\"turn-1\""))
         assertTrue(requestBody.contains("\"transcriptLength\":32"))
         assertTrue(requestBody.contains("\"assistantTextLength\":44"))
+        assertTrue(requestBody.contains("\"stopReason\":\"speech_silence\""))
         assertTrue(!requestBody.contains("rawTranscript"))
         assertTrue(!requestBody.contains("assistantText\""))
     }
