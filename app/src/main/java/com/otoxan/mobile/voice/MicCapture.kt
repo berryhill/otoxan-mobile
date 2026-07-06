@@ -25,30 +25,10 @@ class MicCapture {
         config: VoiceCaptureConfig = VoiceCaptureConfig(),
         onChunkPeak: (peak: Int, capturedMillis: Long, speechDetected: Boolean) -> Unit = { _, _, _ -> }
     ): VoiceCaptureResult {
-        require(config.maxMillis >= config.minMillis) { "maxMillis must be >= minMillis" }
-        require(config.chunkMillis in 20..500) { "chunkMillis must be between 20 and 500" }
+        validateCaptureConfig(config)
         val maxBytes = expectedPcmBytes(config.maxMillis)
         val chunkBytes = expectedPcmBytes(config.chunkMillis)
-        val minBuffer = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        require(minBuffer > 0) { "AudioRecord minimum buffer unavailable: $minBuffer" }
-
-        val recorder = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .build()
-            )
-            .setBufferSizeInBytes(maxOf(minBuffer * 2, chunkBytes * 2))
-            .build()
-
-        require(recorder.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialize" }
+        val recorder = createRecorder(chunkBytes)
 
         val output = ByteArrayOutputStream(maxBytes)
         val chunk = ByteArray(chunkBytes)
@@ -95,6 +75,130 @@ class MicCapture {
             runCatching { recorder.stop() }
             recorder.release()
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun openPersistentConversationRecorder(
+        config: VoiceCaptureConfig = conversationVoiceCaptureConfig()
+    ): PersistentConversationRecorder {
+        validateCaptureConfig(config)
+        return PersistentConversationRecorder(config, createRecorder(expectedPcmBytes(config.chunkMillis)))
+    }
+
+    private fun validateCaptureConfig(config: VoiceCaptureConfig) {
+        require(config.maxMillis >= config.minMillis) { "maxMillis must be >= minMillis" }
+        require(config.chunkMillis in 20..500) { "chunkMillis must be between 20 and 500" }
+    }
+
+    private fun createRecorder(chunkBytes: Int): AudioRecord {
+        val minBuffer = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        require(minBuffer > 0) { "AudioRecord minimum buffer unavailable: $minBuffer" }
+
+        return AudioRecord.Builder()
+            .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .build()
+            )
+            .setBufferSizeInBytes(maxOf(minBuffer * 2, chunkBytes * 4))
+            .build()
+            .also { recorder ->
+                require(recorder.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord failed to initialize" }
+            }
+    }
+}
+
+class PersistentConversationRecorder internal constructor(
+    private val config: VoiceCaptureConfig,
+    private val recorder: AudioRecord
+) : AutoCloseable {
+    private val chunkBytes = expectedPcmBytes(config.chunkMillis)
+    private val chunk = ByteArray(chunkBytes)
+    private var closed = false
+
+    init {
+        recorder.startRecording()
+        require(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AudioRecord did not enter recording state" }
+    }
+
+    fun captureNextUtterance(
+        keepListening: () -> Boolean,
+        onChunkPeak: (peak: Int, capturedMillis: Long, speechDetected: Boolean) -> Unit = { _, _, _ -> }
+    ): VoiceCaptureResult {
+        require(!closed) { "Persistent conversation recorder is closed" }
+        val output = ByteArrayOutputStream(expectedPcmBytes(config.maxMillis))
+        var stopReason = "max_duration"
+        var speechStarted = false
+        var lastSpeechMs = 0L
+        var listenedMs = 0L
+        var utteranceMs = 0L
+
+        while (keepListening() && listenedMs < config.maxMillis) {
+            val read = recorder.read(chunk, 0, chunk.size)
+            if (read <= 0) {
+                stopReason = "read_end"
+                break
+            }
+            val chunkMs = pcmBytesToMillis(read)
+            listenedMs += chunkMs
+            val chunkPeak = chunk.peakPcm16Amplitude(read)
+            if (chunkPeak >= config.speechPeakAmplitude) {
+                speechStarted = true
+                lastSpeechMs = utteranceMs + chunkMs
+            }
+            if (speechStarted) {
+                output.write(chunk, 0, read)
+                utteranceMs = pcmBytesToMillis(output.size())
+            }
+            onChunkPeak(chunkPeak, if (speechStarted) utteranceMs else listenedMs, speechStarted)
+            if (
+                speechStarted &&
+                utteranceMs >= config.minMillis &&
+                utteranceMs - lastSpeechMs >= config.silenceAfterSpeechMillis
+            ) {
+                stopReason = "speech_silence"
+                break
+            }
+        }
+
+        if (!keepListening()) {
+            stopReason = "cancelled"
+        } else if (!speechStarted && listenedMs >= config.maxMillis) {
+            stopReason = "no_speech"
+        }
+
+        val pcm = output.toByteArray()
+        return VoiceCaptureResult(
+            pcm16Mono16k = pcm,
+            maxCaptureMillis = config.maxMillis,
+            minCaptureMillis = config.minMillis,
+            actualCapturedMillis = if (speechStarted) pcmBytesToMillis(pcm.size) else listenedMs,
+            stopReason = stopReason,
+            speechDetected = speechStarted
+        )
+    }
+
+    fun drainBufferedAudio(durationMillis: Long = 250) {
+        require(!closed) { "Persistent conversation recorder is closed" }
+        val drainUntil = System.nanoTime() + durationMillis * 1_000_000L
+        while (System.nanoTime() < drainUntil) {
+            val read = recorder.read(chunk, 0, chunk.size, AudioRecord.READ_NON_BLOCKING)
+            if (read <= 0) break
+        }
+    }
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        runCatching { recorder.stop() }
+        recorder.release()
     }
 }
 

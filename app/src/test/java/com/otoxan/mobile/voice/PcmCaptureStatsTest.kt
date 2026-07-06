@@ -45,6 +45,21 @@ class PcmCaptureStatsTest {
     }
 
     @Test
+    fun shouldSubmitVoiceTurn_rejectsPersistentNoSpeechWindowWithoutStoppingSession() {
+        val capture = VoiceCaptureResult(
+            pcm16Mono16k = ByteArray(0),
+            maxCaptureMillis = 12_000,
+            minCaptureMillis = 700,
+            actualCapturedMillis = 12_000,
+            stopReason = "no_speech",
+            speechDetected = false
+        )
+
+        assertFalse(shouldSubmitVoiceTurn(capture, minimumBytes = expectedPcmBytes(700), requireSpeechDetected = true))
+        assertEquals("no_speech", capture.stopReason)
+    }
+
+    @Test
     fun conversationVoiceCaptureConfig_extendsIdleListenAndRaisesSpeechThreshold() {
         val config = conversationVoiceCaptureConfig()
 

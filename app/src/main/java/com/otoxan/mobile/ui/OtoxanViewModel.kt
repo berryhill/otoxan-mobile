@@ -125,50 +125,121 @@ class OtoxanViewModel(
             )
         }
         conversationJob = viewModelScope.launch(Dispatchers.IO) {
-            while (currentCoroutineContext().isActive && _uiState.value.conversationActive) {
-                val turnId = UUID.randomUUID().toString()
-                runCatching { performVoiceTurn(turnId, requireExistingRoute = false) }
-                    .onSuccess { proof ->
-                        applyVoiceTurnSuccess(turnId, proof, keepConversationActive = true)
-                        delay(1_200L)
-                    }
-                    .onFailure { error ->
-                        if (error is CancellationException) throw error
-                        if (error is NoSpeechDetectedForTurn) {
-                            conversationJob = null
+            var sessionRouteEvidence = RouteEvidence.default("Conversation route not selected")
+            runCatching {
+                val routeStarted = System.nanoTime()
+                sessionRouteEvidence = audioRouter.inspectAndSelectWearable()
+                val sessionRouteSelectMs = elapsedMs(routeStarted)
+                if (!sessionRouteEvidence.wearableActive) {
+                    error("Wearable route unavailable for persistent session: ${sessionRouteEvidence.message}")
+                }
+                _uiState.update {
+                    it.copy(
+                        selectedInputName = sessionRouteEvidence.inputName,
+                        selectedInputType = sessionRouteEvidence.inputType,
+                        selectedOutputName = sessionRouteEvidence.outputName,
+                        selectedOutputType = sessionRouteEvidence.outputType,
+                        wearableRouteActive = true,
+                        turnStage = "Persistent Ray-Ban mic stream open — speak when ready",
+                        lastEvidence = sessionRouteEvidence.message,
+                        lastError = null
+                    )
+                }
+                micCapture.openPersistentConversationRecorder(conversationVoiceCaptureConfig()).use { recorder ->
+                    while (currentCoroutineContext().isActive && _uiState.value.conversationActive) {
+                        val turnId = UUID.randomUUID().toString()
+                        val turnStarted = System.nanoTime()
+                        _uiState.update {
+                            it.copy(
+                                sessionState = VoiceSessionState.ConversationActive,
+                                turnStage = "Listening — speak when ready",
+                                telemetryStatus = "Persistent stream waiting; turnId=$turnId",
+                                lastError = null
+                            )
+                        }
+                        val captureStarted = System.nanoTime()
+                        val capture = recorder.captureNextUtterance(
+                            keepListening = { conversationJob?.isActive == true && _uiState.value.conversationActive }
+                        ) { chunkPeak, capturedMillis, speechDetected ->
+                            val level = (chunkPeak / 8_000f).coerceIn(0f, 1f)
                             _uiState.update {
                                 it.copy(
-                                    conversationActive = false,
-                                    wearableRouteActive = false,
+                                    liveVoicePeak = chunkPeak,
+                                    liveVoiceLevel = level,
+                                    liveSpeechDetected = speechDetected,
+                                    turnStage = if (speechDetected) {
+                                        "Hearing you — ${capturedMillis}ms captured"
+                                    } else {
+                                        "Listening — speak when ready"
+                                    }
+                                )
+                            }
+                        }
+                        if (!currentCoroutineContext().isActive || !_uiState.value.conversationActive) break
+                        if (!capture.speechDetected) {
+                            _uiState.update {
+                                it.copy(
                                     liveVoicePeak = 0,
                                     liveVoiceLevel = 0f,
                                     liveSpeechDetected = false,
-                                    sessionState = VoiceSessionState.Idle,
-                                    turnStage = "Session paused after idle silence",
-                                    telemetryStatus = "Idle silence stopped auto-listen; no backend turn sent",
+                                    sessionState = VoiceSessionState.ConversationActive,
+                                    turnStage = "Still listening — no speech heard",
+                                    telemetryStatus = "Persistent stream idle; no backend turn sent",
                                     lastError = null
                                 )
                             }
-                            return@onFailure
+                            continue
                         }
-                        val releaseEvidence = runCatching { releaseCommunicationRoute("Released communication route after failed conversation turn") }
-                            .getOrElse { RouteEvidence.default("Communication route release failed after conversation turn") }
-                        _uiState.update {
-                            it.copy(
-                                conversationActive = true,
-                                wearableRouteActive = false,
-                                liveVoicePeak = 0,
-                                liveVoiceLevel = 0f,
-                                liveSpeechDetected = false,
-                                sessionState = VoiceSessionState.ConversationActive,
-                                turnStage = "Turn failed; session still active and retrying",
-                                telemetryStatus = "Turn failed; next listen will retry",
-                                lastEvidence = releaseEvidence.message,
-                                lastError = error.message ?: error::class.java.simpleName
+                        runCatching {
+                            processCapturedVoiceTurn(
+                                turnId = turnId,
+                                capture = capture,
+                                routeEvidence = sessionRouteEvidence,
+                                routeSelectMs = sessionRouteSelectMs,
+                                captureReadMs = elapsedMs(captureStarted),
+                                turnStarted = turnStarted,
+                                conversationMode = true
                             )
+                        }.onSuccess { proof ->
+                            applyVoiceTurnSuccess(turnId, proof, keepConversationActive = true)
+                            recorder.drainBufferedAudio()
+                        }.onFailure { error ->
+                            if (error is CancellationException) throw error
+                            _uiState.update {
+                                it.copy(
+                                    conversationActive = true,
+                                    wearableRouteActive = true,
+                                    liveVoicePeak = 0,
+                                    liveVoiceLevel = 0f,
+                                    liveSpeechDetected = false,
+                                    sessionState = VoiceSessionState.ConversationActive,
+                                    turnStage = "Turn failed; persistent stream still active",
+                                    telemetryStatus = "Turn failed; next utterance will retry",
+                                    lastEvidence = "Persistent route kept open after turn failure: ${sessionRouteEvidence.message}",
+                                    lastError = error.message ?: error::class.java.simpleName
+                                )
+                            }
                         }
-                        delay(900L)
                     }
+                }
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                _uiState.update {
+                    it.copy(
+                        conversationActive = false,
+                        wearableRouteActive = false,
+                        liveVoicePeak = 0,
+                        liveVoiceLevel = 0f,
+                        liveSpeechDetected = false,
+                        sessionState = VoiceSessionState.Error,
+                        turnStage = "Persistent conversation session failed",
+                        telemetryStatus = "Persistent stream failed",
+                        lastEvidence = sessionRouteEvidence.message,
+                        lastError = error.message ?: error::class.java.simpleName
+                    )
+                }
+            }.also {
+                releaseCommunicationRoute("Ended persistent Xander conversation session")
             }
         }
     }
@@ -263,82 +334,103 @@ class OtoxanViewModel(
                     )
                 }
             }
-            val pcm = capture.pcm16Mono16k
-            val captureReadMs = elapsedMs(captureStarted)
-            val expectedBytes = expectedPcmBytes(capture.maxCaptureMillis)
-            val minimumUsableBytes = expectedPcmBytes(capture.minCaptureMillis)
-            val peak = pcm.peakPcm16Amplitude()
-            val usable = shouldSubmitVoiceTurn(capture, minimumUsableBytes, requireSpeechDetected = conversationMode)
-            if (!usable) {
-                if (conversationMode && !capture.speechDetected) {
-                    releaseEvidence = RouteEvidence.default("Idle silence; communication route left open to avoid Bluetooth churn")
-                    throw NoSpeechDetectedForTurn("No speech detected; skipping backend turn")
-                }
-                error("Microphone capture unusable: captured=${pcm.size} bytes, minimum=$minimumUsableBytes, peak=$peak, stop=${capture.stopReason}, speech=${capture.speechDetected}")
-            }
-            _uiState.update { it.copy(turnStage = "Thinking — ${pcm.size} bytes to Xander after ${capture.stopReason}") }
-            val backendStarted = System.nanoTime()
-            val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
-            val backendRoundTripMs = elapsedMs(backendStarted)
-            val releaseStarted = System.nanoTime()
-            val routeReleaseMs: Long
-            if (conversationMode) {
-                releaseEvidence = RouteEvidence.default("Conversation route kept open between turns to avoid Bluetooth churn")
-                routeReleaseMs = 0L
-            } else {
-                _uiState.update { it.copy(turnStage = "Releasing call route before assistant playback") }
-                releaseEvidence = releaseCommunicationRoute("Released communication route before assistant playback")
-                routeReleaseMs = elapsedMs(releaseStarted)
-            }
-            val playbackMode = _uiState.value.playbackMode
-            _uiState.update {
-                it.copy(
-                    turnStage = if (playbackMode == PlaybackMode.SilentAfterCapture) {
-                        "Skipping playback by operator mode"
-                    } else {
-                        "Speaking Xander response"
-                    }
-                )
-            }
-            val backendTts = result.ttsPcm16Mono16k
-            val silentEmptyTranscript = conversationMode && result.sttStatus == "empty"
-            var playbackKind = "none"
-            val playbackStarted = System.nanoTime()
-            if (playbackMode == PlaybackMode.SilentAfterCapture) {
-                playbackKind = "silent"
-            } else if (silentEmptyTranscript) {
-                playbackKind = "stt_empty_silent"
-            } else if (backendTts != null && backendTts.isNotEmpty()) {
-                playbackKind = "backend_pcm"
-                speechPlayback.playPcm16Mono16k(backendTts)
-            } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
-                playbackKind = "android_tts"
-                speechPlayback.speakText(result.assistantText)
-            }
-            val playbackTotalMs = elapsedMs(playbackStarted)
-            return VoiceTurnUiResult(
+            val proof = processCapturedVoiceTurn(
+                turnId = turnId,
+                capture = capture,
                 routeEvidence = routeEvidence,
-                releaseEvidence = releaseEvidence,
-                capturedBytes = pcm.size,
-                expectedCaptureBytes = expectedBytes,
-                capturePeakAmplitude = peak,
-                captureUsable = usable,
-                result = result,
-                turnTotalMs = elapsedMs(turnStarted),
                 routeSelectMs = routeSelectMs,
-                captureReadMs = captureReadMs,
-                captureExpectedMs = capture.maxCaptureMillis,
-                captureStopReason = capture.stopReason,
-                backendRoundTripMs = backendRoundTripMs,
-                routeReleaseMs = routeReleaseMs,
-                playbackTotalMs = playbackTotalMs,
-                playbackKind = playbackKind
+                captureReadMs = elapsedMs(captureStarted),
+                turnStarted = turnStarted,
+                conversationMode = conversationMode
             )
+            releaseEvidence = proof.releaseEvidence
+            return proof
         } finally {
             if (releaseEvidence.message == "Communication route release not reached") {
                 releaseCommunicationRoute("Released communication route after interrupted voice turn")
             }
         }
+    }
+
+    private suspend fun processCapturedVoiceTurn(
+        turnId: String,
+        capture: com.otoxan.mobile.voice.VoiceCaptureResult,
+        routeEvidence: RouteEvidence,
+        routeSelectMs: Long,
+        captureReadMs: Long,
+        turnStarted: Long,
+        conversationMode: Boolean
+    ): VoiceTurnUiResult {
+        val pcm = capture.pcm16Mono16k
+        val expectedBytes = expectedPcmBytes(capture.maxCaptureMillis)
+        val minimumUsableBytes = expectedPcmBytes(capture.minCaptureMillis)
+        val peak = pcm.peakPcm16Amplitude()
+        val usable = shouldSubmitVoiceTurn(capture, minimumUsableBytes, requireSpeechDetected = conversationMode)
+        if (!usable) {
+            if (conversationMode && !capture.speechDetected) {
+                throw NoSpeechDetectedForTurn("No speech detected; skipping backend turn")
+            }
+            error("Microphone capture unusable: captured=${pcm.size} bytes, minimum=$minimumUsableBytes, peak=$peak, stop=${capture.stopReason}, speech=${capture.speechDetected}")
+        }
+        _uiState.update { it.copy(turnStage = "Thinking — ${pcm.size} bytes to Xander after ${capture.stopReason}") }
+        val backendStarted = System.nanoTime()
+        val result = xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence)
+        val backendRoundTripMs = elapsedMs(backendStarted)
+        val releaseStarted = System.nanoTime()
+        val routeReleaseMs: Long
+        val releaseEvidence: RouteEvidence
+        if (conversationMode) {
+            releaseEvidence = RouteEvidence.default("Persistent conversation route kept open; mic recorder stayed warm for next utterance")
+            routeReleaseMs = 0L
+        } else {
+            _uiState.update { it.copy(turnStage = "Releasing call route before assistant playback") }
+            releaseEvidence = releaseCommunicationRoute("Released communication route before assistant playback")
+            routeReleaseMs = elapsedMs(releaseStarted)
+        }
+        val playbackMode = _uiState.value.playbackMode
+        _uiState.update {
+            it.copy(
+                turnStage = if (playbackMode == PlaybackMode.SilentAfterCapture) {
+                    "Skipping playback by operator mode"
+                } else {
+                    "Speaking Xander response"
+                }
+            )
+        }
+        val backendTts = result.ttsPcm16Mono16k
+        val silentEmptyTranscript = conversationMode && result.sttStatus == "empty"
+        var playbackKind = "none"
+        val playbackStarted = System.nanoTime()
+        if (playbackMode == PlaybackMode.SilentAfterCapture) {
+            playbackKind = "silent"
+        } else if (silentEmptyTranscript) {
+            playbackKind = "stt_empty_silent"
+        } else if (backendTts != null && backendTts.isNotEmpty()) {
+            playbackKind = "backend_pcm"
+            speechPlayback.playPcm16Mono16k(backendTts)
+        } else if (result.assistantText.isNotBlank() && result.provider != "stub") {
+            playbackKind = "android_tts"
+            speechPlayback.speakText(result.assistantText)
+        }
+        val playbackTotalMs = elapsedMs(playbackStarted)
+        return VoiceTurnUiResult(
+            routeEvidence = routeEvidence,
+            releaseEvidence = releaseEvidence,
+            capturedBytes = pcm.size,
+            expectedCaptureBytes = expectedBytes,
+            capturePeakAmplitude = peak,
+            captureUsable = usable,
+            result = result,
+            turnTotalMs = elapsedMs(turnStarted),
+            routeSelectMs = routeSelectMs,
+            captureReadMs = captureReadMs,
+            captureExpectedMs = capture.maxCaptureMillis,
+            captureStopReason = capture.stopReason,
+            backendRoundTripMs = backendRoundTripMs,
+            routeReleaseMs = routeReleaseMs,
+            playbackTotalMs = playbackTotalMs,
+            playbackKind = playbackKind
+        )
     }
 
     private suspend fun applyVoiceTurnSuccess(turnId: String, proof: VoiceTurnUiResult, keepConversationActive: Boolean) {
