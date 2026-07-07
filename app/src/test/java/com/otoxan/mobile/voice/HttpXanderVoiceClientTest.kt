@@ -247,6 +247,7 @@ class HttpXanderVoiceClientTest {
                       "sttLatencyMs": null,
                       "pass1Status": "proof-mode-not-real-speech",
                       "pass1Ready": false,
+                      "turnOutcome": {"status": "proof-only", "assistantResponseSource": "proof", "degraded": false, "evidenceClass": "backend_turn_outcome_not_hardware_proof"},
                       "audioStats": {"bytes": 4, "samples": 2, "durationMs": 0, "peak": 513, "rms": 512.5},
                       "backendTotalMs": 123,
                       "decodePcmMs": 2,
@@ -300,6 +301,10 @@ class HttpXanderVoiceClientTest {
         assertEquals("route confirmed", result.assistantText)
         assertEquals(listOf<Byte>(9, 8, 7), result.ttsPcm16Mono16k!!.toList())
         assertEquals(4, result.bytesReceived)
+        assertEquals("proof-only", result.turnOutcomeStatus)
+        assertEquals("proof", result.assistantResponseSource)
+        assertEquals(false, result.turnOutcomeDegraded)
+        assertEquals("backend_turn_outcome_not_hardware_proof", result.turnOutcomeEvidenceClass)
         assertEquals("proof", result.transcriptSource)
         assertEquals("not-run", result.sttProvider)
         assertEquals("not-run", result.sttStatus)
@@ -478,7 +483,12 @@ class HttpXanderVoiceClientTest {
                     mobileFastHardTimeoutSeconds = 4.0,
                     xanderFallbackSessionStatus = 0,
                     xanderFallbackSkipped = 1,
+                    xanderFallbackTimedOut = 1,
                     provider = "xander-session",
+                    turnOutcomeStatus = "assistant-success",
+                    assistantResponseSource = "xander-session-fallback",
+                    turnOutcomeDegraded = false,
+                    turnOutcomeEvidenceClass = "backend_turn_outcome_not_hardware_proof",
                     transcriptSource = "hermes-stt",
                     sttProvider = "moonshine-stt",
                     sttStatus = "success",
@@ -536,6 +546,10 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"mobileFastModel\":\"MiniMax-M3\""))
         assertTrue(requestBody.contains("\"mobileFastTimeoutSeconds\":4.0"))
         assertTrue(requestBody.contains("\"xanderFallbackSkipped\":1"))
+        assertTrue(requestBody.contains("\"xanderFallbackTimedOut\":1"))
+        assertTrue(requestBody.contains("\"turnOutcomeStatus\":\"assistant-success\""))
+        assertTrue(requestBody.contains("\"assistantResponseSource\":\"xander-session-fallback\""))
+        assertTrue(requestBody.contains("\"turnOutcomeEvidenceClass\":\"backend_turn_outcome_not_hardware_proof\""))
         assertTrue(requestBody.contains("\"perceivedLatency\""))
         assertTrue(requestBody.contains("\"ttfaMs\":2400"))
         assertTrue(requestBody.contains("\"localAckKind\":\"earcon\""))

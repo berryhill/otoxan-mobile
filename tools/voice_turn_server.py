@@ -831,6 +831,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "sttStatus": turn.stt_status,
         "sttLatencyMs": turn.stt_latency_ms,
         "sttProvider": turn.stt_provider,
+        "turnOutcome": _turn_outcome(turn, stats),
         "assistantPrepContract": assistant_prep_contract(),
         "mobileFastRuntimeContract": mobile_fast_runtime_contract(),
         "primarySttStatus": timing.get("primarySttStatus"),
@@ -865,6 +866,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "mobileFastHardTimeoutSeconds": timing.get("mobileFastHardTimeoutSeconds"),
         "xanderFallbackSessionStatus": timing.get("xanderFallbackSessionStatus"),
         "xanderFallbackSkipped": timing.get("xanderFallbackSkipped"),
+        "xanderFallbackTimedOut": timing.get("xanderFallbackTimedOut"),
         "ttsProvider": timing.get("ttsProvider"),
         "ttsStatus": timing.get("ttsStatus"),
         "ttsLatencyMs": timing.get("ttsLatencyMs"),
@@ -873,6 +875,44 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
     response["responseBuildMs"] = _elapsed_ms(started) - int(response.get("backendTotalMs") or 0)
     response["timing"]["responseBuildMs"] = response["responseBuildMs"]
     return response
+
+
+def _turn_outcome(turn: AssistantTurn, stats: Mapping[str, Any]) -> dict[str, Any]:
+    """Return assistant-turn outcome separately from hardware/pass1 evidence."""
+    timing = turn.timing
+    if not str(turn.transcript).strip() or turn.transcript_source == "route-evidence-fallback":
+        status = "degraded-no-transcript"
+        assistant_source = "degraded-no-transcript"
+    elif turn.provider == MOBILE_FAST_PROVIDER and timing.get("xanderFastStatus") == 1:
+        status = "assistant-success"
+        assistant_source = "mobile-fast"
+    elif turn.provider == MOBILE_FAST_PROVIDER and timing.get("xanderFallbackSessionStatus") == 1:
+        status = "assistant-success"
+        assistant_source = "xander-session-fallback"
+    elif turn.provider == MOBILE_FAST_PROVIDER:
+        status = "degraded-model-fallback"
+        assistant_source = "degraded-response"
+    elif turn.provider == XANDER_PROVIDER and turn.stt_status == "success":
+        status = "assistant-success"
+        assistant_source = "xander-session"
+    elif turn.provider == "proof":
+        status = "proof-only"
+        assistant_source = "proof"
+    else:
+        status = "degraded"
+        assistant_source = "degraded-response"
+    return {
+        "status": status,
+        "assistantResponseSource": assistant_source,
+        "degraded": status.startswith("degraded"),
+        "provider": turn.provider,
+        "transcriptSource": turn.transcript_source,
+        "sttStatus": turn.stt_status,
+        "assistantTextLength": len(turn.assistant_text),
+        "transcriptLength": len(turn.transcript),
+        "capturePeak": stats.get("peak"),
+        "evidenceClass": "backend_turn_outcome_not_hardware_proof",
+    }
 
 
 def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -2175,6 +2215,8 @@ def _hardware_sweep_summary(record: Mapping[str, Any]) -> dict[str, Any]:
     backend_ms = _first_present(_nested_get(backend, "roundTripMs"), _nested_get(timing_summary, "backendRoundTripMs"))
     total_ms = _first_present(_nested_get(totals, "turnTotalMs"), _nested_get(timing_summary, "turnTotalMs"))
     provider = _nested_get(verdict, "provider")
+    turn_outcome_status = _nested_get(verdict, "turnOutcomeStatus")
+    assistant_response_source = _nested_get(verdict, "assistantResponseSource")
     pass1_ready = _nested_get(verdict, "pass1Ready")
     pass1_status = _nested_get(verdict, "pass1Status")
     peak_amplitude = _first_present(_nested_get(capture, "peakAmplitude"), _nested_get(backend, "peak"), _nested_get(backend, "audioPeak"))
@@ -2185,6 +2227,9 @@ def _hardware_sweep_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "runId": _nested_get(turn, "turnId") or record.get("recordId") or "unknown",
         "scenario": scenario,
         "backendProviderObserved": provider,
+        "turnOutcomeStatus": turn_outcome_status,
+        "assistantResponseSource": assistant_response_source,
+        "turnOutcomeEvidenceClass": _nested_get(verdict, "turnOutcomeEvidenceClass"),
         "inputName": _nested_get(route, "inputName"),
         "inputType": _nested_get(route, "inputType"),
         "outputName": _nested_get(route, "outputName"),
@@ -2202,6 +2247,10 @@ def _hardware_sweep_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "sttProvider": _nested_get(verdict, "sttProvider"),
         "sttStatus": _nested_get(verdict, "sttStatus"),
         "sttLatencyMs": _nested_get(backend, "sttLatencyMs"),
+        "xanderFastTimedOut": _nested_get(backend, "xanderFastTimedOut"),
+        "xanderFallbackSessionStatus": _nested_get(backend, "xanderFallbackSessionStatus"),
+        "xanderFallbackSkipped": _nested_get(backend, "xanderFallbackSkipped"),
+        "xanderFallbackTimedOut": _nested_get(backend, "xanderFallbackTimedOut"),
         "pass1Ready": pass1_ready,
         "pass1Status": pass1_status,
         "ttfaMs": ttfa_ms,

@@ -142,8 +142,13 @@ data class VoiceTurnTelemetryPacket(
     val mobileFastHardTimeoutSeconds: Double? = null,
     val xanderFallbackSessionStatus: Int? = null,
     val xanderFallbackSkipped: Int? = null,
+    val xanderFallbackTimedOut: Int? = null,
     val responseBuildMs: Int? = null,
     val provider: String? = null,
+    val turnOutcomeStatus: String? = null,
+    val assistantResponseSource: String? = null,
+    val turnOutcomeDegraded: Boolean? = null,
+    val turnOutcomeEvidenceClass: String? = null,
     val transcriptSource: String? = null,
     val sttProvider: String? = null,
     val sttStatus: String? = null,
@@ -173,6 +178,10 @@ data class VoiceTurnResult(
     val ttsPcm16Mono16k: ByteArray? = null,
     val bytesReceived: Int? = null,
     val provider: String? = null,
+    val turnOutcomeStatus: String? = null,
+    val assistantResponseSource: String? = null,
+    val turnOutcomeDegraded: Boolean? = null,
+    val turnOutcomeEvidenceClass: String? = null,
     val transcriptSource: String? = null,
     val sttProvider: String? = null,
     val sttStatus: String? = null,
@@ -204,6 +213,7 @@ data class VoiceTurnResult(
     val mobileFastHardTimeoutSeconds: Double? = null,
     val xanderFallbackSessionStatus: Int? = null,
     val xanderFallbackSkipped: Int? = null,
+    val xanderFallbackTimedOut: Int? = null,
     val responseBuildMs: Int? = null,
     val httpStatusCode: Int? = null,
     val requestBytes: Int? = null,
@@ -557,6 +567,7 @@ class HttpXanderVoiceClient(
                 "mobileFastHardTimeoutSeconds":${packet.mobileFastHardTimeoutSeconds.jsonValue()},
                 "xanderFallbackSessionStatus":${packet.xanderFallbackSessionStatus.jsonValue()},
                 "xanderFallbackSkipped":${packet.xanderFallbackSkipped.jsonValue()},
+                "xanderFallbackTimedOut":${packet.xanderFallbackTimedOut.jsonValue()},
                 "responseBuildMs":${packet.responseBuildMs.jsonValue()}
               },
               "playback":{
@@ -581,6 +592,10 @@ class HttpXanderVoiceClient(
               },
               "verdict":{
                 "provider":${packet.provider.jsonValue()},
+                "turnOutcomeStatus":${packet.turnOutcomeStatus.jsonValue()},
+                "assistantResponseSource":${packet.assistantResponseSource.jsonValue()},
+                "turnOutcomeDegraded":${packet.turnOutcomeDegraded.jsonValue()},
+                "turnOutcomeEvidenceClass":${packet.turnOutcomeEvidenceClass.jsonValue()},
                 "transcriptSource":${packet.transcriptSource.jsonValue()},
                 "sttProvider":${packet.sttProvider.jsonValue()},
                 "sttStatus":${packet.sttStatus.jsonValue()},
@@ -948,6 +963,9 @@ private fun parseVoiceTurnResult(
     streamResponseCancelled: Boolean? = null,
     streamCancelReason: String? = null
 ): VoiceTurnResult {
+    val root = JSONObject(responseBody)
+    val audioStats = root.optJSONObject("audioStats")
+    val turnOutcome = root.optJSONObject("turnOutcome")
     val ttsPcm = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let { decodeTtsPcm(it) }
     return VoiceTurnResult(
         transcript = responseBody.requiredJsonString("transcript"),
@@ -955,6 +973,10 @@ private fun parseVoiceTurnResult(
         ttsPcm16Mono16k = ttsPcm,
         bytesReceived = responseBody.optionalJsonInt("bytesReceived"),
         provider = responseBody.optionalJsonString("provider"),
+        turnOutcomeStatus = turnOutcome.optStringOrNull("status"),
+        assistantResponseSource = turnOutcome.optStringOrNull("assistantResponseSource"),
+        turnOutcomeDegraded = turnOutcome.optBooleanOrNull("degraded"),
+        turnOutcomeEvidenceClass = turnOutcome.optStringOrNull("evidenceClass"),
         transcriptSource = responseBody.optionalJsonString("transcriptSource"),
         sttProvider = responseBody.optionalJsonString("sttProvider"),
         sttStatus = responseBody.optionalJsonString("sttStatus"),
@@ -969,9 +991,9 @@ private fun parseVoiceTurnResult(
         pass1Status = responseBody.optionalJsonString("pass1Status"),
         pass1Ready = responseBody.optionalJsonBoolean("pass1Ready"),
         audioFormat = responseBody.optionalJsonString("audioFormat"),
-        audioDurationMs = responseBody.optionalJsonInt("durationMs"),
-        audioPeak = responseBody.optionalJsonInt("peak"),
-        audioRms = responseBody.optionalJsonDouble("rms"),
+        audioDurationMs = audioStats.optIntOrNull("durationMs") ?: responseBody.optionalJsonInt("durationMs"),
+        audioPeak = audioStats.optIntOrNull("peak") ?: responseBody.optionalJsonInt("peak"),
+        audioRms = audioStats.optDoubleOrNull("rms") ?: responseBody.optionalJsonDouble("rms"),
         backendTotalMs = responseBody.optionalJsonInt("backendTotalMs"),
         decodePcmMs = responseBody.optionalJsonInt("decodePcmMs"),
         audioStatsMs = responseBody.optionalJsonInt("audioStatsMs"),
@@ -986,6 +1008,7 @@ private fun parseVoiceTurnResult(
         mobileFastHardTimeoutSeconds = responseBody.optionalJsonDouble("mobileFastHardTimeoutSeconds"),
         xanderFallbackSessionStatus = responseBody.optionalJsonInt("xanderFallbackSessionStatus"),
         xanderFallbackSkipped = responseBody.optionalJsonInt("xanderFallbackSkipped"),
+        xanderFallbackTimedOut = responseBody.optionalJsonInt("xanderFallbackTimedOut"),
         responseBuildMs = responseBody.optionalJsonInt("responseBuildMs"),
         httpStatusCode = httpStatusCode,
         requestBytes = requestBytes,
@@ -1162,6 +1185,16 @@ private fun JSONObject?.optLongOrNull(name: String): Long? {
 private fun JSONObject?.optIntOrNull(name: String): Int? {
     if (this == null || isNull(name)) return null
     return optInt(name)
+}
+
+private fun JSONObject?.optDoubleOrNull(name: String): Double? {
+    if (this == null || isNull(name)) return null
+    return optDouble(name)
+}
+
+private fun JSONObject?.optBooleanOrNull(name: String): Boolean? {
+    if (this == null || isNull(name)) return null
+    return optBoolean(name)
 }
 
 private fun String.requiredJsonString(fieldName: String): String {

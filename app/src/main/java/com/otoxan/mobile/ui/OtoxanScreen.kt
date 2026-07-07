@@ -253,6 +253,7 @@ private fun VoiceLoopEvidenceCard(state: OtoxanUiState) {
             Text("Voice loop proof", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("Pass 1: ${if (state.pass1Ready == true) "REAL SPEECH PROVEN" else state.pass1Status ?: "not proven yet"}")
             Text("Provider: ${state.provider ?: "not contacted"}")
+            Text("Turn outcome: ${state.turnOutcomeStatus ?: "unknown"} via ${state.assistantResponseSource ?: "unknown"}; degraded=${state.turnOutcomeDegraded?.toString() ?: "unknown"}")
             Text("Transcript source: ${state.transcriptSource ?: "unknown"}")
             Text("STT: ${state.sttProvider ?: "unknown"} / ${state.sttStatus ?: "unknown"}${state.sttLatencyMs?.let { " in ${it}ms" } ?: ""}")
             Text("STT provider fallback: ${state.sttProviderFallbackSummary.statusText}")
