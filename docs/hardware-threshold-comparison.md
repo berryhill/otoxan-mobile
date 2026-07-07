@@ -90,6 +90,7 @@ Sprint objective:
 Concrete sprint backlog:
 
 1. Hardware threshold sweep packet
+   - Execute `docs/hardware-sweep-protocol.md`.
    - Run at least 10 real Ray-Ban turns: normal speech, quiet speech, noisy room, clipped/too-short speech, and silence.
    - Record only text summaries: route, bytes, peak, rms, stop reason, transcript source/status, pass1 status, TTFA, ack gap, backend round trip, total turn.
    - Do not persist raw audio by default.

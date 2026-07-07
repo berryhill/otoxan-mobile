@@ -111,6 +111,10 @@ make launch ADB="sudo /home/berry/sdk/platform-tools/adb"
 
 The helper validates the PCM payload and route evidence, returns visible transcript/assistant text, returns `provider`, `bytesReceived`, `audioFormat`, and may return PCM audio bytes. The app shows captured/backend/TTS counters so a physical test can identify which segment failed. It does not store raw audio.
 
+## Sprint 1 hardware sweep protocol
+
+Use `docs/hardware-sweep-protocol.md` to execute the reliability-and-latency hardware sweep recommended by `docs/hardware-threshold-comparison.md`. The protocol requires at least 10 real phone + Ray-Ban turns across normal speech, quiet speech, noisy room, clipped/too-short speech, and silence. Record text summaries only, keep timing scorecards separate from hardware proof, and do not treat source/build success as a substitute for Ray-Ban route evidence.
+
 ## Phase 1 realtime WebSocket skeleton
 
 The first open-source realtime phase is now a repo-local WebSocket transport skeleton. It does not replace `/voice-turn`; it gives the next Android/client slice a persistent transport to stream PCM chunks and commit them through the existing voice-turn contract.
