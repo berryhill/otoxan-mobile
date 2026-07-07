@@ -170,7 +170,8 @@ class HttpXanderVoiceClientTest {
                 .setHeader("Content-Type", "application/x-ndjson")
                 .setBody(
                     """
-                    {"type":"stream.started","protocol":{"name":"otoxan-mobile-realtime-stream","version":1}}
+                    {"type":"stream.started","transport":{"protocol":{"name":"otoxan-mobile-backend-stream","version":1}},"sttEventSchema":{"name":"otoxan-mobile-stt-stream-events","version":1},"sttBudget":{"targetMs":1500}}
+                    {"type":"stt.completed","stt":{"provider":"moonshine-stt","status":"success","latencyMs":42,"budgetRemainingMs":1458}}
                     {"type":"response.completed","voiceTurn":{"provider":"stream-proof","transcript":"stream hello","assistantText":"stream route confirmed","bytesReceived":4,"transcriptSource":"proof-stream","sttStatus":"success","pass1Ready":true}}
                     {"type":"stream.completed"}
                     """.trimIndent()
@@ -203,11 +204,11 @@ class HttpXanderVoiceClientTest {
         assertEquals(200, result.httpStatusCode)
         assertTrue(result.responseBytes!! > 0)
         assertEquals("http_voice_stream_ndjson", result.transportKind)
-        assertEquals(3, result.streamEventCount)
-        assertEquals(listOf("stream.started", "response.completed", "stream.completed"), result.streamEventTypes)
+        assertEquals(4, result.streamEventCount)
+        assertEquals(listOf("stream.started", "stt.completed", "response.completed", "stream.completed"), result.streamEventTypes)
         assertEquals(true, result.streamStarted)
         assertEquals(true, result.streamCompleted)
-        assertEquals("otoxan-mobile-realtime-stream", result.streamProtocolName)
+        assertEquals("otoxan-mobile-backend-stream", result.streamProtocolName)
         assertEquals(1, result.streamProtocolVersion)
     }
 
