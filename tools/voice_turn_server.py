@@ -94,6 +94,10 @@ TIMING_CONTRACT_TARGETS = {
     "turnTotalMs": 8000,
     "backendRoundTripMs": 4000,
 }
+EXPERIMENTAL_STREAM_TRANSPORT_ENV = "OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"
+EXPERIMENTAL_STREAM_ENDPOINT = "/voice-stream"
+STREAM_TRANSPORT_PROTOCOL_NAME = "otoxan-mobile-backend-stream"
+STREAM_TRANSPORT_PROTOCOL_VERSION = 1
 REALTIME_VAD_DIAGNOSTIC_PROVIDER = "energy-vad-phase3"
 REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD = int(os.environ.get("OTOXAN_REALTIME_VAD_PEAK_THRESHOLD", "700"))
 REALTIME_VAD_DIAGNOSTIC_END_SILENCE_CHUNKS = int(os.environ.get("OTOXAN_REALTIME_VAD_END_SILENCE_CHUNKS", "3"))
@@ -101,6 +105,27 @@ _STT_LOCK = threading.Lock()
 _STT_TRANSCRIBE_AUDIO: Callable[[str], Mapping[str, Any]] | None = None
 _STT_FAST_LOCAL_TRANSCRIBE: Callable[[str], Mapping[str, Any]] | None = None
 _STT_LOAD_ERROR: str | None = None
+
+
+def experimental_stream_transport_enabled() -> bool:
+    return os.environ.get(EXPERIMENTAL_STREAM_TRANSPORT_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def stream_transport_descriptor() -> dict[str, Any]:
+    return {
+        "name": STREAM_TRANSPORT_PROTOCOL_NAME,
+        "version": STREAM_TRANSPORT_PROTOCOL_VERSION,
+        "endpoint": EXPERIMENTAL_STREAM_ENDPOINT,
+        "method": "POST",
+        "contentType": "application/x-ndjson",
+        "experimentalFlag": EXPERIMENTAL_STREAM_TRANSPORT_ENV,
+        "enabled": experimental_stream_transport_enabled(),
+        "canonicalFallback": {
+            "endpoint": "/voice-turn",
+            "method": "POST",
+            "semantics": "same_request_response_contract",
+        },
+    }
 
 
 class VoiceTurnError(Exception):
@@ -252,6 +277,50 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
     response["responseBuildMs"] = _elapsed_ms(started) - int(response.get("backendTotalMs") or 0)
     response["timing"]["responseBuildMs"] = response["responseBuildMs"]
     return response
+
+
+def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the experimental backend streaming envelope for one explicit turn.
+
+    This is intentionally a thin transport shim over the proven /voice-turn
+    contract. It gives the Android client a stream-shaped backend endpoint to
+    exercise without moving authority, persistence, capture policy, or assistant
+    semantics away from handle_voice_turn.
+    """
+    stream_id = f"vs_{uuid.uuid4().hex}"
+    started = time.monotonic()
+    events: list[dict[str, Any]] = [
+        {
+            "type": "stream.started",
+            "streamId": stream_id,
+            "sequence": 1,
+            "transport": stream_transport_descriptor(),
+            "privacy": {
+                "explicitSessionOnly": True,
+                "rawAudioPersisted": False,
+                "alwaysOnRecording": False,
+            },
+        }
+    ]
+    result = handle_voice_turn(payload)
+    events.append(
+        {
+            "type": "response.completed",
+            "streamId": stream_id,
+            "sequence": 2,
+            "voiceTurn": result,
+        }
+    )
+    events.append(
+        {
+            "type": "stream.completed",
+            "streamId": stream_id,
+            "sequence": 3,
+            "elapsedMs": _elapsed_ms(started),
+            "fallback": stream_transport_descriptor()["canonicalFallback"],
+        }
+    )
+    return events
 
 
 def _pass1_ready(turn: AssistantTurn) -> bool:
@@ -1535,7 +1604,14 @@ def _nested_get(value: Mapping[str, Any], *keys: str) -> Any:
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API.
         if self.path == "/healthz":
-            self._send_json(200, {"ok": True, "service": "otoxan-mobile-voice-turn"})
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "service": "otoxan-mobile-voice-turn",
+                    "streamTransport": stream_transport_descriptor(),
+                },
+            )
             return
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/voice-turn-metrics/latest":
@@ -1564,6 +1640,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API.
         if self.path == "/voice-turn-metrics":
             self._handle_metrics_post()
+            return
+        if self.path == EXPERIMENTAL_STREAM_ENDPOINT:
+            self._handle_stream_post()
             return
         if self.path != "/voice-turn":
             self._send_json(404, {"ok": False, "error": "not found"})
@@ -1628,6 +1707,39 @@ class Handler(BaseHTTPRequestHandler):
             _safe_log(f"voice-turn-metrics error status=500 reason={str(exc)[:160]}")
             self._send_json(500, {"ok": False, "error": str(exc)})
 
+    def _handle_stream_post(self) -> None:
+        if not experimental_stream_transport_enabled():
+            _safe_log("voice-stream blocked status=404 reason=experimental-flag-disabled")
+            self._send_json(404, {"ok": False, "error": "not found", "experimentalFlag": EXPERIMENTAL_STREAM_TRANSPORT_ENV})
+            return
+        try:
+            request_started = time.monotonic()
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8") if length else "{}"
+            request_read_ms = _elapsed_ms(request_started)
+            parse_started = time.monotonic()
+            payload = json.loads(body)
+            json_parse_ms = _elapsed_ms(parse_started)
+            events = handle_voice_stream(payload)
+            events[0].setdefault("timing", {})["httpRequestReadMs"] = request_read_ms
+            events[0].setdefault("timing", {})["httpJsonParseMs"] = json_parse_ms
+            _safe_log(
+                "voice-stream ok "
+                f"provider={events[1].get('voiceTurn', {}).get('provider')} "
+                f"bytes={events[1].get('voiceTurn', {}).get('bytesReceived')} "
+                f"events={len(events)}"
+            )
+            self._send_ndjson(200, events)
+        except json.JSONDecodeError:
+            _safe_log("voice-stream error status=400 reason=invalid-json")
+            self._send_json(400, {"ok": False, "error": "Invalid JSON"})
+        except VoiceTurnError as exc:
+            _safe_log(f"voice-stream error status={exc.status} reason={str(exc)[:160]}")
+            self._send_json(exc.status, {"ok": False, "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - dinky dev server; return concise failure.
+            _safe_log(f"voice-stream error status=500 reason={str(exc)[:160]}")
+            self._send_json(500, {"ok": False, "error": str(exc)})
+
     def log_message(self, fmt: str, *args: object) -> None:
         _safe_log(f"{self.client_address[0]} - {fmt % args}")
 
@@ -1641,6 +1753,18 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             _safe_log(f"voice-turn client disconnected before status={status} response completed")
+
+    def _send_ndjson(self, status: int, events: Sequence[Mapping[str, Any]]) -> None:
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            for event in events:
+                self.wfile.write(json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            _safe_log(f"voice-stream client disconnected before status={status} response completed")
 
 
 def main() -> None:

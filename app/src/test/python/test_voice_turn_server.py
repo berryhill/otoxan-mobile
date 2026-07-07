@@ -4,6 +4,9 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import mock
 import unittest
@@ -42,6 +45,7 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_TTS_PROVIDER",
                 "OTOXAN_KOKORO_TTS_COMMAND",
                 "OTOXAN_TTS_TIMEOUT_SECONDS",
+                "OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT",
             )
         }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
@@ -236,6 +240,75 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(0, result["transcriptTotalMs"])
         self.assertIsNone(result["xanderSessionMs"])
         self.assertIsInstance(result["responseBuildMs"], int)
+
+    def test_stream_transport_descriptor_is_disabled_without_experimental_flag(self):
+        descriptor = voice_turn_server.stream_transport_descriptor()
+
+        self.assertFalse(descriptor["enabled"])
+        self.assertEqual("OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT", descriptor["experimentalFlag"])
+        self.assertEqual("/voice-stream", descriptor["endpoint"])
+        self.assertEqual("/voice-turn", descriptor["canonicalFallback"]["endpoint"])
+        self.assertEqual("same_request_response_contract", descriptor["canonicalFallback"]["semantics"])
+
+    def test_handle_voice_stream_wraps_voice_turn_contract_without_persisting_audio(self):
+        os.environ["OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"] = "1"
+
+        events = voice_turn_server.handle_voice_stream(self._payload())
+
+        self.assertEqual(["stream.started", "response.completed", "stream.completed"], [event["type"] for event in events])
+        self.assertEqual([1, 2, 3], [event["sequence"] for event in events])
+        self.assertTrue(events[0]["transport"]["enabled"])
+        self.assertTrue(events[0]["privacy"]["explicitSessionOnly"])
+        self.assertFalse(events[0]["privacy"]["rawAudioPersisted"])
+        self.assertEqual("proof", events[1]["voiceTurn"]["provider"])
+        self.assertEqual(320, events[1]["voiceTurn"]["bytesReceived"])
+        self.assertEqual("/voice-turn", events[2]["fallback"]["endpoint"])
+        self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[0]))
+        self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[2]))
+
+    def test_voice_stream_http_endpoint_is_404_until_experimental_flag_enabled(self):
+        server = voice_turn_server.ThreadingHTTPServer(("127.0.0.1", 0), voice_turn_server.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_address[1]}/voice-stream"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(self._payload()).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(404, raised.exception.code)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_voice_stream_http_endpoint_returns_ndjson_when_experimental_flag_enabled(self):
+        os.environ["OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"] = "true"
+        server = voice_turn_server.ThreadingHTTPServer(("127.0.0.1", 0), voice_turn_server.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_address[1]}/voice-stream"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(self._payload()).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertEqual("application/x-ndjson", response.headers.get_content_type())
+                events = [json.loads(line) for line in response.read().decode("utf-8").splitlines()]
+            self.assertEqual(["stream.started", "response.completed", "stream.completed"], [event["type"] for event in events])
+            self.assertEqual("proof", events[1]["voiceTurn"]["provider"])
+            self.assertEqual("/voice-turn", events[2]["fallback"]["endpoint"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     def test_default_provider_calls_xander_session_not_proof(self):
         os.environ.pop("OTOXAN_VOICE_PROVIDER", None)

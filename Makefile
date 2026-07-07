@@ -10,13 +10,14 @@ GRADLE ?= ./gradlew
 PYTHON ?= $(shell if [ -x /home/silas/.hermes/hermes-agent/venv/bin/python ]; then echo /home/silas/.hermes/hermes-agent/venv/bin/python; else echo python3; fi)
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 
-.PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-xander backend-proof backend-moonshine backend-realtime smoke-backend test-backend test-realtime test-moonshine-wrapper test test-all endpoint doctor
+.PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-stream backend-xander backend-proof backend-moonshine backend-realtime smoke-backend test-backend test-realtime test-moonshine-wrapper test test-all endpoint doctor
 
 help:
 	@printf '%s\n' \
 	  'Otoxan Mobile make targets:' \
 	  '' \
 	  '  make backend                  Run mobile-fast Xander backend on 0.0.0.0:8787' \
+	  '  make backend-stream           Run backend with experimental /voice-stream enabled' \
 	  '  make backend-xander           Explicitly require legacy Xander/Hermes session provider' \
 	  '  make backend-proof            Run deterministic proof backend only' \
 	  '  make backend-moonshine        Run mobile-fast backend with optional Moonshine STT wrapper first' \
@@ -44,6 +45,9 @@ endpoint:
 
 backend:
 	OTOXAN_VOICE_PROVIDER=mobile-fast $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
+
+backend-stream:
+	OTOXAN_VOICE_PROVIDER=mobile-fast OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT=1 $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
 
 backend-xander:
 	OTOXAN_VOICE_PROVIDER=xander-session $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)

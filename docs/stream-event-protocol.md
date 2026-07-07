@@ -9,6 +9,7 @@ Otoxan Mobile remains an explicit-session, audio-first Ray-Ban Meta phone bridge
 - Protocol name: `otoxan-mobile-realtime-stream`
 - Protocol version: `1`
 - Primary realtime endpoint: `GET /realtime` WebSocket upgrade
+- Experimental backend stream endpoint: `POST /voice-stream` NDJSON, enabled only when `OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT` is truthy (`1`, `true`, `yes`, `on`)
 - HTTP fallback endpoint: `POST /voice-turn`
 - Audio format: `pcm_s16le_16khz_mono`
 - Session model: one explicit user session per WebSocket connection
@@ -150,6 +151,16 @@ Closes the explicit realtime session. Server response: `session.closed`, state `
 | `control.pong` | current open state | Liveness reply. |
 | `session.closed` | `closed` | Session closed by client. |
 | `error` | `error` | Protocol or server error; client should stop using that stream. |
+
+## Backend NDJSON stream endpoint
+
+`POST /voice-stream` is an experimental backend transport shim for the same explicit push-to-talk turn that `/voice-turn` serves. It is disabled by default and returns `404` unless `OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT` is truthy. When enabled, the server replies as `application/x-ndjson` with one JSON event per line:
+
+1. `stream.started` — includes protocol descriptor, fallback pointer, flag name, and privacy defaults.
+2. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
+3. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics.
+
+This endpoint does not add always-on capture, raw-audio persistence, or a new assistant authority surface. It is a backend transport experiment so the Android client can test stream-shaped parsing while retaining the proven `/voice-turn` contract and fallback.
 
 ## HTTP fallback semantics
 
