@@ -47,7 +47,7 @@ reasoning_split=true
 
 The response parser is named `minimax-m3-chat-completions-parser`. It reads speakable audio only from `choices[0].message.content`, strips `<think>...</think>` markup before shaping, records whether MiniMax-style reasoning evidence was present (`reasoning_content`, `reasoningContent`, `reasoning`, `reasoning_details`, or think markup), and reports sanitized empty-content evidence without copying private reasoning text into spoken output or error telemetry.
 
-The provider call is gated behind real STT success or an explicit debug transcript. If STT is empty and only route evidence exists, the backend returns `Audio arrived, but words did not decode.` and does not call the model with route metadata as fake user speech.
+The provider call is gated behind real STT success or an explicit debug transcript. If STT is empty and only route evidence exists, the backend returns an empty transcript, says `Audio arrived, but speech did not decode. Try again after Listening appears.`, and does not call the model with route metadata as fake user speech. If STT decoded words but the fast response lane degrades, the spoken response is honest without provider detail: `I heard the words, but response degraded.`
 
 ## Gap
 

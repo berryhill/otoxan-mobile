@@ -282,7 +282,7 @@ sttStatus=success
 sttLatencyMs=<milliseconds>
 ```
 
-Fallback and no-speech behavior stay honest: if all STT lanes return empty, the backend says `Audio arrived, but words did not decode.` and does not call the Xander model lane with route evidence as fake speech.
+Fallback and no-speech behavior stay honest: if all STT lanes return empty, the backend returns an empty transcript, says `Audio arrived, but speech did not decode. Try again after Listening appears.`, and does not call the Xander model lane with route evidence as fake speech.
 
 Phase 6 repo-local wrapper:
 
