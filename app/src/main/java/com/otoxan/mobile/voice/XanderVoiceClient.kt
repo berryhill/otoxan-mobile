@@ -89,6 +89,7 @@ data class VoiceTurnTelemetryPacket(
     val routeReleaseMs: Long? = null,
     val turnTotalMs: Long? = null,
     val backendRoundTripMs: Long? = null,
+    val backendBytesReceived: Int? = null,
     val httpStatusCode: Int? = null,
     val requestBytes: Int? = null,
     val responseBytes: Int? = null,
@@ -499,6 +500,7 @@ class HttpXanderVoiceClient(
               },
               "backend":{
                 "roundTripMs":${packet.backendRoundTripMs.jsonValue()},
+                "bytesReceived":${packet.backendBytesReceived.jsonValue()},
                 "serverTotalMs":${packet.backendTotalMs.jsonValue()},
                 "decodePcmMs":${packet.decodePcmMs.jsonValue()},
                 "audioStatsMs":${packet.audioStatsMs.jsonValue()},

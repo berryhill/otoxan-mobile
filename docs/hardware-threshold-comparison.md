@@ -106,6 +106,7 @@ Concrete sprint backlog:
 4. Realtime/VAD containment
    - Keep realtime VAD as a WebSocket diagnostic transport, not the default phone UX.
    - Compare its `700` threshold against the same hardware sweep before using it to auto-start/auto-stop turns.
+   - Use `/hardware-sweep/recent` `realtimeVadDiagnostic` and `realtimeVadComparison` readbacks for that comparison; they are marked `diagnosticOnly=true` and do not override push-to-talk `/voice-turn` acceptance.
 
 5. Latency work ordering
    - First reduce perceived latency with local ack and shorter spoken responses.

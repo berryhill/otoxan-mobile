@@ -35,7 +35,7 @@ import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 import yaml
 
@@ -94,6 +94,9 @@ TIMING_CONTRACT_TARGETS = {
     "turnTotalMs": 8000,
     "backendRoundTripMs": 4000,
 }
+REALTIME_VAD_DIAGNOSTIC_PROVIDER = "energy-vad-phase3"
+REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD = int(os.environ.get("OTOXAN_REALTIME_VAD_PEAK_THRESHOLD", "700"))
+REALTIME_VAD_DIAGNOSTIC_END_SILENCE_CHUNKS = int(os.environ.get("OTOXAN_REALTIME_VAD_END_SILENCE_CHUNKS", "3"))
 _STT_LOCK = threading.Lock()
 _STT_TRANSCRIBE_AUDIO: Callable[[str], Mapping[str, Any]] | None = None
 _STT_FAST_LOCAL_TRANSCRIBE: Callable[[str], Mapping[str, Any]] | None = None
@@ -1247,6 +1250,7 @@ def recent_hardware_sweep_summaries(limit: int = 20) -> dict[str, Any]:
         "ok": recent.get("ok", True),
         "count": recent.get("count", 0),
         "summaries": summaries,
+        "realtimeVadComparison": _realtime_vad_sweep_comparison(summaries),
         "metricsPath": recent.get("metricsPath"),
         "corruptLineCount": recent.get("corruptLineCount", 0),
         "privacy": "summary-only: no pcm16Mono16kBase64, transcript text, assistant text, or raw audio is persisted or returned",
@@ -1272,6 +1276,8 @@ def _hardware_sweep_summary(record: Mapping[str, Any]) -> dict[str, Any]:
     provider = _nested_get(verdict, "provider")
     pass1_ready = _nested_get(verdict, "pass1Ready")
     pass1_status = _nested_get(verdict, "pass1Status")
+    peak_amplitude = _first_present(_nested_get(capture, "peakAmplitude"), _nested_get(backend, "peak"), _nested_get(backend, "audioPeak"))
+    rms = _first_present(_nested_get(capture, "rms"), _nested_get(backend, "rms"), _nested_get(backend, "audioRms"))
     summary = {
         "recordId": record.get("recordId"),
         "receivedAtMs": record.get("receivedAtMs"),
@@ -1285,7 +1291,11 @@ def _hardware_sweep_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "wearableRouteActive": _nested_get(route, "wearableActiveAtCapture"),
         "captureDurationMs": _nested_get(capture, "actualMs"),
         "capturedBytes": _nested_get(capture, "capturedBytes"),
+        "backendBytesReceived": _nested_get(backend, "bytesReceived"),
         "expectedBytesForDuration": _nested_get(capture, "expectedBytes"),
+        "audioFormat": _first_present(_nested_get(capture, "audioFormat"), _nested_get(backend, "audioFormat"), SUPPORTED_FORMAT),
+        "backendPeak": peak_amplitude,
+        "backendRms": rms,
         "clientStopReason": _nested_get(capture, "stopReason"),
         "transcriptSource": _nested_get(verdict, "transcriptSource"),
         "sttProvider": _nested_get(verdict, "sttProvider"),
@@ -1302,9 +1312,71 @@ def _hardware_sweep_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "assistantTextLength": _nested_get(verdict, "assistantTextLength"),
         "transcriptLength": _nested_get(verdict, "transcriptLength"),
         "runDisposition": _hardware_sweep_disposition(payload, scenario=scenario, provider=provider, pass1_ready=pass1_ready, pass1_status=pass1_status),
+        "realtimeVadDiagnostic": _realtime_vad_diagnostic(scenario=scenario, peak=peak_amplitude),
         "privacy": "summary-only; raw audio and spoken text omitted",
     }
     return {key: value for key, value in summary.items() if value is not None}
+
+
+def _realtime_vad_diagnostic(*, scenario: Any, peak: Any) -> dict[str, Any]:
+    """Compare the realtime energy VAD threshold against one sweep row without making it authoritative."""
+    peak_value = _int_or_none(peak)
+    detected = None if peak_value is None else peak_value >= REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD
+    scenario_text = str(scenario or "unknown").lower()
+    reject_scenario = scenario_text in {"silence", "clipped", "clipped/too-short", "too-short"}
+    if detected is None:
+        comparison = "unknown-no-peak"
+    elif reject_scenario and detected:
+        comparison = "diagnostic-would-trigger-on-reject-scenario"
+    elif reject_scenario:
+        comparison = "diagnostic-stays-quiet-on-reject-scenario"
+    elif detected:
+        comparison = "diagnostic-detects-speech-threshold"
+    else:
+        comparison = "diagnostic-misses-speech-threshold"
+    return {
+        "diagnosticOnly": True,
+        "provider": REALTIME_VAD_DIAGNOSTIC_PROVIDER,
+        "peakThreshold": REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD,
+        "endSilenceChunks": REALTIME_VAD_DIAGNOSTIC_END_SILENCE_CHUNKS,
+        "observedPeak": peak_value,
+        "wouldDetectSpeech": detected,
+        "comparison": comparison,
+        "policy": "compare against sweep evidence only; do not use this VAD result as default commit policy or hardware proof",
+    }
+
+
+def _realtime_vad_sweep_comparison(summaries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    diagnostics = [_mapping(summary.get("realtimeVadDiagnostic")) for summary in summaries]
+    known = [diagnostic for diagnostic in diagnostics if diagnostic.get("wouldDetectSpeech") is not None]
+    trigger_count = sum(1 for diagnostic in known if diagnostic.get("wouldDetectSpeech") is True)
+    quiet_count = sum(1 for diagnostic in known if diagnostic.get("wouldDetectSpeech") is False)
+    reject_trigger_count = sum(
+        1
+        for diagnostic in known
+        if diagnostic.get("comparison") == "diagnostic-would-trigger-on-reject-scenario"
+    )
+    speech_miss_count = sum(
+        1
+        for diagnostic in known
+        if diagnostic.get("comparison") == "diagnostic-misses-speech-threshold"
+    )
+    recommendation = "keep-diagnostic"
+    if known and reject_trigger_count == 0 and speech_miss_count == 0:
+        recommendation = "keep-diagnostic-hardware-comparison-clean"
+    return {
+        "diagnosticOnly": True,
+        "provider": REALTIME_VAD_DIAGNOSTIC_PROVIDER,
+        "peakThreshold": REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD,
+        "endSilenceChunks": REALTIME_VAD_DIAGNOSTIC_END_SILENCE_CHUNKS,
+        "runsCompared": len(known),
+        "wouldDetectSpeechCount": trigger_count,
+        "wouldStayQuietCount": quiet_count,
+        "rejectScenarioTriggerCount": reject_trigger_count,
+        "speechScenarioMissCount": speech_miss_count,
+        "recommendation": recommendation,
+        "policy": "non-authoritative comparison; /voice-turn push-to-talk and pass1 evidence remain the hardware gate",
+    }
 
 
 def _hardware_sweep_disposition(payload: Mapping[str, Any], *, scenario: str, provider: Any, pass1_ready: Any, pass1_status: Any) -> str:
@@ -1361,6 +1433,13 @@ def _first_present(*values: Any) -> Any:
         if value is not None:
             return value
     return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:

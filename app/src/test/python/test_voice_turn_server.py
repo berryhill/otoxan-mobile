@@ -114,7 +114,7 @@ class VoiceTurnServerTest(unittest.TestCase):
                     "outputType": "TYPE_BLE_HEADSET",
                     "wearableActiveAtCapture": True,
                 },
-                "capture": {"capturedBytes": 32000, "expectedBytes": 32000, "actualMs": 1000, "stopReason": "duration_elapsed"},
+                "capture": {"capturedBytes": 32000, "expectedBytes": 32000, "actualMs": 1000, "stopReason": "duration_elapsed", "peakAmplitude": 4815},
                 "backend": {"roundTripMs": 1200, "sttLatencyMs": 200},
                 "perceivedLatency": {"ttfaMs": 1000, "postCaptureAckDelayMs": 80},
                 "playback": {"kind": "android-tts", "totalMs": 400},
@@ -143,13 +143,65 @@ class VoiceTurnServerTest(unittest.TestCase):
             self.assertEqual("mobile-fast", summary["backendProviderObserved"])
             self.assertEqual("Ray-Ban Meta", summary["inputName"])
             self.assertEqual(32000, summary["capturedBytes"])
+            self.assertEqual(4815, summary["backendPeak"])
+            self.assertEqual("pcm_s16le_16khz_mono", summary["audioFormat"])
             self.assertEqual("pass", summary["canonicalTimingTargetResult"])
             self.assertEqual("accept", summary["runDisposition"])
+            self.assertTrue(summary["realtimeVadDiagnostic"]["diagnosticOnly"])
+            self.assertEqual("energy-vad-phase3", summary["realtimeVadDiagnostic"]["provider"])
+            self.assertEqual(700, summary["realtimeVadDiagnostic"]["peakThreshold"])
+            self.assertTrue(summary["realtimeVadDiagnostic"]["wouldDetectSpeech"])
+            self.assertEqual("diagnostic-detects-speech-threshold", summary["realtimeVadDiagnostic"]["comparison"])
+            self.assertTrue(result["realtimeVadComparison"]["diagnosticOnly"])
+            self.assertEqual(1, result["realtimeVadComparison"]["runsCompared"])
+            self.assertEqual("keep-diagnostic-hardware-comparison-clean", result["realtimeVadComparison"]["recommendation"])
             self.assertNotIn("transcript", summary)
             self.assertNotIn("assistantText", summary)
             serialized = json.dumps(result)
             self.assertNotIn("do not persist", serialized)
             self.assertNotIn("\"pcm16Mono16kBase64\"", serialized)
+        finally:
+            Path(metrics_path).unlink(missing_ok=True)
+
+    def test_realtime_vad_comparison_flags_reject_scenario_triggers_as_diagnostic_only(self):
+        with tempfile.NamedTemporaryFile(delete=False) as fh:
+            metrics_path = fh.name
+        try:
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = metrics_path
+            packet = {
+                "type": "otoxan_mobile_voice_turn_metrics",
+                "schemaVersion": 1,
+                "sweep": {"scenario": "silence"},
+                "turn": {"turnId": "turn-silence", "success": True, "stage": "complete"},
+                "route": {
+                    "inputName": "Ray-Ban Meta",
+                    "inputType": "TYPE_BLUETOOTH_SCO",
+                    "outputName": "Ray-Ban Meta",
+                    "outputType": "TYPE_BLUETOOTH_SCO",
+                    "wearableActiveAtCapture": True,
+                },
+                "capture": {"capturedBytes": 32000, "expectedBytes": 32000, "actualMs": 1000, "stopReason": "duration_elapsed", "peakAmplitude": 900},
+                "backend": {"roundTripMs": 1200},
+                "verdict": {
+                    "provider": "mobile-fast",
+                    "transcriptSource": "hermes-stt",
+                    "sttProvider": "hermes-stt",
+                    "sttStatus": "empty",
+                    "pass1Ready": False,
+                    "pass1Status": "stt-empty",
+                },
+            }
+            voice_turn_server.handle_voice_turn_metrics(packet, remote_addr="phone")
+
+            result = voice_turn_server.recent_hardware_sweep_summaries(limit=5)
+
+            summary = result["summaries"][0]
+            self.assertEqual("expected-reject", summary["runDisposition"])
+            self.assertEqual("diagnostic-would-trigger-on-reject-scenario", summary["realtimeVadDiagnostic"]["comparison"])
+            self.assertTrue(summary["realtimeVadDiagnostic"]["diagnosticOnly"])
+            self.assertEqual(1, result["realtimeVadComparison"]["rejectScenarioTriggerCount"])
+            self.assertEqual("keep-diagnostic", result["realtimeVadComparison"]["recommendation"])
+            self.assertIn("non-authoritative", result["realtimeVadComparison"]["policy"])
         finally:
             Path(metrics_path).unlink(missing_ok=True)
 

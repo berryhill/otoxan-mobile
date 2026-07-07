@@ -681,6 +681,7 @@ class OtoxanViewModel(
             routeReleaseMs = proof.routeReleaseMs,
             turnTotalMs = proof.turnTotalMs,
             backendRoundTripMs = proof.backendRoundTripMs,
+            backendBytesReceived = result.bytesReceived,
             httpStatusCode = result.httpStatusCode,
             requestBytes = result.requestBytes,
             responseBytes = result.responseBytes,

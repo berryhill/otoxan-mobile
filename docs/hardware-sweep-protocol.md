@@ -44,6 +44,8 @@ Sprint 1 does not reopen the Pass 1 closure claim. It checks whether that loop s
 - Do not tune thresholds during the run. Record evidence first; tune only in a separate change with before/after hardware evidence.
 - Keep realtime/VAD diagnostic-only. It can be compared against the same run data, but it must not become the default commit policy from this sweep alone.
 
+Realtime/VAD diagnostic comparison is now exposed in the summary endpoint rather than as a gate. `GET /hardware-sweep/recent?limit=20` returns per-run `realtimeVadDiagnostic` fields and a top-level `realtimeVadComparison`. These fields compare the diagnostic `energy-vad-phase3` threshold (`peakThreshold=700`, `endSilenceChunks=3`) against the same sweep peaks, but `diagnosticOnly=true` means the result cannot promote realtime/VAD into default turn commit policy or replace `/voice-turn` hardware proof.
+
 ## Prerequisites
 
 Hardware:
@@ -239,6 +241,7 @@ Do not change thresholds unless the run sheet supports it.
 - Do not lower below noise/silence evidence. Silence runs must remain `expected-reject`.
 - Do not raise thresholds based only on strong normal-speech peaks; quiet speech must remain protected.
 - Treat realtime VAD `700` as diagnostic until it has matching hardware evidence across the same scenarios.
+- Read `realtimeVadComparison` only as a comparison aid. `rejectScenarioTriggerCount > 0` or `speechScenarioMissCount > 0` is a realtime/VAD follow-up signal, not a reason to alter the push-to-talk gate inside the same sweep.
 
 ## Closeout criteria
 
