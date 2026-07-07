@@ -101,6 +101,84 @@ class OtoxanUiStateTest {
     }
 
     @Test
+    fun diagnosticTimelinesSeparateRouteSttAndPlaybackProofSignals() {
+        val state = OtoxanUiState(
+            selectedInputName = "Ray-Ban Meta",
+            selectedInputType = "TYPE_BLUETOOTH_SCO",
+            routeSelectStartMs = 0,
+            routeSelectMs = 90,
+            captureStartMs = 90,
+            captureReadMs = 1210,
+            capturedBytes = 39000,
+            expectedCaptureBytes = 38400,
+            capturePeakAmplitude = 6200,
+            captureUsable = true,
+            speechFirstDetectedMs = 240,
+            speechLastDetectedMs = 980,
+            routeReleaseStartMs = 1340,
+            routeReleaseMs = 360,
+            routeReleaseEndMs = 1700,
+            endpointDispatchMs = 1300,
+            requestBuildMs = 8,
+            uploadMs = 40,
+            responseCodeWaitMs = 640,
+            responseReadMs = 30,
+            requestBytes = 39000,
+            httpStatusCode = 200,
+            transportKind = "http_voice_turn",
+            sttProvider = "moonshine-local",
+            sttStatus = "success",
+            sttLatencyMs = 820,
+            transcriptSource = "moonshine-local",
+            sttBudgetRemainingMs = 500,
+            primarySttProvider = "moonshine-local",
+            primarySttStatus = "success",
+            primarySttMs = 820,
+            backendResponseReadyMs = 2010,
+            backendRoundTripMs = 710,
+            backendTotalMs = 650,
+            transcriptTotalMs = 835,
+            xanderSessionMs = 1200,
+            responseBuildMs = 25,
+            localAckKind = "earcon_while_route_active",
+            localAckStartMs = 1315,
+            localAckTotalMs = 115,
+            postCaptureAckDelayMs = 15,
+            ttfaBackendWaitAfterReleaseMs = 310,
+            assistantPlaybackStartMs = 2020,
+            playbackKind = "backend_pcm",
+            playbackTotalMs = 700,
+            ttsBytes = 16000,
+            ttfaMs = 1315
+        )
+
+        val route = state.routeDiagnosticTimeline
+        val stt = state.sttDiagnosticTimeline
+        val playback = state.playbackDiagnosticTimeline
+
+        assertEquals("Route/capture timeline", route.title)
+        assertEquals("t+0ms · 90ms", route.items[0].timingText)
+        assertEquals("t+90ms · 1210ms", route.items[1].timingText)
+        assertEquals("t+240ms · 740ms", route.items[2].timingText)
+        assertTrue(route.summaryText.contains("4/4 timed"))
+        assertTrue(route.evidenceClass.contains("hardware proof only when paired with real Ray-Ban route"))
+
+        assertEquals("STT/backend timeline", stt.title)
+        assertEquals("t+1300ms · 8ms", stt.items[0].timingText)
+        assertEquals("t+1300ms · 710ms", stt.items[1].timingText)
+        assertEquals("820ms", stt.items[2].timingText)
+        assertEquals("moonshine-local/success; source=moonshine-local; budget=500ms", stt.items[2].detail)
+        assertTrue(stt.evidenceClass.contains("not hardware proof"))
+
+        assertEquals("Playback/TTFA timeline", playback.title)
+        assertEquals("t+1315ms · 115ms", playback.items[0].timingText)
+        assertEquals("t+1700ms · 310ms", playback.items[1].timingText)
+        assertEquals("t+2020ms", playback.items[2].timingText)
+        assertEquals("t+2020ms · 700ms", playback.items[3].timingText)
+        assertTrue(playback.evidenceClass.contains("operator-observed device playback"))
+    }
+
+    @Test
     fun timingAcceptanceSummary_defaultsToUnknownWhenTimingIsMissing() {
         val summary = OtoxanUiState().timingAcceptanceSummary
 
