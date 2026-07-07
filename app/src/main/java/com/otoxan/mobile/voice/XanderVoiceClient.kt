@@ -116,6 +116,10 @@ data class VoiceTurnTelemetryPacket(
     val streamLatestPartialTranscriptLength: Int? = null,
     val streamFinalTranscriptObserved: Boolean? = null,
     val streamFinalTranscriptLength: Int? = null,
+    val streamAssistantPrepStarted: Boolean? = null,
+    val streamBargeInDetected: Boolean? = null,
+    val streamResponseCancelled: Boolean? = null,
+    val streamCancelReason: String? = null,
     val backendTotalMs: Int? = null,
     val decodePcmMs: Int? = null,
     val audioStatsMs: Int? = null,
@@ -213,6 +217,7 @@ data class VoiceTurnResult(
     val streamLatestPartialTranscriptLength: Int? = null,
     val streamFinalTranscriptObserved: Boolean? = null,
     val streamFinalTranscriptLength: Int? = null,
+    val streamAssistantPrepStarted: Boolean? = null,
     val streamBargeInDetected: Boolean? = null,
     val streamResponseCancelled: Boolean? = null,
     val streamCancelReason: String? = null
@@ -512,6 +517,11 @@ class HttpXanderVoiceClient(
                 "streamLatestPartialTranscriptLength":${packet.streamLatestPartialTranscriptLength.jsonValue()},
                 "streamFinalTranscriptObserved":${packet.streamFinalTranscriptObserved.jsonValue()},
                 "streamFinalTranscriptLength":${packet.streamFinalTranscriptLength.jsonValue()},
+                "assistantPrepStarted":${packet.streamAssistantPrepStarted.jsonValue()},
+                "bargeInDetected":${packet.streamBargeInDetected.jsonValue()},
+                "responseCancelled":${packet.streamResponseCancelled.jsonValue()},
+                "cancelReason":${packet.streamCancelReason.jsonValue()},
+                "speculativeBargeInEvidenceClass":"candidate_readiness_control_readback_only_not_hardware_proof",
                 "evidenceClass":"diagnostic_transport_only_not_hardware_proof"
               },
               "backend":{
@@ -640,6 +650,7 @@ class HttpStreamingVoiceClient(
                 streamLatestPartialTranscriptLength = streamTelemetry.latestPartialTranscriptLength,
                 streamFinalTranscriptObserved = streamTelemetry.finalTranscriptObserved,
                 streamFinalTranscriptLength = streamTelemetry.finalTranscriptLength,
+                streamAssistantPrepStarted = streamTelemetry.assistantPrepStarted,
                 streamBargeInDetected = streamTelemetry.bargeInDetected,
                 streamResponseCancelled = streamTelemetry.responseCancelled,
                 streamCancelReason = streamTelemetry.cancelReason
@@ -920,6 +931,7 @@ private fun parseVoiceTurnResult(
     streamLatestPartialTranscriptLength: Int? = null,
     streamFinalTranscriptObserved: Boolean? = null,
     streamFinalTranscriptLength: Int? = null,
+    streamAssistantPrepStarted: Boolean? = null,
     streamBargeInDetected: Boolean? = null,
     streamResponseCancelled: Boolean? = null,
     streamCancelReason: String? = null
@@ -979,6 +991,7 @@ private fun parseVoiceTurnResult(
         streamLatestPartialTranscriptLength = streamLatestPartialTranscriptLength,
         streamFinalTranscriptObserved = streamFinalTranscriptObserved,
         streamFinalTranscriptLength = streamFinalTranscriptLength,
+        streamAssistantPrepStarted = streamAssistantPrepStarted,
         streamBargeInDetected = streamBargeInDetected,
         streamResponseCancelled = streamResponseCancelled,
         streamCancelReason = streamCancelReason
@@ -996,6 +1009,7 @@ private data class StreamVoiceTurnTelemetry(
     val latestPartialTranscriptLength: Int?,
     val finalTranscriptObserved: Boolean,
     val finalTranscriptLength: Int?,
+    val assistantPrepStarted: Boolean,
     val bargeInDetected: Boolean,
     val responseCancelled: Boolean,
     val cancelReason: String?
@@ -1010,6 +1024,7 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
     var latestPartialTranscriptLength: Int? = null
     var finalTranscriptObserved = false
     var finalTranscriptLength: Int? = null
+    var assistantPrepStarted = false
     var bargeInDetected = false
     var responseCancelled = false
     var cancelReason: String? = null
@@ -1034,6 +1049,9 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
             if (type == "stt.final") {
                 finalTranscriptObserved = true
                 finalTranscriptLength = event.transcriptStateLength()
+            }
+            if (type == "assistant.prep.started") {
+                assistantPrepStarted = true
             }
             if (type == "barge_in.detected") {
                 bargeInDetected = true
@@ -1065,6 +1083,7 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
         latestPartialTranscriptLength = latestPartialTranscriptLength,
         finalTranscriptObserved = finalTranscriptObserved,
         finalTranscriptLength = finalTranscriptLength,
+        assistantPrepStarted = assistantPrepStarted,
         bargeInDetected = bargeInDetected,
         responseCancelled = responseCancelled,
         cancelReason = cancelReason

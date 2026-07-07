@@ -164,17 +164,19 @@ class OtoxanUiStateTest {
     fun phoneTelemetryEvidenceClasses_keepReliabilityLatencyAndBuildEvidenceSeparate() {
         val classes = OtoxanUiState().phoneTelemetryEvidenceClasses
 
-        assertEquals(6, classes.size)
+        assertEquals(7, classes.size)
         assertEquals("Hardware gate", classes[0].label)
         assertEquals(EvidenceClassState.NeedsEvidence, classes[0].state)
         assertEquals("Capture reliability", classes[1].label)
         assertEquals("Backend turn reliability", classes[2].label)
         assertEquals("Stream transport telemetry", classes[3].label)
         assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[3].state)
-        assertEquals("Latency scorecard", classes[4].label)
-        assertEquals(EvidenceClassState.DiagnosticOnly, classes[4].state)
-        assertEquals("Source/build proof", classes[5].label)
-        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[5].state)
+        assertEquals("Speculative prep/barge-in control", classes[4].label)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[4].state)
+        assertEquals("Latency scorecard", classes[5].label)
+        assertEquals(EvidenceClassState.DiagnosticOnly, classes[5].state)
+        assertEquals("Source/build proof", classes[6].label)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[6].state)
     }
 
     @Test
@@ -204,6 +206,29 @@ class OtoxanUiStateTest {
         assertEquals("Stream transport telemetry", evidence.label)
         assertEquals(EvidenceClassState.DiagnosticOnly, evidence.state)
         assertTrue(evidence.detail.contains("not Ray-Ban hardware or real-speech success"))
+        assertEquals(EvidenceClassState.NeedsEvidence, state.phoneTelemetryEvidenceClasses[0].state)
+    }
+
+    @Test
+    fun speculativeBargeInSummary_surfacesControlStateWithoutHardwareClaim() {
+        val state = OtoxanUiState(
+            streamAssistantPrepStarted = true,
+            streamBargeInDetected = true,
+            streamResponseCancelled = true,
+            streamCancelReason = "user_barge_in",
+            pass1Ready = false,
+            pass1Status = "candidate-readiness-only"
+        )
+
+        val summary = state.speculativeBargeInSummary
+        val evidence = state.phoneTelemetryEvidenceClasses[4]
+
+        assertEquals("prep=true; bargeIn=true; cancelled=true; reason=user_barge_in", summary.stateText)
+        assertEquals("candidate readiness/control readback only — not hardware proof", summary.evidenceClass)
+        assertTrue(summary.policyText.contains("never starts a new assistant turn without explicit commit"))
+        assertEquals("Speculative prep/barge-in control", evidence.label)
+        assertEquals(EvidenceClassState.DiagnosticOnly, evidence.state)
+        assertTrue(evidence.detail.contains("not hardware proof"))
         assertEquals(EvidenceClassState.NeedsEvidence, state.phoneTelemetryEvidenceClasses[0].state)
     }
 
@@ -265,7 +290,8 @@ class OtoxanUiStateTest {
         assertEquals(EvidenceClassState.Proven, classes[1].state)
         assertEquals(EvidenceClassState.Proven, classes[2].state)
         assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[3].state)
-        assertEquals(EvidenceClassState.Proven, classes[4].state)
-        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[5].state)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[4].state)
+        assertEquals(EvidenceClassState.Proven, classes[5].state)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[6].state)
     }
 }

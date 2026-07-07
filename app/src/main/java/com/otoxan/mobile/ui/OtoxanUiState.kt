@@ -96,6 +96,17 @@ data class StreamTelemetrySummary(
     val transcriptStateText: String = "partial=${partialTranscriptCount?.toString() ?: "unknown"} latestChars=${latestPartialTranscriptLength?.toString() ?: "unknown"}; final=${finalTranscriptObserved?.toString() ?: "unknown"} finalChars=${finalTranscriptLength?.toString() ?: "unknown"}"
 }
 
+data class SpeculativeBargeInSummary(
+    val assistantPrepObserved: Boolean?,
+    val bargeInDetected: Boolean?,
+    val responseCancelled: Boolean?,
+    val cancelReason: String?
+) {
+    val stateText: String = "prep=${assistantPrepObserved?.toString() ?: "unknown"}; bargeIn=${bargeInDetected?.toString() ?: "unknown"}; cancelled=${responseCancelled?.toString() ?: "unknown"}; reason=${cancelReason ?: "unknown"}"
+    val evidenceClass: String = "candidate readiness/control readback only — not hardware proof"
+    val policyText: String = "Speculative prep is a prewarm marker only; barge-in may cancel playback/prep, but it never starts a new assistant turn without explicit commit."
+}
+
 data class SttProviderFallbackSummary(
     val selectedProvider: String,
     val selectedStatus: String,
@@ -191,6 +202,10 @@ data class OtoxanUiState(
     val streamLatestPartialTranscriptLength: Int? = null,
     val streamFinalTranscriptObserved: Boolean? = null,
     val streamFinalTranscriptLength: Int? = null,
+    val streamAssistantPrepStarted: Boolean? = null,
+    val streamBargeInDetected: Boolean? = null,
+    val streamResponseCancelled: Boolean? = null,
+    val streamCancelReason: String? = null,
     val backendTotalMs: Int? = null,
     val decodePcmMs: Int? = null,
     val audioStatsMs: Int? = null,
@@ -287,6 +302,14 @@ val OtoxanUiState.streamTelemetrySummary: StreamTelemetrySummary
         finalTranscriptLength = streamFinalTranscriptLength
     )
 
+val OtoxanUiState.speculativeBargeInSummary: SpeculativeBargeInSummary
+    get() = SpeculativeBargeInSummary(
+        assistantPrepObserved = streamAssistantPrepStarted,
+        bargeInDetected = streamBargeInDetected,
+        responseCancelled = streamResponseCancelled,
+        cancelReason = streamCancelReason
+    )
+
 val OtoxanUiState.sttProviderFallbackSummary: SttProviderFallbackSummary
     get() = SttProviderFallbackSummary(
         selectedProvider = sttProvider ?: "unknown",
@@ -303,6 +326,7 @@ val OtoxanUiState.phoneTelemetryEvidenceClasses: List<PhoneTelemetryEvidenceClas
         captureReliabilityEvidenceClass,
         backendReliabilityEvidenceClass,
         streamTelemetryEvidenceClass,
+        speculativeBargeInEvidenceClass,
         latencyScorecardEvidenceClass,
         PhoneTelemetryEvidenceClass(
             label = "Source/build proof",
@@ -352,6 +376,17 @@ private val OtoxanUiState.streamTelemetryEvidenceClass: PhoneTelemetryEvidenceCl
             detail = "Transport readback only: ${streamTelemetrySummary.statusText}; ${streamTelemetrySummary.protocolText}; events=${streamTelemetrySummary.eventsText}. This can prove stream plumbing, not Ray-Ban hardware or real-speech success."
         )
     }
+
+private val OtoxanUiState.speculativeBargeInEvidenceClass: PhoneTelemetryEvidenceClass
+    get() = PhoneTelemetryEvidenceClass(
+        label = "Speculative prep/barge-in control",
+        state = if (streamAssistantPrepStarted == true || streamBargeInDetected == true || streamResponseCancelled == true) {
+            EvidenceClassState.DiagnosticOnly
+        } else {
+            EvidenceClassState.NotRuntimeEvidence
+        },
+        detail = "${speculativeBargeInSummary.stateText}. ${speculativeBargeInSummary.policyText} Evidence class: ${speculativeBargeInSummary.evidenceClass}."
+    )
 
 private val OtoxanUiState.latencyScorecardEvidenceClass: PhoneTelemetryEvidenceClass
     get() = PhoneTelemetryEvidenceClass(
