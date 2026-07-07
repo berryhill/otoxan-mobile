@@ -56,6 +56,8 @@ The backend gate fields are first-class response fields in `tools/voice_turn_ser
 - `audioStats`
 - latency/timing fields
 
+Telemetry packets also carry the canonical timing contract `otoxan-mobile-canonical-timing` v1. All client-side elapsed fields are measured from Android `System.nanoTime()` turn start and reported as milliseconds. The baseline readback targets are `ttfaMs <= 1500`, `postCaptureAckDelayMs <= 250`, `backendRoundTripMs <= 4000`, and `turnTotalMs <= 8000`. These targets are tuning baselines, not hardware-gate pass/fail proof by themselves.
+
 The Android proof card displays the same gate fields:
 
 - `Pass 1: REAL SPEECH PROVEN` only when `pass1Ready == true`
@@ -102,6 +104,7 @@ The codebase does not store screenshots, raw logcat, or raw audio. That is inten
 
 - The gate can be over-claimed if build proof is confused with hardware proof.
 - STT latency and voice quality still vary.
+- Latency baselines can drift unless every run reports the same canonical timing contract and target fields.
 - Ray-Ban SCO/communication routing can regress across Android or Meta firmware updates.
 - Very quiet captures can still produce weak turns.
 
@@ -115,7 +118,7 @@ Use this packet as the closure/readback checklist for future hardware sessions:
 4. Tap `Check audio route`; verify Ray-Ban route evidence.
 5. Run a single semantic phrase turn, for example: `Xander, say pineapple if you heard me.`
 6. Confirm the phone proof card reports `REAL SPEECH PROVEN`.
-7. Record a text summary of the proof card fields and route evidence.
+7. Record a text summary of the proof card fields, route evidence, and canonical timing readback: `ttfaMs`, `postCaptureAckDelayMs`, `backendRoundTripMs`, `turnTotalMs`, and whether each beat the v1 baseline target.
 8. Treat proof/debug/fallback turns as failed closure, even if the rest of the app works.
 
 ## Verification

@@ -8,6 +8,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
+const val VOICE_TURN_TIMING_CONTRACT_NAME = "otoxan-mobile-canonical-timing"
+const val VOICE_TURN_TIMING_CONTRACT_VERSION = 1
+const val VOICE_TURN_TIMING_CONTRACT_CLOCK = "turn_elapsed_ms_from_android_monotonic_start"
+const val VOICE_TURN_TTFA_TARGET_MS = 1_500L
+const val VOICE_TURN_ACK_GAP_TARGET_MS = 250L
+const val VOICE_TURN_TOTAL_TARGET_MS = 8_000L
+const val VOICE_TURN_BACKEND_TARGET_MS = 4_000L
+
 interface XanderVoiceClient {
     suspend fun sendVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult
     suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult
@@ -402,6 +410,24 @@ class HttpXanderVoiceClient(
                 "appId":"com.otoxan.mobile",
                 "buildType":"${com.otoxan.mobile.BuildConfig.BUILD_TYPE.jsonEscape()}",
                 "voiceEndpoint":"${voiceTurnEndpointUrl.jsonEscape()}"
+              },
+              "timingContract":{
+                "name":"$VOICE_TURN_TIMING_CONTRACT_NAME",
+                "version":$VOICE_TURN_TIMING_CONTRACT_VERSION,
+                "clock":"$VOICE_TURN_TIMING_CONTRACT_CLOCK",
+                "anchors":{
+                  "turnStartMs":0,
+                  "ttfaMs":"first audible feedback after turn start; local ack preferred over assistant playback",
+                  "postCaptureAckDelayMs":"local acknowledgement start minus routeSelectMs and captureReadMs",
+                  "backendResponseReadyMs":"backend response ready elapsed from turn start",
+                  "assistantPlaybackStartMs":"assistant audio playback start elapsed from turn start"
+                },
+                "targets":{
+                  "ttfaMs":$VOICE_TURN_TTFA_TARGET_MS,
+                  "postCaptureAckDelayMs":$VOICE_TURN_ACK_GAP_TARGET_MS,
+                  "turnTotalMs":$VOICE_TURN_TOTAL_TARGET_MS,
+                  "backendRoundTripMs":$VOICE_TURN_BACKEND_TARGET_MS
+                }
               },
               "turn":{
                 "turnId":"${packet.turnId.jsonEscape()}",

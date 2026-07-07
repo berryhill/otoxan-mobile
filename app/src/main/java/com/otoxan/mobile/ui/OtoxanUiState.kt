@@ -1,5 +1,8 @@
 package com.otoxan.mobile.ui
 
+import com.otoxan.mobile.voice.VOICE_TURN_ACK_GAP_TARGET_MS
+import com.otoxan.mobile.voice.VOICE_TURN_TTFA_TARGET_MS
+
 data class TelemetryPassSummary(
     val turnId: String,
     val success: Boolean,
@@ -111,12 +114,12 @@ val OtoxanUiState.latencyCardMetrics: List<LatencyCardMetric>
         LatencyCardMetric(
             label = "Ack gap",
             value = postCaptureAckDelayMs.toLatencyMsText(),
-            detail = "after capture · $localAckKind"
+            detail = "target ${VOICE_TURN_ACK_GAP_TARGET_MS}ms · $localAckKind"
         ),
         LatencyCardMetric(
             label = "TTFA",
             value = ttfaMs.toLatencyMsText(),
-            detail = firstAudioLatencyDetail
+            detail = "target ${VOICE_TURN_TTFA_TARGET_MS}ms · $firstAudioLatencyDetail"
         )
     )
 

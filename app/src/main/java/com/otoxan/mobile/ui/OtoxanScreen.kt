@@ -31,6 +31,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.otoxan.mobile.voice.VOICE_TURN_ACK_GAP_TARGET_MS
+import com.otoxan.mobile.voice.VOICE_TURN_BACKEND_TARGET_MS
+import com.otoxan.mobile.voice.VOICE_TURN_TIMING_CONTRACT_NAME
+import com.otoxan.mobile.voice.VOICE_TURN_TIMING_CONTRACT_VERSION
+import com.otoxan.mobile.voice.VOICE_TURN_TOTAL_TARGET_MS
+import com.otoxan.mobile.voice.VOICE_TURN_TTFA_TARGET_MS
 
 @Composable
 fun OtoxanScreen(
@@ -266,6 +272,10 @@ private fun LatencyCard(state: OtoxanUiState) {
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Latency", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Contract: $VOICE_TURN_TIMING_CONTRACT_NAME v$VOICE_TURN_TIMING_CONTRACT_VERSION · targets TTFA=${VOICE_TURN_TTFA_TARGET_MS}ms, ack=${VOICE_TURN_ACK_GAP_TARGET_MS}ms, backend=${VOICE_TURN_BACKEND_TARGET_MS}ms, total=${VOICE_TURN_TOTAL_TARGET_MS}ms",
+                style = MaterialTheme.typography.bodySmall
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -312,10 +322,10 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Telemetry dashboard", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("Latest pass", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            TelemetryBar("TTFA", state.ttfaMs, targetMs = 1_500L)
-            TelemetryBar("Ack delay", state.postCaptureAckDelayMs, targetMs = 250L)
-            TelemetryBar("Total", state.turnTotalMs, targetMs = 8_000L)
-            TelemetryBar("Backend", state.backendRoundTripMs, targetMs = 4_000L)
+            TelemetryBar("TTFA", state.ttfaMs, targetMs = VOICE_TURN_TTFA_TARGET_MS)
+            TelemetryBar("Ack delay", state.postCaptureAckDelayMs, targetMs = VOICE_TURN_ACK_GAP_TARGET_MS)
+            TelemetryBar("Total", state.turnTotalMs, targetMs = VOICE_TURN_TOTAL_TARGET_MS)
+            TelemetryBar("Backend", state.backendRoundTripMs, targetMs = VOICE_TURN_BACKEND_TARGET_MS)
             TelemetryBar("STT", state.sttLatencyMs?.toLong(), targetMs = 1_500L)
             TelemetryBar("Xander", state.xanderSessionMs?.toLong(), targetMs = 2_500L)
             TelemetryBar("Playback", state.playbackTotalMs, targetMs = 1_500L)

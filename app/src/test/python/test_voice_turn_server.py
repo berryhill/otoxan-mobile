@@ -741,6 +741,13 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertNotIn("transcript", stored["payload"]["verdict"])
         self.assertNotIn("assistantText", stored["payload"]["verdict"])
         self.assertEqual(17, stored["payload"]["perceivedLatency"]["postCaptureAckDelayMs"])
+        self.assertEqual("otoxan-mobile-canonical-timing", stored["payload"]["timingContract"]["name"])
+        self.assertEqual(1, stored["payload"]["timingContract"]["version"])
+        self.assertEqual("turn_elapsed_ms_from_android_monotonic_start", stored["payload"]["timingContract"]["clock"])
+        self.assertEqual(1500, stored["payload"]["timingContract"]["targets"]["ttfaMs"])
+        self.assertEqual(250, stored["payload"]["timingContract"]["targets"]["postCaptureAckDelayMs"])
+        self.assertEqual(8000, stored["payload"]["timingContract"]["targets"]["turnTotalMs"])
+        self.assertEqual(4000, stored["payload"]["timingContract"]["targets"]["backendRoundTripMs"])
         self.assertEqual(12, stored["payload"]["verdict"]["transcriptLength"])
 
 

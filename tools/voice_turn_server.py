@@ -85,6 +85,15 @@ HERMES_AGENT_HOME_DEFAULT = "/home/silas/.hermes/hermes-agent"
 HERMES_PYTHON_DEFAULT = "/home/silas/.hermes/hermes-agent/venv/bin/python"
 XANDER_HERMES_HOME_DEFAULT = "/home/silas/.hermes/profiles/xander"
 METRICS_JSONL_DEFAULT = str(Path(__file__).resolve().parent / "data" / "voice_turn_metrics.jsonl")
+TIMING_CONTRACT_NAME = "otoxan-mobile-canonical-timing"
+TIMING_CONTRACT_VERSION = 1
+TIMING_CONTRACT_CLOCK = "turn_elapsed_ms_from_android_monotonic_start"
+TIMING_CONTRACT_TARGETS = {
+    "ttfaMs": 1500,
+    "postCaptureAckDelayMs": 250,
+    "turnTotalMs": 8000,
+    "backendRoundTripMs": 4000,
+}
 _STT_LOCK = threading.Lock()
 _STT_TRANSCRIBE_AUDIO: Callable[[str], Mapping[str, Any]] | None = None
 _STT_FAST_LOCAL_TRANSCRIBE: Callable[[str], Mapping[str, Any]] | None = None
@@ -1231,6 +1240,19 @@ def recent_voice_turn_metrics(limit: int = 20) -> dict[str, Any]:
 def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     # Do not persist raw spoken transcript/assistant text even if a future client accidentally sends it.
     data = json.loads(json.dumps(payload))
+    contract = data.get("timingContract")
+    if not isinstance(contract, dict):
+        data["timingContract"] = _default_timing_contract()
+    else:
+        contract.setdefault("name", TIMING_CONTRACT_NAME)
+        contract.setdefault("version", TIMING_CONTRACT_VERSION)
+        contract.setdefault("clock", TIMING_CONTRACT_CLOCK)
+        targets = contract.get("targets")
+        if not isinstance(targets, dict):
+            contract["targets"] = dict(TIMING_CONTRACT_TARGETS)
+        else:
+            for key, value in TIMING_CONTRACT_TARGETS.items():
+                targets.setdefault(key, value)
     for forbidden in ("transcript", "assistantText", "rawTranscript", "rawAssistantText"):
         data.pop(forbidden, None)
     verdict = data.get("verdict")
@@ -1243,6 +1265,15 @@ def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(breakdown, dict) and breakdown.get("postCaptureDispatchMs") is not None:
             perceived_latency["postCaptureAckDelayMs"] = breakdown.get("postCaptureDispatchMs")
     return data
+
+
+def _default_timing_contract() -> dict[str, Any]:
+    return {
+        "name": TIMING_CONTRACT_NAME,
+        "version": TIMING_CONTRACT_VERSION,
+        "clock": TIMING_CONTRACT_CLOCK,
+        "targets": dict(TIMING_CONTRACT_TARGETS),
+    }
 
 
 def _nested_get(value: Mapping[str, Any], *keys: str) -> Any:

@@ -48,8 +48,8 @@ class OtoxanUiStateTest {
 
         assertEquals(3, metrics.size)
         assertEquals(LatencyCardMetric("Capture", "1180ms", "target 1200ms"), metrics[0])
-        assertEquals(LatencyCardMetric("Ack gap", "42ms", "after capture · earcon_while_route_active"), metrics[1])
-        assertEquals(LatencyCardMetric("TTFA", "1222ms", "local ack at 1222ms"), metrics[2])
+        assertEquals(LatencyCardMetric("Ack gap", "42ms", "target 250ms · earcon_while_route_active"), metrics[1])
+        assertEquals(LatencyCardMetric("TTFA", "1222ms", "target 1500ms · local ack at 1222ms"), metrics[2])
     }
 
     @Test
@@ -57,7 +57,7 @@ class OtoxanUiStateTest {
         val metrics = OtoxanUiState().latencyCardMetrics
 
         assertEquals(LatencyCardMetric("Capture", "unknown", "target unknown"), metrics[0])
-        assertEquals(LatencyCardMetric("Ack gap", "unknown", "after capture · none"), metrics[1])
-        assertEquals(LatencyCardMetric("TTFA", "unknown", "first audio unknown"), metrics[2])
+        assertEquals(LatencyCardMetric("Ack gap", "unknown", "target 250ms · none"), metrics[1])
+        assertEquals(LatencyCardMetric("TTFA", "unknown", "target 1500ms · first audio unknown"), metrics[2])
     }
 }
