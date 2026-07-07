@@ -30,8 +30,8 @@ class MicCapture : VoiceCaptureSource {
 
     @SuppressLint("MissingPermission")
     override fun recordPcmUntilSpeechSilence(
-        config: VoiceCaptureConfig = VoiceCaptureConfig(),
-        onChunkPeak: (peak: Int, capturedMillis: Long, speechDetected: Boolean) -> Unit = { _, _, _ -> }
+        config: VoiceCaptureConfig,
+        onChunkPeak: (peak: Int, capturedMillis: Long, speechDetected: Boolean) -> Unit
     ): VoiceCaptureResult {
         validateCaptureConfig(config)
         val maxBytes = expectedPcmBytes(config.maxMillis)

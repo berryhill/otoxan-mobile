@@ -1,6 +1,6 @@
 # Real-device test gate packet — 2026-07-07
 
-Generated: 2026-07-07T16:54:04Z
+Generated: 2026-07-07T21:16:35Z
 
 ## Obligation / domain theme
 
@@ -9,6 +9,7 @@ Prepare Otoxan Mobile for the next real phone + Ray-Ban Meta hardware test witho
 ## Code or system surface
 
 - Android app: `app/src/main/java/com/otoxan/mobile/`
+- Capture source compile boundary: `app/src/main/java/com/otoxan/mobile/voice/MicCapture.kt`
 - Debug APK: `app/build/outputs/apk/debug/app-debug.apk`
 - Repo-local voice-turn backend: `tools/voice_turn_server.py`
 - Smoke client: `tools/smoke_voice_turn.py`
@@ -17,7 +18,7 @@ Prepare Otoxan Mobile for the next real phone + Ray-Ban Meta hardware test witho
 
 ## Current evidence
 
-Source/build verification completed on the task worktree at `2026-07-07T16:54:04Z`:
+Source/build verification completed on the task worktree at `2026-07-07T21:16:35Z`:
 
 ```bash
 JAVA_HOME=/home/silas/.hermes/toolchains/jdk-17 \
@@ -25,12 +26,12 @@ ANDROID_HOME=/home/silas/.hermes/toolchains/android-sdk \
 make test-all
 ```
 
-Result: pass.
+Result: pass after fixing the Kotlin override boundary in `MicCapture.recordPcmUntilSpeechSilence`; Kotlin implementations cannot redeclare default parameter values already defined on the `VoiceCaptureSource` interface.
 
 Covered checks:
 
 - `./gradlew :app:testDebugUnitTest`
-- `python -m unittest app/src/test/python/test_voice_turn_server.py -v` — 66 tests passed.
+- `python -m unittest app/src/test/python/test_voice_turn_server.py -v` — 67 tests passed.
 - `python -m unittest app/src/test/python/test_realtime_voice_server.py -v` — 5 tests passed.
 - `python -m unittest app/src/test/python/test_moonshine_stt_command.py -v` — 4 tests passed.
 - `./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://100.126.0.110:8787/voice-turn"`
@@ -39,8 +40,8 @@ Built APK readback:
 
 ```text
 path=app/build/outputs/apk/debug/app-debug.apk
-size=24625766
-sha256=605ab0475a2e151ac36c407934af144f5fd34188ecf55fbf88fc2738c969fa79
+size=24658534
+sha256=63f9697e32156292491f198829c286957c534f206ad14dc000306c5735fc6179
 endpoint=http://100.126.0.110:8787/voice-turn
 ```
 
@@ -74,9 +75,11 @@ make devices ADB=/home/silas/.hermes/toolchains/android-sdk/platform-tools/adb
 
 Result: adb is available, but no Android device was attached in this worker session.
 
+10-turn real-device assessment gate readback: not run in this worker. `make devices ADB=/home/silas/.hermes/toolchains/android-sdk/platform-tools/adb` returned an empty attached-device list, so no phone + Ray-Ban Meta route, capture, STT, assistant, playback, or latency evidence could be collected. The gate remains open until a physical run records at least 10 explicit push-to-talk turns as required by `docs/hardware-sweep-protocol.md`.
+
 ## Gap
 
-No physical phone + Ray-Ban Meta device was available to this worker. The task therefore prepared the real-device gate and produced a signed build artifact, but did not close the hardware gate.
+No physical phone + Ray-Ban Meta device was available to this worker. The task therefore prepared the real-device gate and produced a signed build artifact, but did not close the hardware gate or the 10-turn assessment gate.
 
 ## Risk
 
@@ -116,7 +119,7 @@ Run the physical test gate on the Android/Ray-Ban workstation:
 5. In Otoxan Mobile, tap `Check audio route`.
 6. Verify route evidence names the Ray-Ban device and reports `TYPE_BLE_HEADSET` or `TYPE_BLUETOOTH_SCO`.
 7. Run one explicit push-to-talk semantic phrase, for example: `Xander, say pineapple if you heard me.`
-8. Record only text evidence from the proof card; do not store raw audio.
+8. Run the 10-turn assessment matrix from `docs/hardware-sweep-protocol.md` and record only text evidence from the proof card; do not store raw audio.
 
 ## Verification
 
