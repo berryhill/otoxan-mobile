@@ -174,6 +174,8 @@ class HttpXanderVoiceClientTest {
                     {"type":"stt.partial","stt":{"provider":"moonshine-stt","status":"listening","transcriptLength":6,"isFinal":false,"transcriptSource":"moonshine-stt","textOmitted":true}}
                     {"type":"stt.final","stt":{"provider":"moonshine-stt","status":"success","transcriptLength":12,"isFinal":true,"transcriptSource":"moonshine-stt","textOmitted":true}}
                     {"type":"stt.completed","stt":{"provider":"moonshine-stt","status":"success","latencyMs":42,"budgetRemainingMs":1458}}
+                    {"type":"barge_in.detected","bargeIn":{"sourceEvent":"vad","cancellationEvent":"response.cancelled","assistantInvokedByBargeIn":false}}
+                    {"type":"response.cancelled","reason":"user_barge_in","assistantInvoked":false,"nextTurnRequires":"input_audio.commit"}
                     {"type":"response.completed","voiceTurn":{"provider":"stream-proof","transcript":"stream hello","assistantText":"stream route confirmed","bytesReceived":4,"transcriptSource":"proof-stream","sttStatus":"success","pass1Ready":true}}
                     {"type":"stream.completed"}
                     """.trimIndent()
@@ -206,8 +208,8 @@ class HttpXanderVoiceClientTest {
         assertEquals(200, result.httpStatusCode)
         assertTrue(result.responseBytes!! > 0)
         assertEquals("http_voice_stream_ndjson", result.transportKind)
-        assertEquals(6, result.streamEventCount)
-        assertEquals(listOf("stream.started", "stt.partial", "stt.final", "stt.completed", "response.completed", "stream.completed"), result.streamEventTypes)
+        assertEquals(8, result.streamEventCount)
+        assertEquals(listOf("stream.started", "stt.partial", "stt.final", "stt.completed", "barge_in.detected", "response.cancelled", "response.completed", "stream.completed"), result.streamEventTypes)
         assertEquals(true, result.streamStarted)
         assertEquals(true, result.streamCompleted)
         assertEquals("otoxan-mobile-backend-stream", result.streamProtocolName)
@@ -216,6 +218,9 @@ class HttpXanderVoiceClientTest {
         assertEquals(6, result.streamLatestPartialTranscriptLength)
         assertEquals(true, result.streamFinalTranscriptObserved)
         assertEquals(12, result.streamFinalTranscriptLength)
+        assertEquals(true, result.streamBargeInDetected)
+        assertEquals(true, result.streamResponseCancelled)
+        assertEquals("user_barge_in", result.streamCancelReason)
     }
 
     @Test

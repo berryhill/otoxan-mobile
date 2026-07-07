@@ -36,6 +36,8 @@ REALTIME_PROTOCOL_VERSION = 1
 REALTIME_WS_ENDPOINT = "/realtime"
 HTTP_FALLBACK_ENDPOINT = "/voice-turn"
 HTTP_FALLBACK_METHOD = "POST"
+BARGE_IN_POLICY_NAME = "otoxan-mobile-barge-in-cancellation"
+BARGE_IN_POLICY_VERSION = 1
 HTTP_FALLBACK_USE_WHEN = (
     "websocket_unavailable",
     "handshake_failed",
@@ -66,6 +68,27 @@ def commit_fallback_semantics() -> dict[str, str]:
         "source": "websocket_commit",
         "canonicalHttpEndpoint": HTTP_FALLBACK_ENDPOINT,
         "semantics": "same_request_response_contract",
+    }
+
+
+def barge_in_policy_descriptor() -> dict[str, Any]:
+    return {
+        "name": BARGE_IN_POLICY_NAME,
+        "version": BARGE_IN_POLICY_VERSION,
+        "trigger": "user_speech_while_assistant_response_active",
+        "detection": {
+            "provider": "energy-vad-phase3",
+            "peakThreshold": VAD_SPEECH_PEAK_THRESHOLD,
+            "requiresExplicitSession": True,
+        },
+        "cancelEvents": ["barge_in.detected", "response.cancelled"],
+        "assistantAuthority": "no_new_assistant_turn_until_input_audio.commit",
+        "privacy": {
+            "explicitSessionOnly": True,
+            "rawAudioPersisted": False,
+            "alwaysOnRecording": False,
+        },
+        "evidenceClass": "diagnostic_stream_control_not_hardware_proof",
     }
 
 
@@ -218,12 +241,15 @@ class RealtimeSession:
                 "session.close",
                 "user.speech.started",
                 "user.speech.ended",
+                "barge_in.detected",
+                "response.cancelled",
             ],
             vad={
                 "provider": "energy-vad-phase3",
                 "peakThreshold": self.vad.peak_threshold,
                 "endSilenceChunks": self.vad.end_silence_chunks,
             },
+            bargeIn=barge_in_policy_descriptor(),
         )
 
     def update(self, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -244,6 +270,7 @@ class RealtimeSession:
 
     def append_audio_events(self, pcm: bytes) -> list[dict[str, Any]]:
         self._ensure_open()
+        assistant_response_active = self.state == RealtimeState.RESPONDING and self.committed_turns > 0
         if pcm:
             if len(self.buffered_pcm) + len(pcm) > MAX_BUFFERED_PCM_BYTES:
                 raise ValueError(f"buffered PCM exceeds {MAX_BUFFERED_PCM_BYTES} bytes")
@@ -251,6 +278,31 @@ class RealtimeSession:
         vad_stats, transitions = self.vad.analyze(pcm)
         self._transition(RealtimeState.BUFFERING if self.buffered_pcm else self.state)
         events: list[dict[str, Any]] = []
+        if assistant_response_active and vad_stats["speechDetected"]:
+            events.append(
+                self._emit(
+                    "barge_in.detected",
+                    bargeIn=barge_in_policy_descriptor(),
+                    vad=vad_stats,
+                    bufferedBytes=len(self.buffered_pcm),
+                    interruptedTurnIndex=self.committed_turns,
+                    cancellationEvent="response.cancelled",
+                )
+            )
+            events.append(
+                self._emit(
+                    "response.cancelled",
+                    reason="user_barge_in",
+                    cancelledTurnIndex=self.committed_turns,
+                    bufferedBytes=len(self.buffered_pcm),
+                    assistantInvoked=False,
+                    nextTurnRequires="input_audio.commit",
+                    privacy={
+                        "rawAudioPersisted": False,
+                        "explicitSessionOnly": True,
+                    },
+                )
+            )
         for transition in transitions:
             events.append(
                 self._emit(

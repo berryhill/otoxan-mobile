@@ -259,6 +259,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("otoxan-mobile-stt-stream-events", descriptor["sttEventSchema"]["name"])
         self.assertEqual(1500, descriptor["sttBudget"]["targetMs"])
         self.assertEqual("latency_budget_readback_not_hardware_proof", descriptor["sttBudget"]["evidenceClass"])
+        self.assertEqual("otoxan-mobile-barge-in-cancellation", descriptor["bargeIn"]["name"])
+        self.assertEqual(["barge_in.detected", "response.cancelled"], descriptor["bargeIn"]["events"])
         contract = descriptor["assistantPrepContract"]
         self.assertEqual("otoxan-mobile-cancellable-assistant-prep", contract["name"])
         self.assertFalse(contract["enabled"])
@@ -476,6 +478,26 @@ class VoiceTurnServerTest(unittest.TestCase):
 
         self.assertEqual(["stream.started", "stt.partial", "stt.final", "stt.completed", "response.completed", "stream.completed"], [event["type"] for event in events])
         self.assertNotIn("assistant.prep.started", [event["type"] for event in events])
+
+    def test_voice_stream_can_emit_barge_in_detection_and_response_cancelled_without_voice_turn(self):
+        payload = self._payload()
+        payload["bargeIn"] = {"detected": True, "reason": "user_barge_in", "cancelledTurnIndex": 2}
+
+        with mock.patch.object(voice_turn_server, "handle_voice_turn") as turn:
+            events = voice_turn_server.handle_voice_stream(payload)
+
+        turn.assert_not_called()
+        self.assertEqual(["stream.started", "barge_in.detected", "response.cancelled", "stream.completed"], [event["type"] for event in events])
+        self.assertEqual([1, 2, 3, 4], [event["sequence"] for event in events])
+        self.assertEqual("otoxan-mobile-barge-in-cancellation", events[0]["bargeIn"]["name"])
+        self.assertEqual("voice-stream.request", events[1]["bargeIn"]["sourceEvent"])
+        self.assertEqual("response.cancelled", events[1]["bargeIn"]["cancellationEvent"])
+        self.assertEqual("user_barge_in", events[2]["reason"])
+        self.assertEqual(2, events[2]["cancelledTurnIndex"])
+        self.assertFalse(events[2]["assistantInvoked"])
+        self.assertEqual("input_audio.commit", events[2]["nextTurnRequires"])
+        self.assertFalse(events[2]["privacy"]["rawAudioPersisted"])
+        self.assertNotIn("response.completed", [event["type"] for event in events])
 
     def test_voice_stream_http_endpoint_is_404_until_experimental_flag_enabled(self):
         server = voice_turn_server.ThreadingHTTPServer(("127.0.0.1", 0), voice_turn_server.Handler)

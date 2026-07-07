@@ -212,7 +212,10 @@ data class VoiceTurnResult(
     val streamPartialTranscriptCount: Int? = null,
     val streamLatestPartialTranscriptLength: Int? = null,
     val streamFinalTranscriptObserved: Boolean? = null,
-    val streamFinalTranscriptLength: Int? = null
+    val streamFinalTranscriptLength: Int? = null,
+    val streamBargeInDetected: Boolean? = null,
+    val streamResponseCancelled: Boolean? = null,
+    val streamCancelReason: String? = null
 )
 
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -636,7 +639,10 @@ class HttpStreamingVoiceClient(
                 streamPartialTranscriptCount = streamTelemetry.partialTranscriptCount,
                 streamLatestPartialTranscriptLength = streamTelemetry.latestPartialTranscriptLength,
                 streamFinalTranscriptObserved = streamTelemetry.finalTranscriptObserved,
-                streamFinalTranscriptLength = streamTelemetry.finalTranscriptLength
+                streamFinalTranscriptLength = streamTelemetry.finalTranscriptLength,
+                streamBargeInDetected = streamTelemetry.bargeInDetected,
+                streamResponseCancelled = streamTelemetry.responseCancelled,
+                streamCancelReason = streamTelemetry.cancelReason
             )
         } catch (error: XanderVoiceClientException) {
             throw error
@@ -913,7 +919,10 @@ private fun parseVoiceTurnResult(
     streamPartialTranscriptCount: Int? = null,
     streamLatestPartialTranscriptLength: Int? = null,
     streamFinalTranscriptObserved: Boolean? = null,
-    streamFinalTranscriptLength: Int? = null
+    streamFinalTranscriptLength: Int? = null,
+    streamBargeInDetected: Boolean? = null,
+    streamResponseCancelled: Boolean? = null,
+    streamCancelReason: String? = null
 ): VoiceTurnResult {
     val ttsPcm = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let { decodeTtsPcm(it) }
     return VoiceTurnResult(
@@ -969,7 +978,10 @@ private fun parseVoiceTurnResult(
         streamPartialTranscriptCount = streamPartialTranscriptCount,
         streamLatestPartialTranscriptLength = streamLatestPartialTranscriptLength,
         streamFinalTranscriptObserved = streamFinalTranscriptObserved,
-        streamFinalTranscriptLength = streamFinalTranscriptLength
+        streamFinalTranscriptLength = streamFinalTranscriptLength,
+        streamBargeInDetected = streamBargeInDetected,
+        streamResponseCancelled = streamResponseCancelled,
+        streamCancelReason = streamCancelReason
     )
 }
 
@@ -983,7 +995,10 @@ private data class StreamVoiceTurnTelemetry(
     val partialTranscriptCount: Int,
     val latestPartialTranscriptLength: Int?,
     val finalTranscriptObserved: Boolean,
-    val finalTranscriptLength: Int?
+    val finalTranscriptLength: Int?,
+    val bargeInDetected: Boolean,
+    val responseCancelled: Boolean,
+    val cancelReason: String?
 )
 
 private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTelemetry {
@@ -995,6 +1010,9 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
     var latestPartialTranscriptLength: Int? = null
     var finalTranscriptObserved = false
     var finalTranscriptLength: Int? = null
+    var bargeInDetected = false
+    var responseCancelled = false
+    var cancelReason: String? = null
     ndjson.lineSequence()
         .map { it.trim() }
         .filter { it.isNotBlank() }
@@ -1016,6 +1034,13 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
             if (type == "stt.final") {
                 finalTranscriptObserved = true
                 finalTranscriptLength = event.transcriptStateLength()
+            }
+            if (type == "barge_in.detected") {
+                bargeInDetected = true
+            }
+            if (type == "response.cancelled") {
+                responseCancelled = true
+                cancelReason = event.optStringOrNull("reason") ?: cancelReason
             }
             if (type == "response.completed") {
                 val voiceTurn = event.optJSONObject("voiceTurn")
@@ -1039,7 +1064,10 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
         partialTranscriptCount = partialTranscriptCount,
         latestPartialTranscriptLength = latestPartialTranscriptLength,
         finalTranscriptObserved = finalTranscriptObserved,
-        finalTranscriptLength = finalTranscriptLength
+        finalTranscriptLength = finalTranscriptLength,
+        bargeInDetected = bargeInDetected,
+        responseCancelled = responseCancelled,
+        cancelReason = cancelReason
     )
 }
 

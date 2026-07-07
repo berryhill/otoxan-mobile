@@ -148,6 +148,8 @@ Closes the explicit realtime session. Server response: `session.closed`, state `
 | `input_audio.appended` | `buffering` | PCM bytes accepted into the explicit-session buffer. |
 | `input_audio.cleared` | `configured` | Buffered PCM discarded. |
 | `response.completed` | `responding` | Buffered PCM was committed through the voice-turn contract. |
+| `barge_in.detected` | `buffering` | Energy VAD detected explicit user speech while a prior assistant response was active; diagnostic control event only. |
+| `response.cancelled` | `buffering` | Client should stop current assistant playback/prep because the user barged in; no new assistant turn is invoked until `input_audio.commit`. |
 | `control.pong` | current open state | Liveness reply. |
 | `session.closed` | `closed` | Session closed by client. |
 | `error` | `error` | Protocol or server error; client should stop using that stream. |
@@ -162,7 +164,8 @@ Closes the explicit realtime session. Server response: `session.closed`, state `
 4. `stt.final` — final transcript-state readback before the wrapped voice turn: provider/status/source plus final transcript length only.
 5. `stt.completed` — emits STT provider/status/latency/budget readback without raw audio or transcript text persistence.
 6. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
-7. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics, STT budget model, and assistant prep contract.
+7. Optional `barge_in.detected` / `response.cancelled` — control-only cancellation readback when the stream receives an explicit barge-in/cancel marker; it does not invoke a new assistant turn and tells the client to stop current playback/prep and wait for the next explicit commit.
+8. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics, STT budget model, assistant prep contract, and barge-in cancellation contract.
 
 This endpoint does not add always-on capture, raw-audio persistence, or a new assistant authority surface. It is a backend transport experiment so the Android client can test stream-shaped parsing while retaining the proven `/voice-turn` contract and fallback.
 

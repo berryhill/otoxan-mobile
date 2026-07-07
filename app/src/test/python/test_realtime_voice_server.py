@@ -147,6 +147,25 @@ class RealtimeVoiceServerUnitTest(unittest.TestCase):
         self.assertEqual("input_audio.appended", ended_events[-1]["type"])
         self.assertFalse(ended_events[-1]["vad"]["speechActive"])
 
+    def test_barge_in_speech_after_response_emits_detection_and_cancellation_events(self):
+        session = realtime_voice_server.RealtimeSession(session_id="rt_test")
+        session.update({"type": "session.update"})
+        session.append_audio(_pcm_samples(0, 1200, -1400, 0))
+        completed = session.commit_audio()
+        self.assertEqual("response.completed", completed["type"])
+        self.assertEqual("responding", completed["state"])
+
+        events = session.append_audio_events(_pcm_samples(0, 1600, -1700, 0))
+
+        self.assertEqual("barge_in.detected", events[0]["type"])
+        self.assertEqual("response.cancelled", events[1]["type"])
+        self.assertEqual("user_barge_in", events[1]["reason"])
+        self.assertEqual(1, events[1]["cancelledTurnIndex"])
+        self.assertFalse(events[1]["assistantInvoked"])
+        self.assertEqual("input_audio.commit", events[1]["nextTurnRequires"])
+        self.assertEqual("input_audio.appended", events[-1]["type"])
+        self.assertEqual(["barge_in.detected", "response.cancelled"], events[0]["bargeIn"]["cancelEvents"])
+
 
 class RealtimeVoiceServerProtocolTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

@@ -159,7 +159,7 @@ client -> {"type":"input_audio.commit"}
 server -> {"type":"response.completed","voiceTurn":{...existing /voice-turn response...}}
 ```
 
-This is transport-only Phase 1. Realtime VAD, barge-in, and WebRTC stay in later phases; the experimental `/voice-stream` backend shim now emits transcript-state diagnostics (`stt.partial`/`stt.final`) as length-only readback, not a raw-transcript persistence surface.
+This is transport-only Phase 1. Realtime VAD and barge-in cancellation are diagnostic/control events only: VAD may emit `user.speech.*`, and barge-in may emit `barge_in.detected` plus `response.cancelled` to stop current playback/prep, but neither path starts a new assistant turn without an explicit commit. WebRTC stays in a later phase; the experimental `/voice-stream` backend shim now emits transcript-state diagnostics (`stt.partial`/`stt.final`) as length-only readback, not a raw-transcript persistence surface.
 
 ## Phase 2 event/state contract
 

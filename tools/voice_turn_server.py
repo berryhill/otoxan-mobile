@@ -110,6 +110,8 @@ STT_STREAM_EVENT_SCHEMA_NAME = "otoxan-mobile-stt-stream-events"
 STT_STREAM_EVENT_SCHEMA_VERSION = 1
 ASSISTANT_PREP_POLICY_NAME = "otoxan-mobile-safe-assistant-prep"
 ASSISTANT_PREP_POLICY_VERSION = 1
+BARGE_IN_POLICY_NAME = "otoxan-mobile-barge-in-cancellation"
+BARGE_IN_POLICY_VERSION = 1
 ASSISTANT_PREP_MIN_PARTIAL_CHARS = int(os.environ.get("OTOXAN_ASSISTANT_PREP_MIN_PARTIAL_CHARS", "12"))
 ASSISTANT_PREP_MIN_PARTIAL_WORDS = int(os.environ.get("OTOXAN_ASSISTANT_PREP_MIN_PARTIAL_WORDS", "3"))
 ASSISTANT_PREP_STABLE_TRANSCRIPT_SOURCES = {"hermes-stt", "moonshine-stt"}
@@ -152,6 +154,7 @@ def stream_transport_descriptor() -> dict[str, Any]:
         "sttEventSchema": stt_stream_event_schema(),
         "sttBudget": stt_budget_model(),
         "assistantPrepContract": assistant_prep_contract(),
+        "bargeIn": barge_in_policy_descriptor(),
         "moonshineStreamingAdapter": moonshine_streaming_adapter_descriptor(),
     }
 
@@ -397,6 +400,29 @@ def stt_stream_event_schema() -> dict[str, Any]:
                 ],
                 "emission": "optional safe prewarm marker; emitted only after a stable non-final STT partial passes policy gates",
             },
+            {
+                "type": "barge_in.detected",
+                "sequence": "monotonic stream sequence when user speech interrupts an active assistant response",
+                "payload": [
+                    "bargeIn.policy.name",
+                    "bargeIn.sourceEvent",
+                    "bargeIn.cancelledTurnIndex",
+                    "bargeIn.cancellationEvent",
+                    "bargeIn.assistantInvokedByBargeIn",
+                ],
+                "emission": "diagnostic control event only; does not invoke a new assistant turn or persist raw audio",
+            },
+            {
+                "type": "response.cancelled",
+                "sequence": "monotonic stream sequence after barge_in.detected or explicit cancel",
+                "payload": [
+                    "reason",
+                    "cancelledTurnIndex",
+                    "assistantInvoked",
+                    "nextTurnRequires",
+                ],
+                "emission": "client should stop current playback/prep and wait for the next explicit commit",
+            },
         ],
     }
 
@@ -420,6 +446,93 @@ def assistant_prep_policy_descriptor() -> dict[str, Any]:
         },
         "evidenceClass": "safe_prep_policy_readback_not_hardware_proof",
     }
+
+
+def barge_in_policy_descriptor() -> dict[str, Any]:
+    return {
+        "name": BARGE_IN_POLICY_NAME,
+        "version": BARGE_IN_POLICY_VERSION,
+        "trigger": "user_speech_while_assistant_response_active",
+        "detection": {
+            "provider": REALTIME_VAD_DIAGNOSTIC_PROVIDER,
+            "peakThreshold": REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD,
+            "requiresExplicitSession": True,
+            "diagnosticOnly": True,
+        },
+        "events": ["barge_in.detected", "response.cancelled"],
+        "cancelEvents": ["barge_in.detected", "input_audio.clear", "session.close", "turn.timeout", "new_turn_started"],
+        "assistantAuthority": "no_new_assistant_turn_until_explicit_commit",
+        "fallbackOnCancel": "stop_current_playback_and_wait_for_next_push_to_talk_commit",
+        "privacy": {
+            "explicitSessionOnly": True,
+            "rawAudioPersisted": False,
+            "alwaysOnRecording": False,
+        },
+        "evidenceClass": "diagnostic_stream_control_not_hardware_proof",
+    }
+
+
+def _barge_in_event(stream_id: str, sequence: int, *, source_event: str, cancelled_turn_index: int | None = None) -> dict[str, Any]:
+    return {
+        "type": "barge_in.detected",
+        "streamId": stream_id,
+        "sequence": sequence,
+        "bargeIn": {
+            "policy": barge_in_policy_descriptor(),
+            "sourceEvent": source_event,
+            "cancelledTurnIndex": cancelled_turn_index,
+            "cancellationEvent": "response.cancelled",
+            "assistantInvokedByBargeIn": False,
+            "evidenceClass": "diagnostic_stream_control_not_hardware_proof",
+        },
+        "privacy": {
+            "rawAudioPersisted": False,
+            "explicitSessionOnly": True,
+        },
+    }
+
+
+def _response_cancelled_event(stream_id: str, sequence: int, *, reason: str, cancelled_turn_index: int | None = None) -> dict[str, Any]:
+    return {
+        "type": "response.cancelled",
+        "streamId": stream_id,
+        "sequence": sequence,
+        "reason": reason,
+        "cancelledTurnIndex": cancelled_turn_index,
+        "assistantInvoked": False,
+        "nextTurnRequires": "input_audio.commit",
+        "bargeIn": barge_in_policy_descriptor(),
+        "privacy": {
+            "rawAudioPersisted": False,
+            "explicitSessionOnly": True,
+        },
+    }
+
+
+def _payload_requests_barge_in_cancel(payload: Mapping[str, Any]) -> bool:
+    raw = payload.get("bargeIn")
+    if isinstance(raw, Mapping):
+        return bool(raw.get("detected") or raw.get("cancelResponse") or raw.get("cancel"))
+    return bool(payload.get("bargeInDetected") or payload.get("cancelResponse"))
+
+
+def _payload_cancel_reason(payload: Mapping[str, Any]) -> str:
+    raw = payload.get("bargeIn")
+    if isinstance(raw, Mapping):
+        reason = str(raw.get("reason") or "").strip()
+        if reason:
+            return reason
+    reason = str(payload.get("cancelReason") or "").strip()
+    return reason or "user_barge_in"
+
+
+def _payload_cancelled_turn_index(payload: Mapping[str, Any]) -> int | None:
+    raw = payload.get("bargeIn")
+    value = raw.get("cancelledTurnIndex") if isinstance(raw, Mapping) else payload.get("cancelledTurnIndex")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _stt_completed_event_from_voice_turn(result: Mapping[str, Any], stream_id: str, sequence: int) -> dict[str, Any]:
@@ -774,6 +887,7 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             "sttEventSchema": stt_stream_event_schema(),
             "sttBudget": stt_budget_model(),
             "assistantPrepContract": assistant_prep_contract(),
+            "bargeIn": barge_in_policy_descriptor(),
             "privacy": {
                 "explicitSessionOnly": True,
                 "rawAudioPersisted": False,
@@ -781,6 +895,30 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             },
         }
     ]
+    if _payload_requests_barge_in_cancel(payload):
+        cancelled_turn_index = _payload_cancelled_turn_index(payload)
+        events.append(_barge_in_event(stream_id, len(events) + 1, source_event="voice-stream.request", cancelled_turn_index=cancelled_turn_index))
+        events.append(
+            _response_cancelled_event(
+                stream_id,
+                len(events) + 1,
+                reason=_payload_cancel_reason(payload),
+                cancelled_turn_index=cancelled_turn_index,
+            )
+        )
+        events.append(
+            {
+                "type": "stream.completed",
+                "streamId": stream_id,
+                "sequence": len(events) + 1,
+                "elapsedMs": _elapsed_ms(started),
+                "fallback": stream_transport_descriptor()["canonicalFallback"],
+                "sttBudget": stt_budget_model(),
+                "assistantPrepContract": assistant_prep_contract(),
+                "bargeIn": barge_in_policy_descriptor(),
+            }
+        )
+        return events
     result = handle_voice_turn(payload)
     events.append(_stt_transcript_state_event_from_voice_turn(result, stream_id, len(events) + 1, "stt.partial", False))
     prep_event = _assistant_prep_event_from_stable_partial(result, stream_id, len(events) + 1)
@@ -808,6 +946,7 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             "sttBudget": stt_budget_model(),
             "assistantPrepContract": assistant_prep_contract(),
             "assistantPrepPromotion": prep_validation,
+            "bargeIn": barge_in_policy_descriptor(),
         }
     )
     return events
