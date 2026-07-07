@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -46,6 +47,74 @@ class HttpXanderVoiceClientTest {
         assertEquals(111, httpClient.privateIntField("connectTimeoutMillis"))
         assertEquals(222, httpClient.privateIntField("readTimeoutMillis"))
         assertEquals(333, httpClient.privateIntField("metricsTimeoutMillis"))
+    }
+
+    @Test
+    fun createXanderVoiceClient_streamingSeamIsDisabledByDefaultAndOptInOnly() {
+        val defaultClient = createXanderVoiceClient(endpointUrl = "http://10.0.2.2:8787")
+        val explicitlyDisabledClient = createXanderVoiceClient(
+            endpointUrl = "http://10.0.2.2:8787",
+            streamingConfig = StreamingVoiceClientConfig(enabled = false, endpointUrl = "http://10.0.2.2:8787/voice-stream")
+        )
+        val enabledClient = createXanderVoiceClient(
+            endpointUrl = "http://10.0.2.2:8787",
+            streamingConfig = StreamingVoiceClientConfig(enabled = true, endpointUrl = "http://10.0.2.2:8787/voice-stream")
+        )
+
+        assertTrue(defaultClient is HttpXanderVoiceClient)
+        assertFalse(defaultClient is StreamingXanderVoiceClient)
+        assertTrue(explicitlyDisabledClient is HttpXanderVoiceClient)
+        assertFalse(explicitlyDisabledClient is StreamingXanderVoiceClient)
+        assertTrue(enabledClient is StreamingXanderVoiceClient)
+    }
+
+    @Test
+    fun normalizeVoiceStreamEndpoint_acceptsBaseVoiceTurnOrExplicitStreamPath() {
+        assertEquals("http://10.0.2.2:8787/voice-stream", normalizeVoiceStreamEndpoint(" http://10.0.2.2:8787 "))
+        assertEquals("http://10.0.2.2:8787/voice-stream", normalizeVoiceStreamEndpoint("http://10.0.2.2:8787/voice-turn"))
+        assertEquals("http://10.0.2.2:8787/voice-stream", normalizeVoiceStreamEndpoint("http://10.0.2.2:8787/voice-stream/"))
+    }
+
+    @Test
+    fun httpStreamingVoiceClient_postsToVoiceStreamAndParsesCompletedVoiceTurnEvent() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/x-ndjson")
+                .setBody(
+                    """
+                    {"type":"stream.started","protocol":{"version":1}}
+                    {"type":"response.completed","voiceTurn":{"provider":"stream-proof","transcript":"stream hello","assistantText":"stream route confirmed","bytesReceived":4,"transcriptSource":"proof-stream","sttStatus":"success","pass1Ready":true}}
+                    {"type":"stream.completed"}
+                    """.trimIndent()
+                )
+        )
+        server.start()
+
+        val client = HttpStreamingVoiceClient(
+            endpointUrl = server.url("/voice-turn").toString(),
+            connectTimeoutMillis = 1_000,
+            readTimeoutMillis = 1_000
+        )
+        val result = kotlinx.coroutines.runBlocking {
+            client.sendStreamingVoiceTurn(byteArrayOf(1, 2, 3, 4), RouteEvidence.default("stream route"))
+        }
+
+        val request = server.takeRequest()
+        val requestBody = request.body.readUtf8()
+        assertEquals("POST", request.method)
+        assertEquals("/voice-stream", request.path)
+        assertEquals("application/x-ndjson", request.getHeader("Accept"))
+        assertTrue(requestBody.contains("\"pcm16Mono16kBase64\":\"AQIDBA==\""))
+        assertEquals("stream-proof", result.provider)
+        assertEquals("stream hello", result.transcript)
+        assertEquals("stream route confirmed", result.assistantText)
+        assertEquals(4, result.bytesReceived)
+        assertEquals("proof-stream", result.transcriptSource)
+        assertEquals("success", result.sttStatus)
+        assertEquals(true, result.pass1Ready)
+        assertEquals(200, result.httpStatusCode)
+        assertTrue(result.responseBytes!! > 0)
     }
 
     @Test

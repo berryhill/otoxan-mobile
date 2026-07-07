@@ -11,6 +11,7 @@ import com.otoxan.mobile.voice.ConversationCaptureTuning
 import com.otoxan.mobile.voice.MicCapture
 import com.otoxan.mobile.voice.RouteEvidence
 import com.otoxan.mobile.voice.SpeechPlayback
+import com.otoxan.mobile.voice.StreamingVoiceClientConfig
 import com.otoxan.mobile.voice.VoiceCaptureConfig
 import com.otoxan.mobile.voice.VoiceTurnTelemetryPacket
 import com.otoxan.mobile.voice.VoiceTurnTelemetryRecord
@@ -913,6 +914,10 @@ class OtoxanViewModel(
                             connectTimeoutMillis = BuildConfig.XANDER_VOICE_CONNECT_TIMEOUT_MILLIS,
                             readTimeoutMillis = BuildConfig.XANDER_VOICE_READ_TIMEOUT_MILLIS,
                             metricsTimeoutMillis = BuildConfig.XANDER_VOICE_METRICS_TIMEOUT_MILLIS
+                        ),
+                        streamingConfig = StreamingVoiceClientConfig(
+                            enabled = BuildConfig.OTOXAN_STREAMING_VOICE_CLIENT_ENABLED,
+                            endpointUrl = BuildConfig.OTOXAN_STREAMING_VOICE_ENDPOINT
                         )
                     )
                 ) as T

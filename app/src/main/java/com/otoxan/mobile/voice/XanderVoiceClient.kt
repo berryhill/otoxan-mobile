@@ -194,6 +194,15 @@ data class XanderVoiceEndpointPolicy(
     val metricsTimeoutMillis: Int = 5_000
 )
 
+data class StreamingVoiceClientConfig(
+    val enabled: Boolean = false,
+    val endpointUrl: String = ""
+)
+
+interface StreamingVoiceClient {
+    suspend fun sendStreamingVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult
+}
+
 class HttpXanderVoiceClient(
     endpointUrl: String,
     private val connectTimeoutMillis: Int = 10_000,
@@ -219,7 +228,7 @@ class HttpXanderVoiceClient(
         try {
             val totalStarted = System.nanoTime()
             val buildStarted = System.nanoTime()
-            val body = buildRequestBody(pcm16Mono16k, routeEvidence)
+            val body = buildVoiceTurnRequestBody(pcm16Mono16k, routeEvidence)
             val bodyBytes = body.toByteArray(Charsets.UTF_8)
             val requestBuildMs = elapsedMs(buildStarted)
             val uploadStarted = System.nanoTime()
@@ -241,43 +250,8 @@ class HttpXanderVoiceClient(
             val responseReadMs = elapsedMs(responseReadStarted)
 
             val parseStarted = System.nanoTime()
-            val ttsPcm = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let {
-                decodeTtsPcm(it)
-            }
-            val result = VoiceTurnResult(
-                transcript = responseBody.requiredJsonString("transcript"),
-                assistantText = responseBody.requiredJsonString("assistantText"),
-                ttsPcm16Mono16k = ttsPcm,
-                bytesReceived = responseBody.optionalJsonInt("bytesReceived"),
-                provider = responseBody.optionalJsonString("provider"),
-                transcriptSource = responseBody.optionalJsonString("transcriptSource"),
-                sttProvider = responseBody.optionalJsonString("sttProvider"),
-                sttStatus = responseBody.optionalJsonString("sttStatus"),
-                sttLatencyMs = responseBody.optionalJsonInt("sttLatencyMs"),
-                primarySttStatus = responseBody.optionalJsonString("primarySttStatus"),
-                primarySttMs = responseBody.optionalJsonInt("primarySttMs"),
-                primarySttProvider = responseBody.optionalJsonString("primarySttProvider"),
-                fallbackSttStatus = responseBody.optionalJsonString("fallbackSttStatus"),
-                fallbackSttMs = responseBody.optionalJsonInt("fallbackSttMs"),
-                fallbackSttProvider = responseBody.optionalJsonString("fallbackSttProvider"),
-                sttBudgetRemainingMs = responseBody.optionalJsonInt("sttBudgetRemainingMs"),
-                pass1Status = responseBody.optionalJsonString("pass1Status"),
-                pass1Ready = responseBody.optionalJsonBoolean("pass1Ready"),
-                audioFormat = responseBody.optionalJsonString("audioFormat"),
-                audioDurationMs = responseBody.optionalJsonInt("durationMs"),
-                audioPeak = responseBody.optionalJsonInt("peak"),
-                audioRms = responseBody.optionalJsonDouble("rms"),
-                backendTotalMs = responseBody.optionalJsonInt("backendTotalMs"),
-                decodePcmMs = responseBody.optionalJsonInt("decodePcmMs"),
-                audioStatsMs = responseBody.optionalJsonInt("audioStatsMs"),
-                transcriptTotalMs = responseBody.optionalJsonInt("transcriptTotalMs"),
-                xanderSessionMs = responseBody.optionalJsonInt("xanderSessionMs"),
-                xanderFastMs = responseBody.optionalJsonInt("xanderFastMs"),
-                xanderFastStatus = responseBody.optionalJsonInt("xanderFastStatus"),
-                xanderFastTimedOut = responseBody.optionalJsonInt("xanderFastTimedOut"),
-                xanderFallbackSessionStatus = responseBody.optionalJsonInt("xanderFallbackSessionStatus"),
-                xanderFallbackSkipped = responseBody.optionalJsonInt("xanderFallbackSkipped"),
-                responseBuildMs = responseBody.optionalJsonInt("responseBuildMs"),
+            val result = parseVoiceTurnResult(
+                responseBody = responseBody,
                 httpStatusCode = responseCode,
                 requestBytes = bodyBytes.size,
                 responseBytes = responseBody.toByteArray(Charsets.UTF_8).size,
@@ -401,22 +375,6 @@ class HttpXanderVoiceClient(
         }
     }
 
-    private fun buildRequestBody(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): String {
-        return """
-            {
-              "format":"pcm_s16le_16khz_mono",
-              "pcm16Mono16kBase64":"${Base64.getEncoder().encodeToString(pcm16Mono16k)}",
-              "routeEvidence":{
-                "inputName":"${routeEvidence.inputName.jsonEscape()}",
-                "inputType":"${routeEvidence.inputType.jsonEscape()}",
-                "outputName":"${routeEvidence.outputName.jsonEscape()}",
-                "outputType":"${routeEvidence.outputType.jsonEscape()}",
-                "wearableActive":${routeEvidence.wearableActive},
-                "message":"${routeEvidence.message.jsonEscape()}"
-              }
-            }
-        """.trimIndent().replace("\n", "").replace("  ", "")
-    }
 
     private fun buildMetricsBody(packet: VoiceTurnTelemetryPacket): String {
         return """
@@ -561,6 +519,86 @@ class HttpXanderVoiceClient(
     }
 }
 
+class HttpStreamingVoiceClient(
+    endpointUrl: String,
+    private val connectTimeoutMillis: Int = 10_000,
+    private val readTimeoutMillis: Int = 60_000
+) : StreamingVoiceClient {
+    private val streamEndpointUrl = normalizeVoiceStreamEndpoint(endpointUrl)
+
+    override suspend fun sendStreamingVoiceTurn(
+        pcm16Mono16k: ByteArray,
+        routeEvidence: RouteEvidence
+    ): VoiceTurnResult = withContext(Dispatchers.IO) {
+        val connection = (URL(streamEndpointUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = connectTimeoutMillis
+            readTimeout = readTimeoutMillis
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/x-ndjson")
+        }
+        try {
+            val totalStarted = System.nanoTime()
+            val buildStarted = System.nanoTime()
+            val body = buildVoiceTurnRequestBody(pcm16Mono16k, routeEvidence)
+            val bodyBytes = body.toByteArray(Charsets.UTF_8)
+            val requestBuildMs = elapsedMs(buildStarted)
+            val uploadStarted = System.nanoTime()
+            connection.outputStream.use { it.write(bodyBytes) }
+            val uploadMs = elapsedMs(uploadStarted)
+            val responseCodeStarted = System.nanoTime()
+            val responseCode = connection.responseCode
+            val responseCodeWaitMs = elapsedMs(responseCodeStarted)
+            val responseReadStarted = System.nanoTime()
+            val responseBody = if (responseCode in 200..299) {
+                connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            } else {
+                val errorBody = connection.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+                throw XanderVoiceClientException("Otoxan streaming voice endpoint returned HTTP $responseCode: $errorBody")
+            }
+            val responseReadMs = elapsedMs(responseReadStarted)
+            val parseStarted = System.nanoTime()
+            val voiceTurnBody = extractCompletedVoiceTurnJson(responseBody)
+            parseVoiceTurnResult(
+                responseBody = voiceTurnBody,
+                httpStatusCode = responseCode,
+                requestBytes = bodyBytes.size,
+                responseBytes = responseBody.toByteArray(Charsets.UTF_8).size,
+                requestBuildMs = requestBuildMs,
+                uploadMs = uploadMs,
+                responseCodeWaitMs = responseCodeWaitMs,
+                responseReadMs = responseReadMs,
+                responseParseMs = elapsedMs(parseStarted),
+                clientBackendRoundTripMs = elapsedMs(totalStarted)
+            )
+        } catch (error: XanderVoiceClientException) {
+            throw error
+        } catch (error: Exception) {
+            throw XanderVoiceClientException("Otoxan streaming voice turn failed: ${error.message ?: error::class.java.simpleName}", error)
+        } finally {
+            connection.disconnect()
+        }
+    }
+}
+
+class StreamingXanderVoiceClient(
+    private val streamingVoiceClient: StreamingVoiceClient,
+    private val fallbackClient: XanderVoiceClient
+) : XanderVoiceClient {
+    override suspend fun sendVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult {
+        return streamingVoiceClient.sendStreamingVoiceTurn(pcm16Mono16k, routeEvidence)
+    }
+
+    override suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult {
+        return fallbackClient.postVoiceTurnMetrics(packet)
+    }
+
+    override suspend fun fetchRecentVoiceTurnMetrics(limit: Int): VoiceTurnTelemetryHistoryResult {
+        return fallbackClient.fetchRecentVoiceTurnMetrics(limit)
+    }
+}
+
 class StubXanderVoiceClient : XanderVoiceClient {
     override suspend fun sendVoiceTurn(
         pcm16Mono16k: ByteArray,
@@ -589,10 +627,26 @@ class StubXanderVoiceClient : XanderVoiceClient {
 
 fun createXanderVoiceClient(
     endpointUrl: String,
-    endpointPolicy: XanderVoiceEndpointPolicy = XanderVoiceEndpointPolicy()
+    endpointPolicy: XanderVoiceEndpointPolicy = XanderVoiceEndpointPolicy(),
+    streamingConfig: StreamingVoiceClientConfig = StreamingVoiceClientConfig()
 ): XanderVoiceClient {
     return if (endpointUrl.isBlank()) {
         StubXanderVoiceClient()
+    } else if (streamingConfig.enabled) {
+        val fallbackClient = HttpXanderVoiceClient(
+            endpointUrl = normalizeVoiceTurnEndpoint(endpointUrl),
+            connectTimeoutMillis = endpointPolicy.connectTimeoutMillis,
+            readTimeoutMillis = endpointPolicy.readTimeoutMillis,
+            metricsTimeoutMillis = endpointPolicy.metricsTimeoutMillis
+        )
+        StreamingXanderVoiceClient(
+            streamingVoiceClient = HttpStreamingVoiceClient(
+                endpointUrl = streamingConfig.endpointUrl.ifBlank { endpointUrl },
+                connectTimeoutMillis = endpointPolicy.connectTimeoutMillis,
+                readTimeoutMillis = endpointPolicy.readTimeoutMillis
+            ),
+            fallbackClient = fallbackClient
+        )
     } else {
         HttpXanderVoiceClient(
             endpointUrl = normalizeVoiceTurnEndpoint(endpointUrl),
@@ -603,10 +657,113 @@ fun createXanderVoiceClient(
     }
 }
 
+private fun buildVoiceTurnRequestBody(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): String {
+    return """
+        {
+          "format":"pcm_s16le_16khz_mono",
+          "pcm16Mono16kBase64":"${Base64.getEncoder().encodeToString(pcm16Mono16k)}",
+          "routeEvidence":{
+            "inputName":"${routeEvidence.inputName.jsonEscape()}",
+            "inputType":"${routeEvidence.inputType.jsonEscape()}",
+            "outputName":"${routeEvidence.outputName.jsonEscape()}",
+            "outputType":"${routeEvidence.outputType.jsonEscape()}",
+            "wearableActive":${routeEvidence.wearableActive},
+            "message":"${routeEvidence.message.jsonEscape()}"
+          }
+        }
+    """.trimIndent().replace("\n", "").replace("  ", "")
+}
+
+private fun parseVoiceTurnResult(
+    responseBody: String,
+    httpStatusCode: Int,
+    requestBytes: Int,
+    responseBytes: Int,
+    requestBuildMs: Long,
+    uploadMs: Long,
+    responseCodeWaitMs: Long,
+    responseReadMs: Long,
+    responseParseMs: Long,
+    clientBackendRoundTripMs: Long
+): VoiceTurnResult {
+    val ttsPcm = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let { decodeTtsPcm(it) }
+    return VoiceTurnResult(
+        transcript = responseBody.requiredJsonString("transcript"),
+        assistantText = responseBody.requiredJsonString("assistantText"),
+        ttsPcm16Mono16k = ttsPcm,
+        bytesReceived = responseBody.optionalJsonInt("bytesReceived"),
+        provider = responseBody.optionalJsonString("provider"),
+        transcriptSource = responseBody.optionalJsonString("transcriptSource"),
+        sttProvider = responseBody.optionalJsonString("sttProvider"),
+        sttStatus = responseBody.optionalJsonString("sttStatus"),
+        sttLatencyMs = responseBody.optionalJsonInt("sttLatencyMs"),
+        primarySttStatus = responseBody.optionalJsonString("primarySttStatus"),
+        primarySttMs = responseBody.optionalJsonInt("primarySttMs"),
+        primarySttProvider = responseBody.optionalJsonString("primarySttProvider"),
+        fallbackSttStatus = responseBody.optionalJsonString("fallbackSttStatus"),
+        fallbackSttMs = responseBody.optionalJsonInt("fallbackSttMs"),
+        fallbackSttProvider = responseBody.optionalJsonString("fallbackSttProvider"),
+        sttBudgetRemainingMs = responseBody.optionalJsonInt("sttBudgetRemainingMs"),
+        pass1Status = responseBody.optionalJsonString("pass1Status"),
+        pass1Ready = responseBody.optionalJsonBoolean("pass1Ready"),
+        audioFormat = responseBody.optionalJsonString("audioFormat"),
+        audioDurationMs = responseBody.optionalJsonInt("durationMs"),
+        audioPeak = responseBody.optionalJsonInt("peak"),
+        audioRms = responseBody.optionalJsonDouble("rms"),
+        backendTotalMs = responseBody.optionalJsonInt("backendTotalMs"),
+        decodePcmMs = responseBody.optionalJsonInt("decodePcmMs"),
+        audioStatsMs = responseBody.optionalJsonInt("audioStatsMs"),
+        transcriptTotalMs = responseBody.optionalJsonInt("transcriptTotalMs"),
+        xanderSessionMs = responseBody.optionalJsonInt("xanderSessionMs"),
+        xanderFastMs = responseBody.optionalJsonInt("xanderFastMs"),
+        xanderFastStatus = responseBody.optionalJsonInt("xanderFastStatus"),
+        xanderFastTimedOut = responseBody.optionalJsonInt("xanderFastTimedOut"),
+        xanderFallbackSessionStatus = responseBody.optionalJsonInt("xanderFallbackSessionStatus"),
+        xanderFallbackSkipped = responseBody.optionalJsonInt("xanderFallbackSkipped"),
+        responseBuildMs = responseBody.optionalJsonInt("responseBuildMs"),
+        httpStatusCode = httpStatusCode,
+        requestBytes = requestBytes,
+        responseBytes = responseBytes,
+        requestBuildMs = requestBuildMs,
+        uploadMs = uploadMs,
+        responseCodeWaitMs = responseCodeWaitMs,
+        responseReadMs = responseReadMs,
+        responseParseMs = responseParseMs,
+        clientBackendRoundTripMs = clientBackendRoundTripMs
+    )
+}
+
+private fun extractCompletedVoiceTurnJson(ndjson: String): String {
+    ndjson.lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .forEach { line ->
+            val event = JSONObject(line)
+            if (event.optString("type") == "response.completed") {
+                val voiceTurn = event.optJSONObject("voiceTurn")
+                    ?: throw XanderVoiceClientException("Otoxan stream response.completed missing voiceTurn")
+                return voiceTurn.toString()
+            }
+        }
+    throw XanderVoiceClientException("Otoxan stream ended without response.completed voiceTurn event")
+}
+
 fun normalizeVoiceTurnEndpoint(endpointUrl: String): String {
     val trimmed = endpointUrl.trim().trimEnd('/')
     if (trimmed.isBlank()) return ""
     return if (trimmed.endsWith("/voice-turn")) trimmed else "$trimmed/voice-turn"
+}
+
+fun normalizeVoiceStreamEndpoint(endpointUrl: String): String {
+    val trimmed = endpointUrl.trim().trimEnd('/')
+    if (trimmed.isBlank()) return ""
+    return if (trimmed.endsWith("/voice-stream")) {
+        trimmed
+    } else if (trimmed.endsWith("/voice-turn")) {
+        trimmed.removeSuffix("/voice-turn") + "/voice-stream"
+    } else {
+        "$trimmed/voice-stream"
+    }
 }
 
 

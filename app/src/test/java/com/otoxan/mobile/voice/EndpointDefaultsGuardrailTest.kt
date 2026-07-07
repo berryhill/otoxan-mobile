@@ -42,6 +42,12 @@ class EndpointDefaultsGuardrailTest {
     }
 
     @Test
+    fun streamingVoiceClientDefaultsStayDisabledAndEndpointBlank() {
+        assertFalse(BuildConfig.OTOXAN_STREAMING_VOICE_CLIENT_ENABLED)
+        assertEquals("", BuildConfig.OTOXAN_STREAMING_VOICE_ENDPOINT)
+    }
+
+    @Test
     fun conversationCaptureTuningDefaultsStayEvidenceGatedAndBounded() {
         assertFalse(BuildConfig.OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE)
         assertEquals(12_000, BuildConfig.OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS)

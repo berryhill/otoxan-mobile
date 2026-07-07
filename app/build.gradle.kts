@@ -8,6 +8,8 @@ val defaultXanderVoiceEndpoint = "http://100.126.0.110:8787/voice-turn"
 val defaultXanderVoiceConnectTimeoutMillis = 10_000
 val defaultXanderVoiceReadTimeoutMillis = 60_000
 val defaultXanderVoiceMetricsTimeoutMillis = 5_000
+val defaultOtoxanStreamingVoiceClientEnabled = false
+val defaultOtoxanStreamingVoiceEndpoint = ""
 val defaultConversationCaptureTuningEvidenceGate = false
 val defaultConversationCaptureMaxMillis = 12_000
 val defaultConversationCaptureMinMillis = 700
@@ -50,6 +52,14 @@ val xanderVoiceMetricsTimeoutMillis = endpointPolicyInt(
     "XANDER_VOICE_METRICS_TIMEOUT_MILLIS",
     defaultXanderVoiceMetricsTimeoutMillis
 )
+val otoxanStreamingVoiceClientEnabled = policyBoolean(
+    "OTOXAN_STREAMING_VOICE_CLIENT_ENABLED",
+    defaultOtoxanStreamingVoiceClientEnabled
+)
+val otoxanStreamingVoiceEndpoint: String = providers.gradleProperty("OTOXAN_STREAMING_VOICE_ENDPOINT")
+    .orElse(providers.environmentVariable("OTOXAN_STREAMING_VOICE_ENDPOINT"))
+    .orElse(defaultOtoxanStreamingVoiceEndpoint)
+    .get()
 val conversationCaptureTuningEvidenceGate = policyBoolean(
     "OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE",
     defaultConversationCaptureTuningEvidenceGate
@@ -97,6 +107,8 @@ android {
         buildConfigField("int", "XANDER_VOICE_CONNECT_TIMEOUT_MILLIS", xanderVoiceConnectTimeoutMillis.toString())
         buildConfigField("int", "XANDER_VOICE_READ_TIMEOUT_MILLIS", xanderVoiceReadTimeoutMillis.toString())
         buildConfigField("int", "XANDER_VOICE_METRICS_TIMEOUT_MILLIS", xanderVoiceMetricsTimeoutMillis.toString())
+        buildConfigField("boolean", "OTOXAN_STREAMING_VOICE_CLIENT_ENABLED", otoxanStreamingVoiceClientEnabled.toString())
+        buildConfigField("String", "OTOXAN_STREAMING_VOICE_ENDPOINT", "\"${otoxanStreamingVoiceEndpoint.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("boolean", "OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE", conversationCaptureTuningEvidenceGate.toString())
         buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS", conversationCaptureMaxMillis.toString())
         buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_MIN_MILLIS", conversationCaptureMinMillis.toString())
