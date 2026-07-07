@@ -121,7 +121,7 @@ The helper validates the PCM payload and route evidence, returns visible transcr
 
 ## Phone telemetry evidence classes
 
-Sprint 3 source/build/backend decision evidence is recorded in `docs/sprint3-gate-decision-packet.md`. Treat that packet as candidate readiness evidence for the next physical gate, not as a replacement for a fresh phone + Ray-Ban Meta turn. Sprint 3 execution scope is locked in `docs/sprint3-gate-scope.md`: harden the explicit-session audio loop, keep source/build proof separate from physical proof, and defer DAT/camera, always-on capture, AR UI, and broad backend reorganization unless explicitly re-approved.
+Sprint 3 source/build/backend decision evidence is recorded in `docs/sprint3-gate-decision-packet.md`. Sprint 3 streaming closeout evidence is recorded in `docs/sprint3-streaming-closeout-packet.md`. Treat those packets as candidate readiness evidence for the next physical gate, not as replacements for a fresh phone + Ray-Ban Meta turn. Sprint 3 execution scope is locked in `docs/sprint3-gate-scope.md`: harden the explicit-session audio loop, keep source/build proof separate from physical proof, and defer DAT/camera, always-on capture, AR UI, and broad backend reorganization unless explicitly re-approved.
 
 The phone telemetry UI now separates reliability, latency, and build/source proof so operators do not over-claim a run:
 
