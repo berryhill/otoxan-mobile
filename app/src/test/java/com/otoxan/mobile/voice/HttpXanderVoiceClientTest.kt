@@ -3,6 +3,7 @@ package com.otoxan.mobile.voice
 import java.util.Base64
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -370,6 +371,112 @@ class HttpXanderVoiceClientTest {
         assertTrue(!requestBody.contains("assistantText\""))
     }
 
+
+    @Test
+    fun postVoiceTurnMetrics_emitsCanonicalTimingContractAndMonotonicAnchors() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"ok\":true,\"recordId\":\"record-timing\"}")
+        )
+        server.start()
+
+        val client = HttpXanderVoiceClient(
+            endpointUrl = server.url("/voice-turn").toString(),
+            connectTimeoutMillis = 1_000,
+            readTimeoutMillis = 1_000
+        )
+
+        kotlinx.coroutines.runBlocking {
+            client.postVoiceTurnMetrics(
+                VoiceTurnTelemetryPacket(
+                    turnId = "turn-timing",
+                    stage = "complete",
+                    success = true,
+                    playbackMode = "NonCallPlayback",
+                    playbackKind = "android_tts",
+                    routeEvidence = RouteEvidence.default("route selected"),
+                    releaseEvidence = RouteEvidence.default("route released"),
+                    routeSelectStartMs = 0,
+                    routeSelectEndMs = 48,
+                    routeSelectMs = 48,
+                    captureStartMs = 48,
+                    captureEndMs = 1328,
+                    captureReadMs = 1280,
+                    endpointDispatchMs = 1373,
+                    backendRoundTripMs = 3100,
+                    endpointResponseReadyMs = 4473,
+                    routeReleaseStartMs = 1460,
+                    routeReleaseEndMs = 1910,
+                    routeReleaseMs = 450,
+                    localAckKind = "earcon_while_route_active",
+                    localAckStartMs = 1418,
+                    localAckTotalMs = 82,
+                    assistantPlaybackStartMs = 4550,
+                    backendResponseReadyMs = 4473,
+                    ttfaMs = 1418,
+                    ttfaRouteSelectMs = 48,
+                    ttfaCaptureReadMs = 1280,
+                    ttfaPostCaptureDispatchMs = 90,
+                    postCaptureAckDelayMs = 90,
+                    ttfaBackendWaitAfterReleaseMs = 2523,
+                    turnTotalMs = 6200,
+                    backendTotalMs = 3000,
+                    sttLatencyMs = 600,
+                    xanderFastMs = 1400,
+                    xanderFastStatus = 1,
+                    provider = "mobile-fast",
+                    transcriptSource = "moonshine-stt",
+                    sttProvider = "moonshine-stt",
+                    sttStatus = "success",
+                    pass1Status = "real-speech-proven",
+                    pass1Ready = true,
+                    transcriptLength = 21,
+                    assistantTextLength = 37,
+                    ttsBytes = 0,
+                    playbackTotalMs = 1200
+                )
+            )
+        }
+
+        val requestBody = server.takeRequest().body.readUtf8()
+        val root = JSONObject(requestBody)
+        val contract = root.getJSONObject("timingContract")
+        val targets = contract.getJSONObject("targets")
+        val timestamps = root.getJSONObject("timestamps")
+        val perceived = root.getJSONObject("perceivedLatency")
+        val breakdown = perceived.getJSONObject("breakdown")
+
+        assertEquals(VOICE_TURN_TIMING_CONTRACT_NAME, contract.getString("name"))
+        assertEquals(VOICE_TURN_TIMING_CONTRACT_VERSION, contract.getInt("version"))
+        assertEquals(VOICE_TURN_TIMING_CONTRACT_CLOCK, contract.getString("clock"))
+        assertEquals(VOICE_TURN_TTFA_TARGET_MS, targets.getLong("ttfaMs"))
+        assertEquals(VOICE_TURN_ACK_GAP_TARGET_MS, targets.getLong("postCaptureAckDelayMs"))
+        assertEquals(VOICE_TURN_TOTAL_TARGET_MS, targets.getLong("turnTotalMs"))
+        assertEquals(VOICE_TURN_BACKEND_TARGET_MS, targets.getLong("backendRoundTripMs"))
+        assertEquals(0L, timestamps.getLong("routeSelectStartMs"))
+        assertEquals(48L, timestamps.getLong("routeSelectEndMs"))
+        assertEquals(48L, timestamps.getLong("captureStartMs"))
+        assertEquals(1328L, timestamps.getLong("captureEndMs"))
+        assertEquals(1373L, timestamps.getLong("endpointDispatchMs"))
+        assertEquals(4473L, timestamps.getLong("endpointResponseReadyMs"))
+        assertEquals(1460L, timestamps.getLong("routeReleaseStartMs"))
+        assertEquals(1910L, timestamps.getLong("routeReleaseEndMs"))
+        assertEquals(1418L, perceived.getLong("ttfaMs"))
+        assertEquals("earcon_while_route_active", perceived.getString("localAckKind"))
+        assertEquals(90L, perceived.getLong("postCaptureAckDelayMs"))
+        assertEquals(48L, breakdown.getLong("routeSelectMs"))
+        assertEquals(1280L, breakdown.getLong("captureReadMs"))
+        assertEquals(90L, breakdown.getLong("postCaptureDispatchMs"))
+        assertEquals(2523L, breakdown.getLong("backendWaitAfterReleaseMs"))
+        assertEquals(90L, perceived.getLong("localAckStartMs") - breakdown.getLong("routeSelectMs") - breakdown.getLong("captureReadMs"))
+        assertTrue(timestamps.getLong("routeSelectStartMs") <= timestamps.getLong("routeSelectEndMs"))
+        assertTrue(timestamps.getLong("routeSelectEndMs") <= timestamps.getLong("captureStartMs"))
+        assertTrue(timestamps.getLong("captureStartMs") <= timestamps.getLong("captureEndMs"))
+        assertTrue(timestamps.getLong("captureEndMs") <= timestamps.getLong("endpointDispatchMs"))
+        assertTrue(timestamps.getLong("routeReleaseStartMs") <= timestamps.getLong("routeReleaseEndMs"))
+    }
 
     @Test
     fun fetchRecentVoiceTurnMetrics_parsesRecentServerTelemetry() {
