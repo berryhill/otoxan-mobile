@@ -185,7 +185,8 @@ class RealtimeVoiceServerProtocolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("/voice-turn", created["httpFallback"]["endpoint"])
         self.assertEqual("phase2-eventbus-state-machine", created["phase"])
         self.assertEqual("otoxan-mobile-cancellable-assistant-prep", created["assistantPrepContract"]["name"])
-        self.assertEqual("stt.final", created["assistantPrepContract"]["startAfterEvent"])
+        self.assertEqual("stt.partial", created["assistantPrepContract"]["startAfterEvent"])
+        self.assertEqual("stable_non_final_stt_partial_only", created["assistantPrepContract"]["startPolicy"])
         self.assertEqual("created", created["state"])
         self.assertEqual(1, created["sequence"])
 

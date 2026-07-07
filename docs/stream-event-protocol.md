@@ -156,12 +156,13 @@ Closes the explicit realtime session. Server response: `session.closed`, state `
 
 `POST /voice-stream` is an experimental backend transport shim for the same explicit push-to-talk turn that `/voice-turn` serves. It is disabled by default and returns `404` unless `OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT` is truthy. When enabled, the server replies as `application/x-ndjson` with one JSON event per line:
 
-1. `stream.started` — includes protocol descriptor, fallback pointer, flag name, privacy defaults, STT event schema, STT budget model, and the optional Moonshine streaming adapter seam.
+1. `stream.started` — includes protocol descriptor, fallback pointer, flag name, privacy defaults, STT event schema, STT budget model, safe assistant prep contract, and the optional Moonshine streaming adapter seam.
 2. `stt.partial` — optional diagnostic transcript-state readback: provider/status/source plus transcript length only; no standalone raw transcript text persistence.
-3. `stt.final` — final transcript-state readback before the wrapped voice turn: provider/status/source plus final transcript length only.
-4. `stt.completed` — emits STT provider/status/latency/budget readback without raw audio or transcript text persistence.
-5. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
-6. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics and STT budget model.
+3. `assistant.prep.started` — optional safe prep marker emitted only after a stable non-final STT partial passes policy gates; no assistant invocation and no raw transcript text.
+4. `stt.final` — final transcript-state readback before the wrapped voice turn: provider/status/source plus final transcript length only.
+5. `stt.completed` — emits STT provider/status/latency/budget readback without raw audio or transcript text persistence.
+6. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
+7. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics, STT budget model, and assistant prep contract.
 
 This endpoint does not add always-on capture, raw-audio persistence, or a new assistant authority surface. It is a backend transport experiment so the Android client can test stream-shaped parsing while retaining the proven `/voice-turn` contract and fallback.
 
@@ -243,6 +244,42 @@ Budget model published on `stream.started`, `stt.completed`, and `stream.complet
     "transcriptSource": "moonshine-stt|hermes-stt|route-evidence-fallback|proof|debug",
     "textOmitted": true,
     "evidenceClass": "transcript_state_readback_not_hardware_proof"
+  },
+  "privacy": {
+    "rawTranscriptPersistedByEvent": false,
+    "rawAudioPersisted": false
+  }
+}
+```
+
+### Safe assistant prep contract
+
+`assistant.prep.started` is optional and may appear after `stt.partial` only when the server has a stable non-final STT partial. It must not start from VAD-only boundaries, route-evidence fallback text, debug transcripts, proof-mode text, empty/short partials, or final-only transcript state. The prep event is a prewarm/readback marker only; it does not invoke the assistant and omits raw transcript text.
+
+```json
+{
+  "type": "assistant.prep.started",
+  "streamId": "vs_...",
+  "sequence": 3,
+  "assistantPrepContract": {
+    "policy": {
+      "name": "otoxan-mobile-safe-assistant-prep",
+      "version": 1,
+      "trigger": "stable_non_final_stt_partial",
+      "allowedTranscriptSources": ["hermes-stt", "moonshine-stt"],
+      "allowedSttStatuses": ["success"],
+      "minTranscriptChars": 12,
+      "minTranscriptWords": 3,
+      "assistantInvokedByPrep": false,
+      "evidenceClass": "safe_prep_policy_readback_not_hardware_proof"
+    },
+    "trigger": "stable_non_final_stt_partial",
+    "status": "started",
+    "transcriptLength": 42,
+    "transcriptSource": "hermes-stt",
+    "isFinal": false,
+    "textOmitted": true,
+    "assistantInvoked": false
   },
   "privacy": {
     "rawTranscriptPersistedByEvent": false,

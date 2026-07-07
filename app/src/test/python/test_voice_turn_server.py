@@ -50,6 +50,8 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_MOONSHINE_STREAMING_ADAPTER",
                 "OTOXAN_MOONSHINE_STREAMING_COMMAND",
                 "OTOXAN_ASSISTANT_PREP_DEADLINE_SECONDS",
+                "OTOXAN_ASSISTANT_PREP_MIN_PARTIAL_CHARS",
+                "OTOXAN_ASSISTANT_PREP_MIN_PARTIAL_WORDS",
             )
         }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
@@ -257,11 +259,14 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("otoxan-mobile-stt-stream-events", descriptor["sttEventSchema"]["name"])
         self.assertEqual(1500, descriptor["sttBudget"]["targetMs"])
         self.assertEqual("latency_budget_readback_not_hardware_proof", descriptor["sttBudget"]["evidenceClass"])
-        self.assertEqual("otoxan-mobile-cancellable-assistant-prep", descriptor["assistantPrepContract"]["name"])
-        self.assertFalse(descriptor["assistantPrepContract"]["enabled"])
-        self.assertFalse(descriptor["assistantPrepContract"]["speculativePrepAllowed"])
-        self.assertEqual("stt.final", descriptor["assistantPrepContract"]["startAfterEvent"])
-        self.assertIn("input_audio.clear", descriptor["assistantPrepContract"]["cancelEvents"])
+        contract = descriptor["assistantPrepContract"]
+        self.assertEqual("otoxan-mobile-cancellable-assistant-prep", contract["name"])
+        self.assertFalse(contract["enabled"])
+        self.assertFalse(contract["speculativePrepAllowed"])
+        self.assertEqual("stt.partial", contract["startAfterEvent"])
+        self.assertEqual("stable_non_final_stt_partial_only", contract["startPolicy"])
+        self.assertIn("route_evidence_fallback", contract["neverTriggerFrom"])
+        self.assertIn("input_audio.clear", contract["cancelEvents"])
         self.assertEqual("moonshine-streaming-adapter", descriptor["moonshineStreamingAdapter"]["name"])
         self.assertFalse(descriptor["moonshineStreamingAdapter"]["enabled"])
         self.assertFalse(descriptor["moonshineStreamingAdapter"]["hardDependency"])
@@ -276,13 +281,18 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(1, contract["version"])
         self.assertFalse(contract["enabled"])
         self.assertFalse(contract["speculativePrepAllowed"])
-        self.assertTrue(contract["requiresFinalTranscript"])
+        self.assertFalse(contract["requiresFinalTranscript"])
+        self.assertEqual("stt.partial", contract["startAfterEvent"])
+        self.assertEqual("stable_non_final_stt_partial_only", contract["startPolicy"])
+        self.assertEqual(12, contract["minTranscriptChars"])
+        self.assertEqual(3, contract["minTranscriptWords"])
+        self.assertIn("route_evidence_fallback", contract["neverTriggerFrom"])
         self.assertEqual(2250, contract["deadlineMs"])
         self.assertEqual(
             ["input_audio.clear", "session.close", "turn.timeout", "new_turn_started"],
             contract["cancelEvents"],
         )
-        self.assertEqual("forbidden_until_cancellable_lane_exists", contract["currentImplementation"]["preSttAssistantWork"])
+        self.assertEqual("forbidden_until_stt_stability_policy_passes", contract["currentImplementation"]["preStablePartialAssistantWork"])
         self.assertTrue(contract["privacy"]["explicitSessionOnly"])
         self.assertFalse(contract["privacy"]["rawAudioPersisted"])
 
@@ -292,7 +302,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         contract = result["assistantPrepContract"]
         self.assertEqual("otoxan-mobile-cancellable-assistant-prep", contract["name"])
         self.assertFalse(contract["speculativePrepAllowed"])
-        self.assertEqual("stt.final", contract["startAfterEvent"])
+        self.assertEqual("stt.partial", contract["startAfterEvent"])
+        self.assertEqual("stable_non_final_stt_partial_only", contract["startPolicy"])
         self.assertIn("session.close", contract["cancelEvents"])
 
     def test_moonshine_streaming_adapter_descriptor_enables_only_when_command_configured(self):
@@ -358,6 +369,63 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(1500, events[5]["sttBudget"]["targetMs"])
         self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[0]))
         self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[3]))
+        self.assertNotIn("assistant.prep.started", [event["type"] for event in events])
+
+    def test_voice_stream_starts_assistant_prep_only_from_stable_stt_partial(self):
+        os.environ["OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"] = "1"
+        stable_result = {
+            "ok": True,
+            "transcript": "route check confirms ray ban microphone path",
+            "assistantText": "Route path is live.",
+            "ttsPcm16Mono16kBase64": "",
+            "audioFormat": "pcm_s16le_16khz_mono",
+            "bytesReceived": 320,
+            "provider": "mobile-fast",
+            "transcriptSource": "hermes-stt",
+            "sttStatus": "success",
+            "sttLatencyMs": 120,
+            "sttProvider": "hermes-stt",
+            "routeEvidence": self._payload()["routeEvidence"],
+        }
+
+        with mock.patch.object(voice_turn_server, "handle_voice_turn", return_value=stable_result) as turn:
+            events = voice_turn_server.handle_voice_stream(self._payload())
+
+        turn.assert_called_once()
+        self.assertEqual(["stream.started", "stt.partial", "assistant.prep.started", "stt.final", "stt.completed", "response.completed", "stream.completed"], [event["type"] for event in events])
+        self.assertEqual(list(range(1, 8)), [event["sequence"] for event in events])
+        prep = events[2]["assistantPrepContract"]
+        self.assertEqual("stable_non_final_stt_partial", prep["trigger"])
+        self.assertEqual("started", prep["status"])
+        self.assertEqual("hermes-stt", prep["transcriptSource"])
+        self.assertFalse(prep["isFinal"])
+        self.assertFalse(prep["assistantInvoked"])
+        self.assertTrue(prep["textOmitted"])
+        self.assertEqual(len(stable_result["transcript"]), prep["transcriptLength"])
+        self.assertFalse(events[2]["privacy"]["rawTranscriptPersistedByEvent"])
+        self.assertNotIn(stable_result["transcript"], json.dumps(events[2]))
+
+    def test_voice_stream_rejects_unstable_partial_for_assistant_prep(self):
+        unstable_result = {
+            "ok": True,
+            "transcript": "short",
+            "assistantText": "",
+            "ttsPcm16Mono16kBase64": "",
+            "audioFormat": "pcm_s16le_16khz_mono",
+            "bytesReceived": 320,
+            "provider": "mobile-fast",
+            "transcriptSource": "route-evidence-fallback",
+            "sttStatus": "empty",
+            "sttLatencyMs": None,
+            "sttProvider": "not-run",
+            "routeEvidence": self._payload()["routeEvidence"],
+        }
+
+        with mock.patch.object(voice_turn_server, "handle_voice_turn", return_value=unstable_result):
+            events = voice_turn_server.handle_voice_stream(self._payload())
+
+        self.assertEqual(["stream.started", "stt.partial", "stt.final", "stt.completed", "response.completed", "stream.completed"], [event["type"] for event in events])
+        self.assertNotIn("assistant.prep.started", [event["type"] for event in events])
 
     def test_voice_stream_http_endpoint_is_404_until_experimental_flag_enabled(self):
         server = voice_turn_server.ThreadingHTTPServer(("127.0.0.1", 0), voice_turn_server.Handler)

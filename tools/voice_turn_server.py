@@ -108,6 +108,12 @@ ASSISTANT_PREP_CONTRACT_VERSION = 1
 ASSISTANT_PREP_DEFAULT_DEADLINE_SECONDS = 12.0
 STT_STREAM_EVENT_SCHEMA_NAME = "otoxan-mobile-stt-stream-events"
 STT_STREAM_EVENT_SCHEMA_VERSION = 1
+ASSISTANT_PREP_POLICY_NAME = "otoxan-mobile-safe-assistant-prep"
+ASSISTANT_PREP_POLICY_VERSION = 1
+ASSISTANT_PREP_MIN_PARTIAL_CHARS = int(os.environ.get("OTOXAN_ASSISTANT_PREP_MIN_PARTIAL_CHARS", "12"))
+ASSISTANT_PREP_MIN_PARTIAL_WORDS = int(os.environ.get("OTOXAN_ASSISTANT_PREP_MIN_PARTIAL_WORDS", "3"))
+ASSISTANT_PREP_STABLE_TRANSCRIPT_SOURCES = {"hermes-stt", "moonshine-stt"}
+ASSISTANT_PREP_STABLE_STT_STATUSES = {"success"}
 REALTIME_VAD_DIAGNOSTIC_PROVIDER = "energy-vad-phase3"
 REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD = int(os.environ.get("OTOXAN_REALTIME_VAD_PEAK_THRESHOLD", "700"))
 REALTIME_VAD_DIAGNOSTIC_END_SILENCE_CHUNKS = int(os.environ.get("OTOXAN_REALTIME_VAD_END_SILENCE_CHUNKS", "3"))
@@ -171,8 +177,21 @@ def assistant_prep_contract() -> dict[str, Any]:
         "version": ASSISTANT_PREP_CONTRACT_VERSION,
         "enabled": False,
         "speculativePrepAllowed": False,
-        "requiresFinalTranscript": True,
-        "startAfterEvent": "stt.final",
+        "requiresFinalTranscript": False,
+        "startAfterEvent": "stt.partial",
+        "startPolicy": "stable_non_final_stt_partial_only",
+        "allowedTranscriptSources": sorted(ASSISTANT_PREP_STABLE_TRANSCRIPT_SOURCES),
+        "allowedSttStatuses": sorted(ASSISTANT_PREP_STABLE_STT_STATUSES),
+        "minTranscriptChars": ASSISTANT_PREP_MIN_PARTIAL_CHARS,
+        "minTranscriptWords": ASSISTANT_PREP_MIN_PARTIAL_WORDS,
+        "neverTriggerFrom": [
+            "vad_only",
+            "route_evidence_fallback",
+            "debug_transcript",
+            "proof_mode",
+            "empty_or_unstable_partial",
+            "final_only_transcript",
+        ],
         "cancelEvents": [
             "input_audio.clear",
             "session.close",
@@ -187,9 +206,9 @@ def assistant_prep_contract() -> dict[str, Any]:
             "rawTranscriptPersistedByContract": False,
         },
         "currentImplementation": {
-            "mobileFast": "post_stt_final_deadline_thread",
+            "mobileFast": "post_stable_partial_prep_marker_then_post_stt_final_turn",
             "xanderSessionFallback": "opt_in_post_stt_final_deadline_thread",
-            "preSttAssistantWork": "forbidden_until_cancellable_lane_exists",
+            "preStablePartialAssistantWork": "forbidden_until_stt_stability_policy_passes",
         },
         "evidenceClass": "contract_readback_not_hardware_proof",
     }
@@ -360,7 +379,42 @@ def stt_stream_event_schema() -> dict[str, Any]:
                 ],
                 "emission": "after /voice-turn STT work completes, before stream.completed",
             },
+            {
+                "type": "assistant.prep.started",
+                "sequence": "monotonic stream sequence when emitted",
+                "payload": [
+                    "assistantPrepContract.policy.name",
+                    "assistantPrepContract.trigger",
+                    "assistantPrepContract.status",
+                    "assistantPrepContract.transcriptLength",
+                    "assistantPrepContract.transcriptSource",
+                    "assistantPrepContract.textOmitted",
+                    "assistantPrepContract.assistantInvoked",
+                ],
+                "emission": "optional safe prewarm marker; emitted only after a stable non-final STT partial passes policy gates",
+            },
         ],
+    }
+
+
+def assistant_prep_policy_descriptor() -> dict[str, Any]:
+    contract = assistant_prep_contract()
+    return {
+        "name": ASSISTANT_PREP_POLICY_NAME,
+        "version": ASSISTANT_PREP_POLICY_VERSION,
+        "trigger": contract["startPolicy"],
+        "allowedTranscriptSources": contract["allowedTranscriptSources"],
+        "allowedSttStatuses": contract["allowedSttStatuses"],
+        "minTranscriptChars": contract["minTranscriptChars"],
+        "minTranscriptWords": contract["minTranscriptWords"],
+        "neverTriggerFrom": contract["neverTriggerFrom"],
+        "assistantInvokedByPrep": False,
+        "privacy": {
+            "rawTranscriptPersistedByPrep": False,
+            "rawAudioPersisted": False,
+            "explicitSessionOnly": True,
+        },
+        "evidenceClass": "safe_prep_policy_readback_not_hardware_proof",
     }
 
 
@@ -409,6 +463,54 @@ def _stt_transcript_state_event_from_voice_turn(result: Mapping[str, Any], strea
             "transcriptSource": result.get("transcriptSource"),
             "textOmitted": True,
             "evidenceClass": "transcript_state_readback_not_hardware_proof",
+        },
+        "privacy": {
+            "rawTranscriptPersistedByEvent": False,
+            "rawAudioPersisted": False,
+        },
+    }
+
+
+def _word_count(text: str) -> int:
+    return len([word for word in text.strip().split() if word])
+
+
+def _assistant_prep_event_from_stable_partial(result: Mapping[str, Any], stream_id: str, sequence: int) -> dict[str, Any] | None:
+    """Emit prep only after a stable non-final STT partial policy gate.
+
+    The event is a safe prewarm/readback marker. It does not invoke the assistant
+    and never persists raw transcript text. Proof, debug, route-evidence fallback,
+    VAD-only, empty, and short/unstable partial states are deliberately rejected.
+    """
+    transcript = str(result.get("transcript") or "").strip()
+    transcript_source = str(result.get("transcriptSource") or "")
+    stt_status = str(result.get("sttStatus") or "")
+    transcript_length = len(transcript)
+    transcript_word_count = _word_count(transcript)
+    stable = (
+        transcript_source in ASSISTANT_PREP_STABLE_TRANSCRIPT_SOURCES
+        and stt_status in ASSISTANT_PREP_STABLE_STT_STATUSES
+        and transcript_length >= ASSISTANT_PREP_MIN_PARTIAL_CHARS
+        and transcript_word_count >= ASSISTANT_PREP_MIN_PARTIAL_WORDS
+    )
+    if not stable:
+        return None
+    return {
+        "type": "assistant.prep.started",
+        "streamId": stream_id,
+        "sequence": sequence,
+        "assistantPrepContract": {
+            "policy": assistant_prep_policy_descriptor(),
+            "trigger": "stable_non_final_stt_partial",
+            "status": "started",
+            "transcriptLength": transcript_length,
+            "transcriptWordCount": transcript_word_count,
+            "transcriptSource": transcript_source,
+            "sttStatus": stt_status,
+            "isFinal": False,
+            "textOmitted": True,
+            "assistantInvoked": False,
+            "evidenceClass": "safe_prep_policy_readback_not_hardware_proof",
         },
         "privacy": {
             "rawTranscriptPersistedByEvent": False,
@@ -591,6 +693,7 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             "transport": stream_transport_descriptor(),
             "sttEventSchema": stt_stream_event_schema(),
             "sttBudget": stt_budget_model(),
+            "assistantPrepContract": assistant_prep_contract(),
             "privacy": {
                 "explicitSessionOnly": True,
                 "rawAudioPersisted": False,
@@ -599,14 +702,17 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         }
     ]
     result = handle_voice_turn(payload)
-    events.append(_stt_transcript_state_event_from_voice_turn(result, stream_id, 2, "stt.partial", False))
-    events.append(_stt_transcript_state_event_from_voice_turn(result, stream_id, 3, "stt.final", True))
-    events.append(_stt_completed_event_from_voice_turn(result, stream_id, 4))
+    events.append(_stt_transcript_state_event_from_voice_turn(result, stream_id, len(events) + 1, "stt.partial", False))
+    prep_event = _assistant_prep_event_from_stable_partial(result, stream_id, len(events) + 1)
+    if prep_event is not None:
+        events.append(prep_event)
+    events.append(_stt_transcript_state_event_from_voice_turn(result, stream_id, len(events) + 1, "stt.final", True))
+    events.append(_stt_completed_event_from_voice_turn(result, stream_id, len(events) + 1))
     events.append(
         {
             "type": "response.completed",
             "streamId": stream_id,
-            "sequence": 5,
+            "sequence": len(events) + 1,
             "voiceTurn": result,
         }
     )
@@ -614,10 +720,11 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         {
             "type": "stream.completed",
             "streamId": stream_id,
-            "sequence": 6,
+            "sequence": len(events) + 1,
             "elapsedMs": _elapsed_ms(started),
             "fallback": stream_transport_descriptor()["canonicalFallback"],
             "sttBudget": stt_budget_model(),
+            "assistantPrepContract": assistant_prep_contract(),
         }
     )
     return events
