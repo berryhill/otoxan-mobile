@@ -338,6 +338,10 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
             state.captureSplitMetrics.forEach { metric ->
                 CaptureSplitRow(metric)
             }
+            Text("Diagnostic timelines for real-device proof", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            DiagnosticTimelineBlock(state.routeDiagnosticTimeline)
+            DiagnosticTimelineBlock(state.sttDiagnosticTimeline)
+            DiagnosticTimelineBlock(state.playbackDiagnosticTimeline)
             Text("Reliability and latency evidence classes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             state.phoneTelemetryEvidenceClasses.forEach { evidenceClass ->
                 EvidenceClassRow(evidenceClass)
@@ -421,6 +425,27 @@ private fun CaptureSplitRow(metric: CaptureSplitMetric) {
             Text(metric.detail, style = MaterialTheme.typography.bodySmall)
         }
         Text(metric.value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun DiagnosticTimelineBlock(summary: DiagnosticTimelineSummary) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(summary.summaryText, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+        summary.items.forEach { item ->
+            DiagnosticTimelineRow(item)
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticTimelineRow(item: DiagnosticTimelineItem) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(item.label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+            Text(item.detail, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(item.timingText, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
     }
 }
 

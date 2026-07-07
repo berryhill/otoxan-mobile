@@ -64,6 +64,28 @@ data class CaptureSplitMetric(
     val detail: String
 )
 
+data class DiagnosticTimelineItem(
+    val label: String,
+    val atMs: Long?,
+    val durationMs: Long?,
+    val detail: String
+) {
+    val timingText: String = when {
+        atMs != null && durationMs != null -> "t+${atMs}ms · ${durationMs}ms"
+        atMs != null -> "t+${atMs}ms"
+        durationMs != null -> "${durationMs}ms"
+        else -> "unknown"
+    }
+}
+
+data class DiagnosticTimelineSummary(
+    val title: String,
+    val evidenceClass: String,
+    val items: List<DiagnosticTimelineItem>
+) {
+    val summaryText: String = "$title · ${items.count { it.atMs != null || it.durationMs != null }}/${items.size} timed · $evidenceClass"
+}
+
 enum class EvidenceClassState(val label: String) {
     Proven("proven"),
     NeedsEvidence("needs evidence"),
@@ -172,10 +194,18 @@ data class OtoxanUiState(
     val turnStage: String = "Idle",
     val turnTotalMs: Long? = null,
     val routeSelectMs: Long? = null,
+    val routeSelectStartMs: Long? = null,
+    val routeSelectEndMs: Long? = null,
+    val captureStartMs: Long? = null,
+    val captureEndMs: Long? = null,
+    val speechFirstDetectedMs: Long? = null,
+    val speechLastDetectedMs: Long? = null,
     val captureReadMs: Long? = null,
     val captureExpectedMs: Long? = null,
     val backendRoundTripMs: Long? = null,
     val routeReleaseMs: Long? = null,
+    val routeReleaseStartMs: Long? = null,
+    val routeReleaseEndMs: Long? = null,
     val playbackTotalMs: Long? = null,
     val playbackKind: String = "unknown",
     val endpointDispatchMs: Long? = null,
@@ -186,6 +216,7 @@ data class OtoxanUiState(
     val assistantPlaybackStartMs: Long? = null,
     val backendResponseReadyMs: Long? = null,
     val ttfaMs: Long? = null,
+    val ttfaBackendWaitAfterReleaseMs: Long? = null,
     val postCaptureAckDelayMs: Long? = null,
     val httpStatusCode: Int? = null,
     val requestBytes: Int? = null,
@@ -263,6 +294,108 @@ val OtoxanUiState.captureSplitMetrics: List<CaptureSplitMetric>
             label = "Endpoint wait",
             value = endpointWaitMs.toLatencyMsText(),
             detail = "dispatch ${endpointDispatchMs.toLatencyMsText()} → response ${endpointResponseReadyMs.toLatencyMsText()}"
+        )
+    )
+
+val OtoxanUiState.routeDiagnosticTimeline: DiagnosticTimelineSummary
+    get() = DiagnosticTimelineSummary(
+        title = "Route/capture timeline",
+        evidenceClass = "phone-side route diagnostic — hardware proof only when paired with real Ray-Ban route and real speech",
+        items = listOf(
+            DiagnosticTimelineItem(
+                label = "Wearable route select",
+                atMs = routeSelectStartMs,
+                durationMs = routeSelectMs,
+                detail = "${selectedInputName.ifBlank { "unknown route" }} (${selectedInputType.ifBlank { "unknown" }})"
+            ),
+            DiagnosticTimelineItem(
+                label = "Capture window",
+                atMs = captureStartMs,
+                durationMs = captureReadMs,
+                detail = "${capturedBytes}/${expectedCaptureBytes} bytes; peak=$capturePeakAmplitude; usable=${captureUsable?.toString() ?: "unknown"}"
+            ),
+            DiagnosticTimelineItem(
+                label = "Speech first/last detected",
+                atMs = speechFirstDetectedMs,
+                durationMs = speechWindowMs,
+                detail = "first=${speechFirstDetectedMs.toLatencyMsText()} last=${speechLastDetectedMs.toLatencyMsText()}"
+            ),
+            DiagnosticTimelineItem(
+                label = "Route release",
+                atMs = routeReleaseStartMs,
+                durationMs = routeReleaseMs,
+                detail = "release end=${routeReleaseEndMs.toLatencyMsText()}; policy=$routeReleasePolicy"
+            )
+        )
+    )
+
+val OtoxanUiState.sttDiagnosticTimeline: DiagnosticTimelineSummary
+    get() = DiagnosticTimelineSummary(
+        title = "STT/backend timeline",
+        evidenceClass = "backend STT diagnostic only — not hardware proof",
+        items = listOf(
+            DiagnosticTimelineItem(
+                label = "Endpoint dispatch",
+                atMs = endpointDispatchMs,
+                durationMs = requestBuildMs,
+                detail = "transport=$transportKind; request=${requestBytes?.toString() ?: "unknown"} bytes"
+            ),
+            DiagnosticTimelineItem(
+                label = "Upload + HTTP wait/read",
+                atMs = endpointDispatchMs,
+                durationMs = httpExchangeMs,
+                detail = "upload=${uploadMs.toLatencyMsText()}; wait=${responseCodeWaitMs.toLatencyMsText()}; read=${responseReadMs.toLatencyMsText()}; http=${httpStatusCode?.toString() ?: "unknown"}"
+            ),
+            DiagnosticTimelineItem(
+                label = "Selected STT",
+                atMs = null,
+                durationMs = sttLatencyMs?.toLong(),
+                detail = "${sttProvider ?: "unknown"}/${sttStatus ?: "unknown"}; source=${transcriptSource ?: "unknown"}; budget=${sttBudgetRemainingMs?.let { "${it}ms" } ?: "unknown"}"
+            ),
+            DiagnosticTimelineItem(
+                label = "Primary/fallback STT",
+                atMs = null,
+                durationMs = primarySttMs?.toLong() ?: fallbackSttMs?.toLong(),
+                detail = "primary=${sttAttemptText(primarySttProvider, primarySttStatus, primarySttMs)}; fallback=${sttAttemptText(fallbackSttProvider, fallbackSttStatus, fallbackSttMs)}"
+            ),
+            DiagnosticTimelineItem(
+                label = "Backend response ready",
+                atMs = backendResponseReadyMs,
+                durationMs = backendRoundTripMs,
+                detail = "server=${backendTotalMs.toNullableMsText()}; transcript=${transcriptTotalMs.toNullableMsText()}; xander=${xanderSessionMs.toNullableMsText()}; responseBuild=${responseBuildMs.toNullableMsText()}"
+            )
+        )
+    )
+
+val OtoxanUiState.playbackDiagnosticTimeline: DiagnosticTimelineSummary
+    get() = DiagnosticTimelineSummary(
+        title = "Playback/TTFA timeline",
+        evidenceClass = "phone-side playback diagnostic — proves audible path only with operator-observed device playback",
+        items = listOf(
+            DiagnosticTimelineItem(
+                label = "Post-capture local ack",
+                atMs = localAckStartMs,
+                durationMs = localAckTotalMs,
+                detail = "$localAckKind; postCaptureDelay=${postCaptureAckDelayMs.toLatencyMsText()}"
+            ),
+            DiagnosticTimelineItem(
+                label = "Backend wait after release",
+                atMs = routeReleaseEndMs,
+                durationMs = ttfaBackendWaitAfterReleaseMs,
+                detail = "responseReady=${backendResponseReadyMs.toLatencyMsText()}"
+            ),
+            DiagnosticTimelineItem(
+                label = "Assistant playback start",
+                atMs = assistantPlaybackStartMs,
+                durationMs = null,
+                detail = "kind=$playbackKind; TTFA=${ttfaMs.toLatencyMsText()}"
+            ),
+            DiagnosticTimelineItem(
+                label = "Playback total",
+                atMs = assistantPlaybackStartMs,
+                durationMs = playbackTotalMs,
+                detail = "mode=${playbackMode.label}; tts=$ttsBytes bytes"
+            )
         )
     )
 
@@ -408,6 +541,19 @@ private val OtoxanUiState.endpointWaitMs: Long?
         (endpointResponseReadyMs - endpointDispatchMs).coerceAtLeast(0L)
     } else {
         backendRoundTripMs
+    }
+
+private val OtoxanUiState.speechWindowMs: Long?
+    get() = if (speechFirstDetectedMs != null && speechLastDetectedMs != null) {
+        (speechLastDetectedMs - speechFirstDetectedMs).coerceAtLeast(0L)
+    } else {
+        null
+    }
+
+private val OtoxanUiState.httpExchangeMs: Long?
+    get() {
+        val values = listOfNotNull(uploadMs, responseCodeWaitMs, responseReadMs)
+        return values.takeIf { it.isNotEmpty() }?.sum()
     }
 
 private val OtoxanUiState.firstAudioLatencyDetail: String
