@@ -261,6 +261,8 @@ class HttpXanderVoiceClientTest {
                       "mobileFastModel": "MiniMax-M3",
                       "mobileFastTimeoutSeconds": 4.0,
                       "mobileFastHardTimeoutSeconds": 4.0,
+                      "mobileFastSessionFallbackEnabled": true,
+                      "mobileFastSessionFallbackHardTimeoutSeconds": 0.5,
                       "mobileFastFailureReason": "minimax-m3-chat-completions-parser returned no spoken content",
                       "xanderFallbackSessionStatus": 0,
                       "xanderFallbackSkipped": 0,
@@ -330,6 +332,8 @@ class HttpXanderVoiceClientTest {
         assertEquals("MiniMax-M3", result.mobileFastModel)
         assertEquals(4.0, result.mobileFastTimeoutSeconds!!, 0.01)
         assertEquals(4.0, result.mobileFastHardTimeoutSeconds!!, 0.01)
+        assertEquals(true, result.mobileFastSessionFallbackEnabled)
+        assertEquals(0.5, result.mobileFastSessionFallbackHardTimeoutSeconds!!, 0.01)
         assertEquals("minimax-m3-chat-completions-parser returned no spoken content", result.mobileFastFailureReason)
         assertEquals(0, result.xanderFallbackSessionStatus)
         assertEquals(0, result.xanderFallbackSkipped)
@@ -487,9 +491,13 @@ class HttpXanderVoiceClientTest {
                     mobileFastModel = "MiniMax-M3",
                     mobileFastTimeoutSeconds = 4.0,
                     mobileFastHardTimeoutSeconds = 4.0,
+                    mobileFastSessionFallbackEnabled = true,
+                    mobileFastSessionFallbackHardTimeoutSeconds = 0.5,
+                    mobileFastFailureReason = "minimax empty content",
                     xanderFallbackSessionStatus = 0,
                     xanderFallbackSkipped = 1,
                     xanderFallbackTimedOut = 1,
+                    xanderFallbackFailureReason = "deadline-timeout-after-0.5s",
                     provider = "xander-session",
                     turnOutcomeStatus = "assistant-success",
                     assistantResponseSource = "xander-session-fallback",
@@ -551,8 +559,13 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"mobileFastProvider\":\"minimax\""))
         assertTrue(requestBody.contains("\"mobileFastModel\":\"MiniMax-M3\""))
         assertTrue(requestBody.contains("\"mobileFastTimeoutSeconds\":4.0"))
+        assertTrue(requestBody.contains("\"mobileFastHardTimeoutSeconds\":4.0"))
+        assertTrue(requestBody.contains("\"mobileFastSessionFallbackEnabled\":true"))
+        assertTrue(requestBody.contains("\"mobileFastSessionFallbackHardTimeoutSeconds\":0.5"))
+        assertTrue(requestBody.contains("\"mobileFastFailureReason\":\"minimax empty content\""))
         assertTrue(requestBody.contains("\"xanderFallbackSkipped\":1"))
         assertTrue(requestBody.contains("\"xanderFallbackTimedOut\":1"))
+        assertTrue(requestBody.contains("\"xanderFallbackFailureReason\":\"deadline-timeout-after-0.5s\""))
         assertTrue(requestBody.contains("\"turnOutcomeStatus\":\"assistant-success\""))
         assertTrue(requestBody.contains("\"assistantResponseSource\":\"xander-session-fallback\""))
         assertTrue(requestBody.contains("\"turnOutcomeEvidenceClass\":\"backend_turn_outcome_not_hardware_proof\""))
@@ -714,7 +727,7 @@ class HttpXanderVoiceClientTest {
                             "route": {"inputName": "RB Meta 03YS", "inputType": "TYPE_BLUETOOTH_SCO"},
                             "totals": {"turnTotalMs": 12000},
                             "perceivedLatency": {"ttfaMs": 5500, "postCaptureAckDelayMs": 125},
-                            "backend": {"roundTripMs": 7400, "sttLatencyMs": 500, "xanderFastMs": 2600},
+                            "backend": {"roundTripMs": 7400, "sttLatencyMs": 500, "xanderFastMs": 2600, "mobileFastFailureReason": "provider-empty", "mobileFastSessionFallbackEnabled": true, "mobileFastSessionFallbackHardTimeoutSeconds": 0.5, "xanderFallbackSessionStatus": 0, "xanderFallbackSkipped": 0, "xanderFallbackTimedOut": 1, "xanderFallbackFailureReason": "deadline-timeout-after-0.5s"},
                             "playback": {"totalMs": 4500},
                             "capture": {"capturedBytes": 144000, "peakAmplitude": 9000},
                             "verdict": {"transcriptSource": "hermes-stt", "pass1Status": "real-speech-proven", "assistantTextLength": 54}
@@ -746,6 +759,13 @@ class HttpXanderVoiceClientTest {
         assertEquals(5500L, record.ttfaMs)
         assertEquals(125L, record.postCaptureAckDelayMs)
         assertEquals(2600, record.xanderMs)
+        assertEquals("provider-empty", record.mobileFastFailureReason)
+        assertEquals(true, record.mobileFastSessionFallbackEnabled)
+        assertEquals(0.5, record.mobileFastSessionFallbackHardTimeoutSeconds!!, 0.01)
+        assertEquals(0, record.xanderFallbackSessionStatus)
+        assertEquals(0, record.xanderFallbackSkipped)
+        assertEquals(1, record.xanderFallbackTimedOut)
+        assertEquals("deadline-timeout-after-0.5s", record.xanderFallbackFailureReason)
         assertEquals("real-speech-proven", record.pass1Status)
     }
 

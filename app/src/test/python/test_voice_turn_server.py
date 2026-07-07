@@ -134,6 +134,11 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "transport": {"events": [{"ttsPcm16Mono16kBase64": "CCCC", "assistantTextLength": 44}]},
                 "backend": {
                     "mobileFastFailureReason": "minimax-m3-chat-completions-parser returned no spoken content",
+                    "mobileFastSessionFallbackEnabled": True,
+                    "mobileFastSessionFallbackHardTimeoutSeconds": 0.5,
+                    "xanderFallbackSessionStatus": 0,
+                    "xanderFallbackSkipped": 0,
+                    "xanderFallbackTimedOut": 1,
                     "xanderFallbackFailureReason": "deadline-timeout-after-0.5s",
                 },
                 "perceivedLatency": {"ttfaMs": 1400, "breakdown": {"postCaptureDispatchMs": 80}},
@@ -158,8 +163,23 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "minimax-m3-chat-completions-parser returned no spoken content",
                 recent["records"][0]["payload"]["backend"]["mobileFastFailureReason"],
             )
+            self.assertTrue(recent["records"][0]["summary"]["mobileFastSessionFallbackEnabled"])
+            self.assertEqual(0.5, recent["records"][0]["summary"]["mobileFastSessionFallbackHardTimeoutSeconds"])
+            self.assertEqual(0, recent["records"][0]["summary"]["xanderFallbackSessionStatus"])
+            self.assertEqual(0, recent["records"][0]["summary"]["xanderFallbackSkipped"])
+            self.assertEqual(1, recent["records"][0]["summary"]["xanderFallbackTimedOut"])
             self.assertEqual("deadline-timeout-after-0.5s", recent["records"][0]["summary"]["xanderFallbackFailureReason"])
             self.assertEqual("turn-private", recent["historySummary"]["latestTurnId"])
+            self.assertEqual(
+                "minimax-m3-chat-completions-parser returned no spoken content",
+                recent["historySummary"]["latestMobileFastFailureReason"],
+            )
+            self.assertTrue(recent["historySummary"]["latestMobileFastSessionFallbackEnabled"])
+            self.assertEqual(0.5, recent["historySummary"]["latestMobileFastSessionFallbackHardTimeoutSeconds"])
+            self.assertEqual(0, recent["historySummary"]["latestXanderFallbackSessionStatus"])
+            self.assertEqual(0, recent["historySummary"]["latestXanderFallbackSkipped"])
+            self.assertEqual(1, recent["historySummary"]["latestXanderFallbackTimedOut"])
+            self.assertEqual("deadline-timeout-after-0.5s", recent["historySummary"]["latestXanderFallbackFailureReason"])
             self.assertEqual(1, recent["historySummary"]["failureCount"])
         finally:
             Path(metrics_path).unlink(missing_ok=True)

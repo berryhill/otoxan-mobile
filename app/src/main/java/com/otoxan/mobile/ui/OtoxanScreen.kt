@@ -483,8 +483,17 @@ private fun TelemetryHistoryRow(index: Int, pass: TelemetryPassSummary) {
                     .background(if (pass.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, RoundedCornerShape(20.dp))
             )
         }
+        val recoveryText = listOfNotNull(
+            pass.mobileFastSessionFallbackEnabled?.let { "fallbackEnabled=$it" },
+            pass.mobileFastSessionFallbackHardTimeoutSeconds?.let { "fallbackDeadline=${it}s" },
+            pass.xanderFallbackSessionStatus?.let { "fallbackStatus=$it" },
+            pass.xanderFallbackSkipped?.let { "fallbackSkipped=$it" },
+            pass.xanderFallbackTimedOut?.let { "fallbackTimedOut=$it" },
+            pass.mobileFastFailureReason?.let { "mobileFastFailure=$it" },
+            pass.xanderFallbackFailureReason?.let { "fallbackFailure=$it" }
+        ).joinToString("; ")
         Text(
-            "acceptance=${acceptance.summaryText}; backend=${pass.backendMs?.let { "${it}ms" } ?: "?"}; stt=${pass.sttMs?.let { "${it}ms" } ?: "?"}; xander=${pass.xanderMs?.let { "${it}ms" } ?: "?"}; playback=${pass.playbackMs?.let { "${it}ms" } ?: "?"}; pass1=${pass.pass1Status ?: "unknown"}; source=${pass.transcriptSource ?: "unknown"}; reply=${pass.assistantTextLength} chars${pass.error?.let { "; error=$it" } ?: ""}",
+            "acceptance=${acceptance.summaryText}; backend=${pass.backendMs?.let { "${it}ms" } ?: "?"}; stt=${pass.sttMs?.let { "${it}ms" } ?: "?"}; xander=${pass.xanderMs?.let { "${it}ms" } ?: "?"}; playback=${pass.playbackMs?.let { "${it}ms" } ?: "?"}; pass1=${pass.pass1Status ?: "unknown"}; source=${pass.transcriptSource ?: "unknown"}; reply=${pass.assistantTextLength} chars${recoveryText.takeIf { it.isNotBlank() }?.let { "; recovery=$it" } ?: ""}${pass.error?.let { "; error=$it" } ?: ""}",
             style = MaterialTheme.typography.bodySmall
         )
     }
