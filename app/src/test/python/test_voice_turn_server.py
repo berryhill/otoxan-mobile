@@ -755,6 +755,53 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(4000, stored["payload"]["timingContract"]["targets"]["backendRoundTripMs"])
         self.assertEqual(12, stored["payload"]["verdict"]["transcriptLength"])
 
+    def test_voice_turn_metrics_backfills_incomplete_timing_contract_without_losing_anchors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "metrics.jsonl"
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = str(path)
+            payload = {
+                "type": "otoxan_mobile_voice_turn_metrics",
+                "schemaVersion": 1,
+                "timingContract": {
+                    "anchors": {
+                        "turnStartMs": 0,
+                        "ttfaMs": "local ack or assistant playback start",
+                    },
+                    "targets": {"ttfaMs": 1500},
+                },
+                "turn": {"turnId": "turn-contract", "success": True, "stage": "complete"},
+                "totals": {"turnTotalMs": 8010},
+                "backend": {"roundTripMs": 3900},
+                "perceivedLatency": {
+                    "ttfaMs": 1440,
+                    "localAckKind": "earcon_while_route_active",
+                    "localAckStartMs": 1440,
+                    "localAckTotalMs": 90,
+                    "assistantPlaybackStartMs": 4700,
+                    "backendResponseReadyMs": 4560,
+                    "breakdown": {
+                        "routeSelectMs": 40,
+                        "captureReadMs": 1320,
+                        "postCaptureDispatchMs": 80,
+                        "backendWaitAfterReleaseMs": 330,
+                    },
+                },
+            }
+
+            voice_turn_server.handle_voice_turn_metrics(payload, remote_addr="phone")
+            stored = voice_turn_server.latest_voice_turn_metrics()["latest"]
+
+        contract = stored["payload"]["timingContract"]
+        self.assertEqual(voice_turn_server.TIMING_CONTRACT_NAME, contract["name"])
+        self.assertEqual(voice_turn_server.TIMING_CONTRACT_VERSION, contract["version"])
+        self.assertEqual(voice_turn_server.TIMING_CONTRACT_CLOCK, contract["clock"])
+        self.assertEqual("local ack or assistant playback start", contract["anchors"]["ttfaMs"])
+        self.assertEqual(voice_turn_server.TIMING_CONTRACT_TARGETS, contract["targets"])
+        self.assertEqual(80, stored["payload"]["perceivedLatency"]["postCaptureAckDelayMs"])
+        self.assertEqual(1440, stored["timingSummary"]["ttfaMs"])
+        self.assertEqual(80, stored["timingSummary"]["postCaptureAckDelayMs"])
+        self.assertEqual(4560, stored["timingSummary"]["backendResponseReadyMs"])
+
     def test_recent_metrics_exposes_timing_summary_for_new_and_legacy_records(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "metrics.jsonl"
