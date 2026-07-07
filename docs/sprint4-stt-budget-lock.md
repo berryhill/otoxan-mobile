@@ -36,6 +36,7 @@ sttLatencyMs target: 1500 ms
 repo-local total STT budget default: 1.5 s
 Moonshine/local primary command budget default: 0.75 s
 Hermes fallback minimum reserve default: 0.25 s
+Hermes fallback lane max default: 0.75 s
 ```
 
 This preserves a bounded local-STT-first path while leaving room for fallback before the backend turn consumes the 4000 ms backend target.
@@ -61,7 +62,14 @@ Override environment variables remain available for evidence runs only:
 OTOXAN_STT_TOTAL_BUDGET_SECONDS=<seconds>
 OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS=<seconds>
 OTOXAN_STT_FALLBACK_MIN_SECONDS=<seconds>
+OTOXAN_HERMES_STT_FALLBACK_TIMEOUT_SECONDS=<seconds>
 ```
+
+The fallback max is a hard upper bound for the Hermes STT fallback lane after
+Moonshine/local STT returns empty or unavailable. If that bounded fallback cannot
+produce text, the backend must keep the no-fake-transcript behavior: it reports
+the route-evidence fallback transcript source and says the words did not decode
+instead of sending route metadata to Xander as if it were user speech.
 
 Treat tuned builds as measurement artifacts until repeated real Ray-Ban/phone turns justify promoting a new default.
 

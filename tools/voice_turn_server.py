@@ -98,6 +98,7 @@ TIMING_CONTRACT_TARGETS = {
 SPRINT4_STT_TOTAL_BUDGET_SECONDS = TIMING_CONTRACT_TARGETS["sttLatencyMs"] / 1000.0
 SPRINT4_MOONSHINE_PRIMARY_BUDGET_SECONDS = 0.75
 SPRINT4_STT_FALLBACK_MIN_SECONDS = 0.25
+SPRINT4_HERMES_FALLBACK_BUDGET_SECONDS = 0.75
 EXPERIMENTAL_STREAM_TRANSPORT_ENV = "OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"
 EXPERIMENTAL_STREAM_ENDPOINT = "/voice-stream"
 STREAM_TRANSPORT_PROTOCOL_NAME = "otoxan-mobile-backend-stream"
@@ -207,9 +208,16 @@ def stt_budget_model() -> dict[str, Any]:
         0.0,
         5.0,
     )
+    fallback_max_seconds = _bounded_seconds(
+        "OTOXAN_HERMES_STT_FALLBACK_TIMEOUT_SECONDS",
+        SPRINT4_HERMES_FALLBACK_BUDGET_SECONDS,
+        0.0,
+        5.0,
+    )
     total_budget_ms = int(round(total_budget_seconds * 1000))
     primary_budget_ms = int(round(primary_budget_seconds * 1000))
     fallback_reserve_ms = int(round(fallback_reserve_seconds * 1000))
+    fallback_max_ms = int(round(fallback_max_seconds * 1000))
     fallback_budget_ms = max(0, total_budget_ms - primary_budget_ms)
     return {
         "name": "sprint4-stt-budget",
@@ -219,6 +227,7 @@ def stt_budget_model() -> dict[str, Any]:
         "totalBudgetMs": total_budget_ms,
         "primaryLocalBudgetMs": primary_budget_ms,
         "fallbackReserveMs": fallback_reserve_ms,
+        "fallbackMaxMs": fallback_max_ms,
         "fallbackBudgetMs": fallback_budget_ms,
         "primaryProvider": "moonshine-stt",
         "fallbackProvider": "hermes-stt",
@@ -226,6 +235,7 @@ def stt_budget_model() -> dict[str, Any]:
             "totalBudgetSeconds": "OTOXAN_STT_TOTAL_BUDGET_SECONDS",
             "primaryLocalBudgetSeconds": "OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS",
             "fallbackReserveSeconds": "OTOXAN_STT_FALLBACK_MIN_SECONDS",
+            "fallbackMaxSeconds": "OTOXAN_HERMES_STT_FALLBACK_TIMEOUT_SECONDS",
         },
         "evidenceClass": "latency_budget_readback_not_hardware_proof",
         "hardwareGate": "requires_fresh_phone_rayban_turn",
@@ -251,6 +261,7 @@ def stt_stream_event_schema() -> dict[str, Any]:
                     "sttBudget.totalBudgetMs",
                     "sttBudget.primaryLocalBudgetMs",
                     "sttBudget.fallbackReserveMs",
+                    "sttBudget.fallbackMaxMs",
                     "sttBudget.fallbackBudgetMs",
                     "sttBudget.evidenceClass",
                 ],
@@ -707,6 +718,17 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
     )
 
 
+def _fallback_stt_timeout_seconds(available_seconds: float) -> float:
+    """Return the bounded Hermes fallback STT lane timeout for one explicit turn."""
+    cap_seconds = _bounded_seconds(
+        "OTOXAN_HERMES_STT_FALLBACK_TIMEOUT_SECONDS",
+        SPRINT4_HERMES_FALLBACK_BUDGET_SECONDS,
+        0.0,
+        5.0,
+    )
+    return max(0.0, min(available_seconds, cap_seconds))
+
+
 def _transcribe_with_hermes_stt(pcm: bytes) -> SttResult:
     provider = os.environ.get("OTOXAN_STT_PROVIDER", STT_PROVIDER_DEFAULT).strip().lower() or STT_PROVIDER_DEFAULT
     total_started = time.monotonic()
@@ -741,7 +763,22 @@ def _transcribe_with_hermes_stt(pcm: bytes) -> SttResult:
                 primary_provider=moonshine.provider,
                 budget_remaining_ms=int(remaining * 1000),
             )
-        fallback = _transcribe_with_hermes_stt_fallback(pcm, timeout_seconds=remaining)
+        fallback_timeout = _fallback_stt_timeout_seconds(remaining)
+        if fallback_timeout <= 0:
+            return SttResult(
+                "",
+                f"primary-{moonshine.status}-fallback-budget-exhausted",
+                _elapsed_ms(total_started),
+                moonshine.provider,
+                primary_status=moonshine.status,
+                primary_latency_ms=moonshine.latency_ms,
+                primary_provider=moonshine.provider,
+                fallback_status="skipped-budget-exhausted",
+                fallback_latency_ms=0,
+                fallback_provider="hermes-stt",
+                budget_remaining_ms=int(remaining * 1000),
+            )
+        fallback = _transcribe_with_hermes_stt_fallback(pcm, timeout_seconds=fallback_timeout)
         return SttResult(
             fallback.transcript,
             fallback.status,

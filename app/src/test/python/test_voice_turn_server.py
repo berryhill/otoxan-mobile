@@ -42,6 +42,7 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS",
                 "OTOXAN_STT_TOTAL_BUDGET_SECONDS",
                 "OTOXAN_STT_FALLBACK_MIN_SECONDS",
+                "OTOXAN_HERMES_STT_FALLBACK_TIMEOUT_SECONDS",
                 "OTOXAN_TTS_PROVIDER",
                 "OTOXAN_KOKORO_TTS_COMMAND",
                 "OTOXAN_TTS_TIMEOUT_SECONDS",
@@ -524,13 +525,31 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(55, stt.fallback_latency_ms)
         self.assertIsInstance(stt.budget_remaining_ms, int)
         self.assertIn("timeout_seconds", fallback.call_args.kwargs)
-        self.assertLessEqual(fallback.call_args.kwargs["timeout_seconds"], 4.5)
+        self.assertLessEqual(fallback.call_args.kwargs["timeout_seconds"], voice_turn_server.SPRINT4_HERMES_FALLBACK_BUDGET_SECONDS)
+
+    def test_moonshine_fallback_lane_honors_explicit_upper_bound(self):
+        os.environ["OTOXAN_STT_PROVIDER"] = "moonshine-command"
+        os.environ["OTOXAN_STT_TOTAL_BUDGET_SECONDS"] = "4.5"
+        os.environ["OTOXAN_HERMES_STT_FALLBACK_TIMEOUT_SECONDS"] = "0.3"
+        os.environ["OTOXAN_MOONSHINE_STT_COMMAND"] = "moonshine-test --input {input}"
+        completed = mock.Mock(returncode=0, stdout=b'{"success": true, "transcript": ""}')
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed):
+            with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt_fallback", return_value=voice_turn_server.SttResult("fallback words", "success", 55)) as fallback:
+                stt = voice_turn_server._transcribe_with_hermes_stt(b"\x01\x02" * 160)
+
+        self.assertEqual("fallback words", stt.transcript)
+        self.assertLessEqual(fallback.call_args.kwargs["timeout_seconds"], 0.3)
+        self.assertEqual("success", stt.fallback_status)
 
     def test_sprint4_stt_budget_defaults_are_locked_to_closeout_target(self):
         self.assertEqual(1500, voice_turn_server.TIMING_CONTRACT_TARGETS["sttLatencyMs"])
         self.assertEqual(1.5, voice_turn_server.SPRINT4_STT_TOTAL_BUDGET_SECONDS)
         self.assertEqual(0.75, voice_turn_server.SPRINT4_MOONSHINE_PRIMARY_BUDGET_SECONDS)
         self.assertEqual(0.25, voice_turn_server.SPRINT4_STT_FALLBACK_MIN_SECONDS)
+        self.assertEqual(0.75, voice_turn_server.SPRINT4_HERMES_FALLBACK_BUDGET_SECONDS)
+        budget = voice_turn_server.stt_budget_model()
+        self.assertEqual(750, budget["fallbackMaxMs"])
+        self.assertEqual("OTOXAN_HERMES_STT_FALLBACK_TIMEOUT_SECONDS", budget["environmentOverrides"]["fallbackMaxSeconds"])
 
         os.environ["OTOXAN_STT_PROVIDER"] = "moonshine-command"
         os.environ["OTOXAN_MOONSHINE_STT_COMMAND"] = "moonshine-test --input {input}"
@@ -577,6 +596,28 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertFalse(result["pass1Ready"])
         self.assertEqual("Audio arrived, but words did not decode.", result["assistantText"])
         self.assertLessEqual(len(result["assistantText"]), voice_turn_server.XANDER_SPOKEN_MAX_CHARS)
+        self.assertIn("Hermes STT lane did not return", result["transcript"])
+
+    def test_xander_turn_does_not_fake_response_when_bounded_stt_fallback_is_skipped(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
+        os.environ["OTOXAN_STT_PROVIDER"] = "moonshine-command"
+        os.environ["OTOXAN_HERMES_STT_FALLBACK_TIMEOUT_SECONDS"] = "0"
+        os.environ["OTOXAN_MOONSHINE_STT_COMMAND"] = "moonshine-test --input {input}"
+        payload = self._payload()
+        completed = mock.Mock(returncode=0, stdout=b'{"success": true, "transcript": ""}')
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed):
+            with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt_fallback") as stt_fallback:
+                with mock.patch.object(voice_turn_server, "_ask_xander_session") as ask:
+                    result = voice_turn_server.handle_voice_turn(payload)
+
+        stt_fallback.assert_not_called()
+        ask.assert_not_called()
+        self.assertEqual("route-evidence-fallback", result["transcriptSource"])
+        self.assertEqual("primary-empty-fallback-budget-exhausted", result["sttStatus"])
+        self.assertEqual("skipped-budget-exhausted", result["fallbackSttStatus"])
+        self.assertEqual("stt-primary-empty-fallback-budget-exhausted", result["pass1Status"])
+        self.assertEqual("Audio arrived, but words did not decode.", result["assistantText"])
         self.assertIn("Hermes STT lane did not return", result["transcript"])
 
     def test_xander_provider_failure_is_session_framed(self):
