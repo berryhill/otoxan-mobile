@@ -104,6 +104,13 @@ data class VoiceTurnTelemetryPacket(
     val responseCodeWaitMs: Long? = null,
     val responseReadMs: Long? = null,
     val responseParseMs: Long? = null,
+    val transportKind: String? = null,
+    val streamEventCount: Int? = null,
+    val streamEventTypes: List<String> = emptyList(),
+    val streamStarted: Boolean? = null,
+    val streamCompleted: Boolean? = null,
+    val streamProtocolName: String? = null,
+    val streamProtocolVersion: Int? = null,
     val backendTotalMs: Int? = null,
     val decodePcmMs: Int? = null,
     val audioStatsMs: Int? = null,
@@ -189,7 +196,14 @@ data class VoiceTurnResult(
     val responseCodeWaitMs: Long? = null,
     val responseReadMs: Long? = null,
     val responseParseMs: Long? = null,
-    val clientBackendRoundTripMs: Long? = null
+    val clientBackendRoundTripMs: Long? = null,
+    val transportKind: String = "http_voice_turn",
+    val streamEventCount: Int? = null,
+    val streamEventTypes: List<String> = emptyList(),
+    val streamStarted: Boolean? = null,
+    val streamCompleted: Boolean? = null,
+    val streamProtocolName: String? = null,
+    val streamProtocolVersion: Int? = null
 )
 
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -473,6 +487,16 @@ class HttpXanderVoiceClient(
                 "responseReadMs":${packet.responseReadMs.jsonValue()},
                 "responseParseMs":${packet.responseParseMs.jsonValue()}
               },
+              "transport":{
+                "kind":${packet.transportKind.jsonValue()},
+                "streamEventCount":${packet.streamEventCount.jsonValue()},
+                "streamEventTypes":[${packet.streamEventTypes.joinToString(",") { it.jsonValue() }}],
+                "streamStarted":${packet.streamStarted.jsonValue()},
+                "streamCompleted":${packet.streamCompleted.jsonValue()},
+                "streamProtocolName":${packet.streamProtocolName.jsonValue()},
+                "streamProtocolVersion":${packet.streamProtocolVersion.jsonValue()},
+                "evidenceClass":"diagnostic_transport_only_not_hardware_proof"
+              },
               "backend":{
                 "roundTripMs":${packet.backendRoundTripMs.jsonValue()},
                 "bytesReceived":${packet.backendBytesReceived.jsonValue()},
@@ -576,9 +600,9 @@ class HttpStreamingVoiceClient(
             }
             val responseReadMs = elapsedMs(responseReadStarted)
             val parseStarted = System.nanoTime()
-            val voiceTurnBody = extractCompletedVoiceTurnJson(responseBody)
+            val streamTelemetry = extractCompletedVoiceTurnJson(responseBody)
             parseVoiceTurnResult(
-                responseBody = voiceTurnBody,
+                responseBody = streamTelemetry.voiceTurnJson,
                 httpStatusCode = responseCode,
                 requestBytes = bodyBytes.size,
                 responseBytes = responseBody.toByteArray(Charsets.UTF_8).size,
@@ -587,7 +611,14 @@ class HttpStreamingVoiceClient(
                 responseCodeWaitMs = responseCodeWaitMs,
                 responseReadMs = responseReadMs,
                 responseParseMs = elapsedMs(parseStarted),
-                clientBackendRoundTripMs = elapsedMs(totalStarted)
+                clientBackendRoundTripMs = elapsedMs(totalStarted),
+                transportKind = "http_voice_stream_ndjson",
+                streamEventCount = streamTelemetry.eventTypes.size,
+                streamEventTypes = streamTelemetry.eventTypes,
+                streamStarted = streamTelemetry.streamStarted,
+                streamCompleted = streamTelemetry.streamCompleted,
+                streamProtocolName = streamTelemetry.protocolName,
+                streamProtocolVersion = streamTelemetry.protocolVersion
             )
         } catch (error: XanderVoiceClientException) {
             throw error
@@ -853,7 +884,14 @@ private fun parseVoiceTurnResult(
     responseCodeWaitMs: Long,
     responseReadMs: Long,
     responseParseMs: Long,
-    clientBackendRoundTripMs: Long
+    clientBackendRoundTripMs: Long,
+    transportKind: String = "http_voice_turn",
+    streamEventCount: Int? = null,
+    streamEventTypes: List<String> = emptyList(),
+    streamStarted: Boolean? = null,
+    streamCompleted: Boolean? = null,
+    streamProtocolName: String? = null,
+    streamProtocolVersion: Int? = null
 ): VoiceTurnResult {
     val ttsPcm = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let { decodeTtsPcm(it) }
     return VoiceTurnResult(
@@ -898,23 +936,59 @@ private fun parseVoiceTurnResult(
         responseCodeWaitMs = responseCodeWaitMs,
         responseReadMs = responseReadMs,
         responseParseMs = responseParseMs,
-        clientBackendRoundTripMs = clientBackendRoundTripMs
+        clientBackendRoundTripMs = clientBackendRoundTripMs,
+        transportKind = transportKind,
+        streamEventCount = streamEventCount,
+        streamEventTypes = streamEventTypes,
+        streamStarted = streamStarted,
+        streamCompleted = streamCompleted,
+        streamProtocolName = streamProtocolName,
+        streamProtocolVersion = streamProtocolVersion
     )
 }
 
-private fun extractCompletedVoiceTurnJson(ndjson: String): String {
+private data class StreamVoiceTurnTelemetry(
+    val voiceTurnJson: String,
+    val eventTypes: List<String>,
+    val streamStarted: Boolean,
+    val streamCompleted: Boolean,
+    val protocolName: String?,
+    val protocolVersion: Int?
+)
+
+private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTelemetry {
+    val eventTypes = mutableListOf<String>()
+    var voiceTurnJson: String? = null
+    var protocolName: String? = null
+    var protocolVersion: Int? = null
     ndjson.lineSequence()
         .map { it.trim() }
         .filter { it.isNotBlank() }
         .forEach { line ->
             val event = JSONObject(line)
-            if (event.optString("type") == "response.completed") {
+            val type = event.optString("type")
+            eventTypes.add(type)
+            if (type == "stream.started" || type == "session.created") {
+                val protocol = event.optJSONObject("protocol")
+                protocolName = protocol.optStringOrNull("name") ?: protocolName
+                protocolVersion = protocol.optIntOrNull("version") ?: protocolVersion
+            }
+            if (type == "response.completed") {
                 val voiceTurn = event.optJSONObject("voiceTurn")
                     ?: throw XanderVoiceClientException("Otoxan stream response.completed missing voiceTurn")
-                return voiceTurn.toString()
+                voiceTurnJson = voiceTurn.toString()
             }
         }
-    throw XanderVoiceClientException("Otoxan stream ended without response.completed voiceTurn event")
+    val completedVoiceTurn = voiceTurnJson
+        ?: throw XanderVoiceClientException("Otoxan stream ended without response.completed voiceTurn event")
+    return StreamVoiceTurnTelemetry(
+        voiceTurnJson = completedVoiceTurn,
+        eventTypes = eventTypes,
+        streamStarted = "stream.started" in eventTypes || "session.created" in eventTypes,
+        streamCompleted = "stream.completed" in eventTypes || "session.closed" in eventTypes,
+        protocolName = protocolName,
+        protocolVersion = protocolVersion
+    )
 }
 
 fun normalizeVoiceTurnEndpoint(endpointUrl: String): String {

@@ -95,7 +95,7 @@ class OtoxanUiStateTest {
         ).endpointEvidenceText
 
         assertEquals(
-            "endpoint=https://voice.example/voice-turn; http=200; dispatch=1320ms; responseReady=2800ms; clientRoundTrip=1480ms; request=44000 bytes; response=900 bytes",
+            "endpoint=https://voice.example/voice-turn; transport=http_voice_turn; http=200; dispatch=1320ms; responseReady=2800ms; clientRoundTrip=1480ms; request=44000 bytes; response=900 bytes",
             evidence
         )
     }
@@ -164,15 +164,42 @@ class OtoxanUiStateTest {
     fun phoneTelemetryEvidenceClasses_keepReliabilityLatencyAndBuildEvidenceSeparate() {
         val classes = OtoxanUiState().phoneTelemetryEvidenceClasses
 
-        assertEquals(5, classes.size)
+        assertEquals(6, classes.size)
         assertEquals("Hardware gate", classes[0].label)
         assertEquals(EvidenceClassState.NeedsEvidence, classes[0].state)
         assertEquals("Capture reliability", classes[1].label)
         assertEquals("Backend turn reliability", classes[2].label)
-        assertEquals("Latency scorecard", classes[3].label)
-        assertEquals(EvidenceClassState.DiagnosticOnly, classes[3].state)
-        assertEquals("Source/build proof", classes[4].label)
-        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[4].state)
+        assertEquals("Stream transport telemetry", classes[3].label)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[3].state)
+        assertEquals("Latency scorecard", classes[4].label)
+        assertEquals(EvidenceClassState.DiagnosticOnly, classes[4].state)
+        assertEquals("Source/build proof", classes[5].label)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[5].state)
+    }
+
+    @Test
+    fun streamTelemetrySummary_surfacesStreamEventsAsDiagnosticOnly() {
+        val state = OtoxanUiState(
+            transportKind = "http_voice_stream_ndjson",
+            streamEventCount = 3,
+            streamEventTypes = listOf("stream.started", "response.completed", "stream.completed"),
+            streamStarted = true,
+            streamCompleted = true,
+            streamProtocolName = "otoxan-mobile-realtime-stream",
+            streamProtocolVersion = 1,
+            pass1Ready = false,
+            pass1Status = "proof-mode-not-real-speech"
+        )
+
+        val summary = state.streamTelemetrySummary
+        val evidence = state.phoneTelemetryEvidenceClasses[3]
+
+        assertEquals("transport=http_voice_stream_ndjson; events=3; started=true; completed=true", summary.statusText)
+        assertEquals("stream.started → response.completed → stream.completed", summary.eventsText)
+        assertEquals("Stream transport telemetry", evidence.label)
+        assertEquals(EvidenceClassState.DiagnosticOnly, evidence.state)
+        assertTrue(evidence.detail.contains("not Ray-Ban hardware or real-speech success"))
+        assertEquals(EvidenceClassState.NeedsEvidence, state.phoneTelemetryEvidenceClasses[0].state)
     }
 
     @Test
@@ -202,7 +229,8 @@ class OtoxanUiStateTest {
         assertTrue(classes[0].detail.contains("real-speech-proven"))
         assertEquals(EvidenceClassState.Proven, classes[1].state)
         assertEquals(EvidenceClassState.Proven, classes[2].state)
-        assertEquals(EvidenceClassState.Proven, classes[3].state)
-        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[4].state)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[3].state)
+        assertEquals(EvidenceClassState.Proven, classes[4].state)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[5].state)
     }
 }

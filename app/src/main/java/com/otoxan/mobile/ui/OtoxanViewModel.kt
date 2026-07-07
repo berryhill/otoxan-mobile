@@ -584,6 +584,13 @@ class OtoxanViewModel(
                 responseCodeWaitMs = result.responseCodeWaitMs,
                 responseReadMs = result.responseReadMs,
                 responseParseMs = result.responseParseMs,
+                transportKind = result.transportKind,
+                streamEventCount = result.streamEventCount,
+                streamEventTypes = result.streamEventTypes,
+                streamStarted = result.streamStarted,
+                streamCompleted = result.streamCompleted,
+                streamProtocolName = result.streamProtocolName,
+                streamProtocolVersion = result.streamProtocolVersion,
                 backendTotalMs = result.backendTotalMs,
                 decodePcmMs = result.decodePcmMs,
                 audioStatsMs = result.audioStatsMs,
@@ -601,7 +608,7 @@ class OtoxanViewModel(
                 lastEvidence = if (result.provider == "stub") {
                     "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                 } else {
-                    "Voice loop ok: pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
+                    "Voice loop ok: transport=${result.transportKind}; pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; streamEvents=${result.streamEventTypes.joinToString("|").ifBlank { "none" }} (diagnostic only, not hardware proof); tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
                 }
             )
         }
@@ -692,6 +699,13 @@ class OtoxanViewModel(
             responseCodeWaitMs = result.responseCodeWaitMs,
             responseReadMs = result.responseReadMs,
             responseParseMs = result.responseParseMs,
+            transportKind = result.transportKind,
+            streamEventCount = result.streamEventCount,
+            streamEventTypes = result.streamEventTypes,
+            streamStarted = result.streamStarted,
+            streamCompleted = result.streamCompleted,
+            streamProtocolName = result.streamProtocolName,
+            streamProtocolVersion = result.streamProtocolVersion,
             backendTotalMs = result.backendTotalMs,
             decodePcmMs = result.decodePcmMs,
             audioStatsMs = result.audioStatsMs,

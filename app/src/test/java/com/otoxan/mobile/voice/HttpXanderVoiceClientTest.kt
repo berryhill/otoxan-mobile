@@ -170,7 +170,7 @@ class HttpXanderVoiceClientTest {
                 .setHeader("Content-Type", "application/x-ndjson")
                 .setBody(
                     """
-                    {"type":"stream.started","protocol":{"version":1}}
+                    {"type":"stream.started","protocol":{"name":"otoxan-mobile-realtime-stream","version":1}}
                     {"type":"response.completed","voiceTurn":{"provider":"stream-proof","transcript":"stream hello","assistantText":"stream route confirmed","bytesReceived":4,"transcriptSource":"proof-stream","sttStatus":"success","pass1Ready":true}}
                     {"type":"stream.completed"}
                     """.trimIndent()
@@ -202,6 +202,13 @@ class HttpXanderVoiceClientTest {
         assertEquals(true, result.pass1Ready)
         assertEquals(200, result.httpStatusCode)
         assertTrue(result.responseBytes!! > 0)
+        assertEquals("http_voice_stream_ndjson", result.transportKind)
+        assertEquals(3, result.streamEventCount)
+        assertEquals(listOf("stream.started", "response.completed", "stream.completed"), result.streamEventTypes)
+        assertEquals(true, result.streamStarted)
+        assertEquals(true, result.streamCompleted)
+        assertEquals("otoxan-mobile-realtime-stream", result.streamProtocolName)
+        assertEquals(1, result.streamProtocolVersion)
     }
 
     @Test

@@ -76,6 +76,20 @@ data class PhoneTelemetryEvidenceClass(
     val detail: String
 )
 
+data class StreamTelemetrySummary(
+    val transportKind: String,
+    val eventCount: Int?,
+    val eventTypes: List<String>,
+    val streamStarted: Boolean?,
+    val streamCompleted: Boolean?,
+    val protocolName: String?,
+    val protocolVersion: Int?
+) {
+    val statusText: String = "transport=$transportKind; events=${eventCount?.toString() ?: "unknown"}; started=${streamStarted?.toString() ?: "unknown"}; completed=${streamCompleted?.toString() ?: "unknown"}"
+    val protocolText: String = "protocol=${protocolName ?: "unknown"} v${protocolVersion?.toString() ?: "unknown"}"
+    val eventsText: String = eventTypes.takeIf { it.isNotEmpty() }?.joinToString(" → ") ?: "no stream events observed"
+}
+
 data class OtoxanUiState(
     val voiceEndpoint: String = "",
     val permissionState: PermissionState = PermissionState.Unknown,
@@ -141,6 +155,13 @@ data class OtoxanUiState(
     val responseCodeWaitMs: Long? = null,
     val responseReadMs: Long? = null,
     val responseParseMs: Long? = null,
+    val transportKind: String = "http_voice_turn",
+    val streamEventCount: Int? = null,
+    val streamEventTypes: List<String> = emptyList(),
+    val streamStarted: Boolean? = null,
+    val streamCompleted: Boolean? = null,
+    val streamProtocolName: String? = null,
+    val streamProtocolVersion: Int? = null,
     val backendTotalMs: Int? = null,
     val decodePcmMs: Int? = null,
     val audioStatsMs: Int? = null,
@@ -220,13 +241,25 @@ val TelemetryPassSummary.timingAcceptanceSummary: TelemetryAcceptanceSummary
     )
 
 val OtoxanUiState.endpointEvidenceText: String
-    get() = "endpoint=${voiceEndpoint.ifBlank { "unknown" }}; http=${httpStatusCode?.toString() ?: "unknown"}; dispatch=${endpointDispatchMs.toLatencyMsText()}; responseReady=${endpointResponseReadyMs.toLatencyMsText()}; clientRoundTrip=${backendRoundTripMs.toLatencyMsText()}; request=${requestBytes?.toString() ?: "unknown"} bytes; response=${responseBytes?.toString() ?: "unknown"} bytes"
+    get() = "endpoint=${voiceEndpoint.ifBlank { "unknown" }}; transport=$transportKind; http=${httpStatusCode?.toString() ?: "unknown"}; dispatch=${endpointDispatchMs.toLatencyMsText()}; responseReady=${endpointResponseReadyMs.toLatencyMsText()}; clientRoundTrip=${backendRoundTripMs.toLatencyMsText()}; request=${requestBytes?.toString() ?: "unknown"} bytes; response=${responseBytes?.toString() ?: "unknown"} bytes"
+
+val OtoxanUiState.streamTelemetrySummary: StreamTelemetrySummary
+    get() = StreamTelemetrySummary(
+        transportKind = transportKind,
+        eventCount = streamEventCount,
+        eventTypes = streamEventTypes,
+        streamStarted = streamStarted,
+        streamCompleted = streamCompleted,
+        protocolName = streamProtocolName,
+        protocolVersion = streamProtocolVersion
+    )
 
 val OtoxanUiState.phoneTelemetryEvidenceClasses: List<PhoneTelemetryEvidenceClass>
     get() = listOf(
         hardwareGateEvidenceClass,
         captureReliabilityEvidenceClass,
         backendReliabilityEvidenceClass,
+        streamTelemetryEvidenceClass,
         latencyScorecardEvidenceClass,
         PhoneTelemetryEvidenceClass(
             label = "Source/build proof",
@@ -264,6 +297,16 @@ private val OtoxanUiState.backendReliabilityEvidenceClass: PhoneTelemetryEvidenc
             label = "Backend turn reliability",
             state = if (backendOk) EvidenceClassState.Proven else EvidenceClassState.NeedsEvidence,
             detail = "Needs non-stub backend response with successful HTTP and no turn error; provider=${provider ?: "unknown"}, http=${httpStatusCode?.toString() ?: "unknown"}, backendBytes=${backendBytesReceived?.toString() ?: "unknown"}, error=${lastError ?: "none"}."
+        )
+    }
+
+private val OtoxanUiState.streamTelemetryEvidenceClass: PhoneTelemetryEvidenceClass
+    get() {
+        val streamObserved = transportKind != "http_voice_turn" || streamEventCount != null || streamEventTypes.isNotEmpty()
+        return PhoneTelemetryEvidenceClass(
+            label = "Stream transport telemetry",
+            state = if (streamObserved) EvidenceClassState.DiagnosticOnly else EvidenceClassState.NotRuntimeEvidence,
+            detail = "Transport readback only: ${streamTelemetrySummary.statusText}; ${streamTelemetrySummary.protocolText}; events=${streamTelemetrySummary.eventsText}. This can prove stream plumbing, not Ray-Ban hardware or real-speech success."
         )
     }
 

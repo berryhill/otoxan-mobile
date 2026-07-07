@@ -339,6 +339,8 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
                 EvidenceClassRow(evidenceClass)
             }
             Text(state.endpointEvidenceText, style = MaterialTheme.typography.bodySmall)
+            Text("Stream telemetry (diagnostic only — not hardware proof): ${state.streamTelemetrySummary.statusText}; ${state.streamTelemetrySummary.protocolText}", style = MaterialTheme.typography.bodySmall)
+            Text("Stream events: ${state.streamTelemetrySummary.eventsText}", style = MaterialTheme.typography.bodySmall)
             Text(
                 "Route=${state.selectedInputName}; pass1=${state.pass1Status ?: "unknown"}; capture=${state.capturedBytes}/${state.expectedCaptureBytes} bytes; peak=${state.capturePeakAmplitude}; source=${state.transcriptSource ?: "unknown"}; replyChars=${state.assistantResponse.length}",
                 style = MaterialTheme.typography.bodySmall
