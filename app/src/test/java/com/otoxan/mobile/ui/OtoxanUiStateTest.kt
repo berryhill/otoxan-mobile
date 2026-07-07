@@ -239,6 +239,25 @@ class OtoxanUiStateTest {
     }
 
     @Test
+    fun recoveryEvidenceText_surfacesFallbackReasonAndStatus() {
+        val state = OtoxanUiState(
+            mobileFastFailureReason = "fast parser returned no spoken text",
+            mobileFastSessionFallbackEnabled = true,
+            mobileFastSessionFallbackHardTimeoutSeconds = 0.5,
+            xanderFallbackSessionStatus = 0,
+            xanderFallbackSkipped = 0,
+            xanderFallbackTimedOut = 0,
+            xanderFallbackFailureReason = "deadline-timeout-after-0.5s"
+        )
+
+        assertEquals(
+            "fastFailure=fast parser returned no spoken text; fallbackEnabled=true; fallbackDeadline=0.5s; fallbackStatus=0; fallbackSkipped=0; fallbackTimedOut=0; fallbackFailure=deadline-timeout-after-0.5s",
+            state.recoveryEvidenceText
+        )
+        assertEquals("none", OtoxanUiState().recoveryEvidenceText)
+    }
+
+    @Test
     fun phoneTelemetryEvidenceClasses_keepReliabilityLatencyAndBuildEvidenceSeparate() {
         val classes = OtoxanUiState().phoneTelemetryEvidenceClasses
 

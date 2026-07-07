@@ -9,12 +9,18 @@ import android.media.AudioManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 
-class AudioRouter(private val context: Context) {
+interface AudioRouteController {
+    fun inspectAndSelectWearable(): RouteEvidence
+    fun currentEvidence(): RouteEvidence
+    fun clearRoute(): RouteEvidence
+}
+
+class AudioRouter(private val context: Context) : AudioRouteController {
     private val audioManager = context.getSystemService(AudioManager::class.java)
     private var lastEvidence = RouteEvidence.default()
 
     @SuppressLint("MissingPermission")
-    fun inspectAndSelectWearable(): RouteEvidence {
+    override fun inspectAndSelectWearable(): RouteEvidence {
         if (!hasBluetoothConnectPermission()) {
             lastEvidence = RouteEvidence.default(
                 message = "BLUETOOTH_CONNECT permission missing; cannot inspect communication devices"
@@ -55,10 +61,10 @@ class AudioRouter(private val context: Context) {
         return lastEvidence
     }
 
-    fun currentEvidence(): RouteEvidence = lastEvidence
+    override fun currentEvidence(): RouteEvidence = lastEvidence
 
     @Suppress("DEPRECATION")
-    fun clearRoute(): RouteEvidence {
+    override fun clearRoute(): RouteEvidence {
         val selectedBefore = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             audioManager.communicationDevice?.safeProductName()
         } else {

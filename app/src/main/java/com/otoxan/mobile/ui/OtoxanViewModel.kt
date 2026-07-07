@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.otoxan.mobile.BuildConfig
+import com.otoxan.mobile.voice.AudioRouteController
 import com.otoxan.mobile.voice.AudioRouter
 import com.otoxan.mobile.voice.ConversationCaptureTuning
 import com.otoxan.mobile.voice.DiagnosticPcmChunkConfig
@@ -13,7 +14,9 @@ import com.otoxan.mobile.voice.MicCapture
 import com.otoxan.mobile.voice.RouteEvidence
 import com.otoxan.mobile.voice.SpeechPlayback
 import com.otoxan.mobile.voice.StreamingVoiceClientConfig
+import com.otoxan.mobile.voice.VoiceCaptureSource
 import com.otoxan.mobile.voice.VoiceCaptureConfig
+import com.otoxan.mobile.voice.VoicePlaybackSink
 import com.otoxan.mobile.voice.VoiceTurnTelemetryPacket
 import com.otoxan.mobile.voice.VoiceTurnTelemetryRecord
 import com.otoxan.mobile.voice.XanderVoiceClient
@@ -76,10 +79,14 @@ internal fun buildConversationCaptureTuning(): ConversationCaptureTuning = Conve
 )
 
 class OtoxanViewModel(
-    private val audioRouter: AudioRouter,
-    private val micCapture: MicCapture,
-    private val speechPlayback: SpeechPlayback,
-    private val xanderVoiceClient: XanderVoiceClient
+    private val audioRouter: AudioRouteController,
+    private val micCapture: VoiceCaptureSource,
+    private val speechPlayback: VoicePlaybackSink,
+    private val xanderVoiceClient: XanderVoiceClient,
+    private val conversationSuccessDelayMillis: Long = 900L,
+    private val conversationRetryDelayMillis: Long = 900L,
+    private val noSpeechRetryDelayMillis: Long = 700L,
+    private val routeReleaseSettleMillis: Long = 350L
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
         OtoxanUiState(
@@ -172,7 +179,7 @@ class OtoxanViewModel(
                 runCatching { performVoiceTurn(turnId, requireExistingRoute = false) }
                     .onSuccess { proof ->
                         applyVoiceTurnSuccess(turnId, proof, keepConversationActive = true)
-                        delay(900L)
+                        delay(conversationSuccessDelayMillis)
                     }
                     .onFailure { error ->
                         if (error is CancellationException) throw error
@@ -190,7 +197,7 @@ class OtoxanViewModel(
                                     lastError = null
                                 )
                             }
-                            delay(700L)
+                            delay(noSpeechRetryDelayMillis)
                             return@onFailure
                         }
                         val releaseEvidence = runCatching { releaseCommunicationRoute("Released communication route after failed conversation turn") }
@@ -209,7 +216,7 @@ class OtoxanViewModel(
                                 lastError = error.message ?: error::class.java.simpleName
                             )
                         }
-                        delay(900L)
+                        delay(conversationRetryDelayMillis)
                     }
             }
             releaseCommunicationRoute("Ended Xander conversation session")
@@ -542,6 +549,15 @@ class OtoxanViewModel(
                 transcriptSource = result.transcriptSource,
                 assistantTextLength = result.assistantText.length
             )
+            val recoveryEvidence = recoveryEvidenceText(
+                mobileFastFailureReason = result.mobileFastFailureReason,
+                mobileFastSessionFallbackEnabled = result.mobileFastSessionFallbackEnabled,
+                mobileFastSessionFallbackHardTimeoutSeconds = result.mobileFastSessionFallbackHardTimeoutSeconds,
+                xanderFallbackSessionStatus = result.xanderFallbackSessionStatus,
+                xanderFallbackSkipped = result.xanderFallbackSkipped,
+                xanderFallbackTimedOut = result.xanderFallbackTimedOut,
+                xanderFallbackFailureReason = result.xanderFallbackFailureReason
+            )
             it.copy(
                 selectedInputName = proof.routeEvidence.inputName,
                 selectedInputType = proof.routeEvidence.inputType,
@@ -574,6 +590,13 @@ class OtoxanViewModel(
                 sttBudgetRemainingMs = result.sttBudgetRemainingMs,
                 pass1Status = result.pass1Status,
                 pass1Ready = result.pass1Ready,
+                mobileFastFailureReason = result.mobileFastFailureReason,
+                mobileFastSessionFallbackEnabled = result.mobileFastSessionFallbackEnabled,
+                mobileFastSessionFallbackHardTimeoutSeconds = result.mobileFastSessionFallbackHardTimeoutSeconds,
+                xanderFallbackSessionStatus = result.xanderFallbackSessionStatus,
+                xanderFallbackSkipped = result.xanderFallbackSkipped,
+                xanderFallbackTimedOut = result.xanderFallbackTimedOut,
+                xanderFallbackFailureReason = result.xanderFallbackFailureReason,
                 audioFormat = result.audioFormat,
                 backendAudioDurationMs = result.audioDurationMs,
                 backendAudioPeak = result.audioPeak,
@@ -650,7 +673,7 @@ class OtoxanViewModel(
                 lastEvidence = if (result.provider == "stub") {
                     "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                 } else {
-                    "Voice loop ok: transport=${result.transportKind}; pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; primaryStt=${result.primarySttProvider ?: "unknown"}/${result.primarySttStatus ?: "unknown"}/${result.primarySttMs ?: "unknown"}ms; fallbackStt=${result.fallbackSttProvider ?: "unknown"}/${result.fallbackSttStatus ?: "unknown"}/${result.fallbackSttMs ?: "unknown"}ms; sttBudgetRemaining=${result.sttBudgetRemainingMs ?: "unknown"}ms (backend STT diagnostic only, not hardware proof); streamEvents=${result.streamEventTypes.joinToString("|").ifBlank { "none" }} (diagnostic only, not hardware proof); tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
+                    "Voice loop ok: transport=${result.transportKind}; pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; primaryStt=${result.primarySttProvider ?: "unknown"}/${result.primarySttStatus ?: "unknown"}/${result.primarySttMs ?: "unknown"}ms; fallbackStt=${result.fallbackSttProvider ?: "unknown"}/${result.fallbackSttStatus ?: "unknown"}/${result.fallbackSttMs ?: "unknown"}ms; sttBudgetRemaining=${result.sttBudgetRemainingMs ?: "unknown"}ms (backend STT diagnostic only, not hardware proof); recovery=$recoveryEvidence; streamEvents=${result.streamEventTypes.joinToString("|").ifBlank { "none" }} (diagnostic only, not hardware proof); tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
                 }
             )
         }
@@ -679,6 +702,24 @@ class OtoxanViewModel(
             }
         }
     }
+
+    private fun recoveryEvidenceText(
+        mobileFastFailureReason: String?,
+        mobileFastSessionFallbackEnabled: Boolean?,
+        mobileFastSessionFallbackHardTimeoutSeconds: Double?,
+        xanderFallbackSessionStatus: Int?,
+        xanderFallbackSkipped: Int?,
+        xanderFallbackTimedOut: Int?,
+        xanderFallbackFailureReason: String?
+    ): String = listOfNotNull(
+        mobileFastFailureReason?.let { "fastFailure=$it" },
+        mobileFastSessionFallbackEnabled?.let { "fallbackEnabled=$it" },
+        mobileFastSessionFallbackHardTimeoutSeconds?.let { "fallbackDeadline=${it}s" },
+        xanderFallbackSessionStatus?.let { "fallbackStatus=$it" },
+        xanderFallbackSkipped?.let { "fallbackSkipped=$it" },
+        xanderFallbackTimedOut?.let { "fallbackTimedOut=$it" },
+        xanderFallbackFailureReason?.let { "fallbackFailure=$it" }
+    ).joinToString("; ").ifBlank { "none" }
 
     private suspend fun postFailureTelemetry(turnId: String, error: String, stage: String): com.otoxan.mobile.voice.VoiceTurnTelemetryResult {
         val routeEvidence = audioRouter.currentEvidence()
@@ -961,7 +1002,7 @@ class OtoxanViewModel(
 
     private fun releaseCommunicationRoute(reason: String): RouteEvidence {
         val first = audioRouter.clearRoute()
-        Thread.sleep(350L)
+        if (routeReleaseSettleMillis > 0L) Thread.sleep(routeReleaseSettleMillis)
         val second = audioRouter.clearRoute()
         return RouteEvidence.default(
             "$reason; first=[${first.message}]; second=[${second.message}]"

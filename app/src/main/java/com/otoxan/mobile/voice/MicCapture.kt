@@ -7,9 +7,17 @@ import android.media.MediaRecorder
 import java.io.ByteArrayOutputStream
 import kotlin.math.abs
 
-class MicCapture {
+interface VoiceCaptureSource {
+    fun recordPcmForMillis(durationMillis: Long = 5_000): ByteArray
+    fun recordPcmUntilSpeechSilence(
+        config: VoiceCaptureConfig = VoiceCaptureConfig(),
+        onChunkPeak: (peak: Int, capturedMillis: Long, speechDetected: Boolean) -> Unit = { _, _, _ -> }
+    ): VoiceCaptureResult
+}
+
+class MicCapture : VoiceCaptureSource {
     @SuppressLint("MissingPermission")
-    fun recordPcmForMillis(durationMillis: Long = 5_000): ByteArray {
+    override fun recordPcmForMillis(durationMillis: Long): ByteArray {
         return recordPcmUntilSpeechSilence(
             VoiceCaptureConfig(
                 maxMillis = durationMillis,
@@ -21,7 +29,7 @@ class MicCapture {
     }
 
     @SuppressLint("MissingPermission")
-    fun recordPcmUntilSpeechSilence(
+    override fun recordPcmUntilSpeechSilence(
         config: VoiceCaptureConfig = VoiceCaptureConfig(),
         onChunkPeak: (peak: Int, capturedMillis: Long, speechDetected: Boolean) -> Unit = { _, _, _ -> }
     ): VoiceCaptureResult {

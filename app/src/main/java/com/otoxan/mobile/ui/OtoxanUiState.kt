@@ -181,6 +181,13 @@ data class OtoxanUiState(
     val sttBudgetRemainingMs: Int? = null,
     val pass1Status: String? = null,
     val pass1Ready: Boolean? = null,
+    val mobileFastFailureReason: String? = null,
+    val mobileFastSessionFallbackEnabled: Boolean? = null,
+    val mobileFastSessionFallbackHardTimeoutSeconds: Double? = null,
+    val xanderFallbackSessionStatus: Int? = null,
+    val xanderFallbackSkipped: Int? = null,
+    val xanderFallbackTimedOut: Int? = null,
+    val xanderFallbackFailureReason: String? = null,
     val audioFormat: String? = null,
     val backendAudioDurationMs: Int? = null,
     val backendAudioPeak: Int? = null,
@@ -463,6 +470,17 @@ val OtoxanUiState.sttProviderFallbackSummary: SttProviderFallbackSummary
         fallbackText = sttAttemptText(fallbackSttProvider, fallbackSttStatus, fallbackSttMs),
         budgetText = sttBudgetRemainingMs?.let { "${it}ms remaining" } ?: "unknown"
     )
+
+val OtoxanUiState.recoveryEvidenceText: String
+    get() = listOfNotNull(
+        mobileFastFailureReason?.let { "fastFailure=$it" },
+        mobileFastSessionFallbackEnabled?.let { "fallbackEnabled=$it" },
+        mobileFastSessionFallbackHardTimeoutSeconds?.let { "fallbackDeadline=${it}s" },
+        xanderFallbackSessionStatus?.let { "fallbackStatus=$it" },
+        xanderFallbackSkipped?.let { "fallbackSkipped=$it" },
+        xanderFallbackTimedOut?.let { "fallbackTimedOut=$it" },
+        xanderFallbackFailureReason?.let { "fallbackFailure=$it" }
+    ).joinToString("; ").ifBlank { "none" }
 
 val OtoxanUiState.phoneTelemetryEvidenceClasses: List<PhoneTelemetryEvidenceClass>
     get() = listOf(

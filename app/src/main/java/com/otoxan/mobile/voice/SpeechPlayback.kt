@@ -18,14 +18,23 @@ import kotlin.math.PI
 import kotlin.math.max
 import kotlin.math.sin
 
-class SpeechPlayback(private val context: Context? = null) {
+interface VoicePlaybackSink {
+    fun playProofTone()
+    fun playAckEarcon()
+    fun playPcm16Mono16k(pcm16Mono16k: ByteArray)
+    fun speakText(text: String)
+    fun warmUpTextToSpeech()
+    fun shutdown()
+}
+
+class SpeechPlayback(private val context: Context? = null) : VoicePlaybackSink {
     private val audioManager: AudioManager? = context?.getSystemService(AudioManager::class.java)
     private val ttsLock = Any()
     private var sharedTts: TextToSpeech? = null
     private var sharedTtsReady: CountDownLatch? = null
     private var sharedTtsInitStatus: Int = TextToSpeech.ERROR
 
-    fun playProofTone() {
+    override fun playProofTone() {
         val sampleRate = SAMPLE_RATE_16K
         val seconds = 1
         val samples = ShortArray(sampleRate * seconds)
@@ -35,11 +44,11 @@ class SpeechPlayback(private val context: Context? = null) {
         playPcm16Mono16k(samples.toLittleEndianPcm16())
     }
 
-    fun playAckEarcon() {
+    override fun playAckEarcon() {
         playPcm16Mono16k(ackEarconPcm16Mono16k())
     }
 
-    fun playPcm16Mono16k(pcm16Mono16k: ByteArray) {
+    override fun playPcm16Mono16k(pcm16Mono16k: ByteArray) {
         require(pcm16Mono16k.isNotEmpty()) { "PCM playback buffer is empty" }
         require(pcm16Mono16k.size % BYTES_PER_PCM16_MONO_FRAME == 0) { "PCM playback buffer must be 16-bit aligned" }
 
@@ -84,7 +93,7 @@ class SpeechPlayback(private val context: Context? = null) {
         }
     }
 
-    fun speakText(text: String) {
+    override fun speakText(text: String) {
         val appContext = requireNotNull(context) { "TextToSpeech playback requires Android context" }
         val cleanText = text.trim()
         require(cleanText.isNotEmpty()) { "TextToSpeech text is empty" }
@@ -121,12 +130,12 @@ class SpeechPlayback(private val context: Context? = null) {
         }
     }
 
-    fun warmUpTextToSpeech() {
+    override fun warmUpTextToSpeech() {
         val appContext = context ?: return
         runCatching { obtainTextToSpeech(appContext) }
     }
 
-    fun shutdown() {
+    override fun shutdown() {
         synchronized(ttsLock) {
             runCatching { sharedTts?.stop() }
             runCatching { sharedTts?.shutdown() }
