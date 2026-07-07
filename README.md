@@ -311,4 +311,6 @@ Current scope: this starts the live Xander turn through the configured Hermes mo
 
 Hardware validation closure is captured in [`docs/hardware-validation-gate.md`](docs/hardware-validation-gate.md). Treat source/build proof and real Ray-Ban hardware proof as separate evidence classes: only a real phone/Ray-Ban turn with `pass1Ready=true` and `pass1Status=real-speech-proven` closes the hardware gate.
 
+Threshold comparison and the next-sprint recommendation are captured in [`docs/hardware-threshold-comparison.md`](docs/hardware-threshold-comparison.md). Use that packet to keep capture/VAD thresholds, timing baselines, and hardware-gate evidence separate.
+
 Pass 1 closeout evidence and the current keep-it-simple backend decision are captured in [`docs/pass1-closeout.md`](docs/pass1-closeout.md). The repo-local `/voice-turn` adapter remains the active edge while voice quality, Xander personality, and latency are hardened; avoid a large backend reorganization for now.
