@@ -82,6 +82,7 @@ The endpoint policy is configurable at build time without changing the default b
 - `XANDER_VOICE_CONNECT_TIMEOUT_MILLIS` defaults to `10000`.
 - `XANDER_VOICE_READ_TIMEOUT_MILLIS` defaults to `60000`.
 - `XANDER_VOICE_METRICS_TIMEOUT_MILLIS` defaults to `5000`.
+- Conversation capture tuning remains locked to the hardware-proven defaults unless `OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE=true` is set for an evidence run. The tunable fields are bounded at build time: `OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS` (`5000..20000`, default `12000`), `OTOXAN_CONVERSATION_CAPTURE_MIN_MILLIS` (`300..2000`, default `700`), `OTOXAN_CONVERSATION_CAPTURE_SILENCE_AFTER_SPEECH_MILLIS` (`250..2000`, default `450`), `OTOXAN_CONVERSATION_CAPTURE_SPEECH_PEAK_AMPLITUDE` (`256..5000`, default `900`), and `OTOXAN_CONVERSATION_CAPTURE_CHUNK_MILLIS` (`50..200`, default `100`). Treat tuned builds as measurement artifacts, not new product defaults, until real Ray-Ban/phone evidence is accepted.
 
 ```bash
 # default physical proof endpoint and default endpoint policy:
@@ -96,6 +97,13 @@ The endpoint policy is configurable at build time without changing the default b
   -PXANDER_VOICE_CONNECT_TIMEOUT_MILLIS=10000 \
   -PXANDER_VOICE_READ_TIMEOUT_MILLIS=60000 \
   -PXANDER_VOICE_METRICS_TIMEOUT_MILLIS=5000
+# evidence-gated conversation capture tuning for a measured hardware run:
+./gradlew :app:assembleDebug \
+  -POTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE=true \
+  -POTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS=15000 \
+  -POTOXAN_CONVERSATION_CAPTURE_MIN_MILLIS=900 \
+  -POTOXAN_CONVERSATION_CAPTURE_SILENCE_AFTER_SPEECH_MILLIS=650 \
+  -POTOXAN_CONVERSATION_CAPTURE_SPEECH_PEAK_AMPLITUDE=1100
 # or use environment variables:
 XANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn" ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk

@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.otoxan.mobile.BuildConfig
 import com.otoxan.mobile.voice.AudioRouter
+import com.otoxan.mobile.voice.ConversationCaptureTuning
 import com.otoxan.mobile.voice.MicCapture
 import com.otoxan.mobile.voice.RouteEvidence
 import com.otoxan.mobile.voice.SpeechPlayback
@@ -54,6 +55,15 @@ private fun VoiceTurnTelemetryRecord.toTelemetryPassSummary(): TelemetryPassSumm
     transcriptSource = transcriptSource,
     assistantTextLength = assistantTextLength ?: 0,
     error = error
+)
+
+internal fun buildConversationCaptureTuning(): ConversationCaptureTuning = ConversationCaptureTuning(
+    evidenceGateEnabled = BuildConfig.OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE,
+    maxMillis = BuildConfig.OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS,
+    minMillis = BuildConfig.OTOXAN_CONVERSATION_CAPTURE_MIN_MILLIS,
+    silenceAfterSpeechMillis = BuildConfig.OTOXAN_CONVERSATION_CAPTURE_SILENCE_AFTER_SPEECH_MILLIS,
+    speechPeakAmplitude = BuildConfig.OTOXAN_CONVERSATION_CAPTURE_SPEECH_PEAK_AMPLITUDE,
+    chunkMillis = BuildConfig.OTOXAN_CONVERSATION_CAPTURE_CHUNK_MILLIS
 )
 
 class OtoxanViewModel(
@@ -304,7 +314,7 @@ class OtoxanViewModel(
             val routeSelectEndMs = elapsedMs(turnStarted)
             _uiState.update { it.copy(turnStage = "Listening — speak now") }
             val conversationMode = _uiState.value.conversationActive
-            val captureConfig = conversationVoiceCaptureConfig()
+            val captureConfig = conversationVoiceCaptureConfig(buildConversationCaptureTuning())
             val captureStartMs = elapsedMs(turnStarted)
             val captureStarted = System.nanoTime()
             val capture = micCapture.recordPcmUntilSpeechSilence(captureConfig) { chunkPeak, capturedMillis, speechDetected ->

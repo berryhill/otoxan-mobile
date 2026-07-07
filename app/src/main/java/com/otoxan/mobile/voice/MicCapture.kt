@@ -218,13 +218,26 @@ data class VoiceCaptureConfig(
     val chunkMillis: Long = 100
 )
 
-fun conversationVoiceCaptureConfig(): VoiceCaptureConfig {
+data class ConversationCaptureTuning(
+    val evidenceGateEnabled: Boolean = false,
+    val maxMillis: Int = 12_000,
+    val minMillis: Int = 700,
+    val silenceAfterSpeechMillis: Int = 450,
+    val speechPeakAmplitude: Int = 900,
+    val chunkMillis: Int = 100
+)
+
+fun conversationVoiceCaptureConfig(
+    tuning: ConversationCaptureTuning = ConversationCaptureTuning()
+): VoiceCaptureConfig {
+    val defaults = ConversationCaptureTuning()
+    val gated = if (tuning.evidenceGateEnabled) tuning else defaults
     return VoiceCaptureConfig(
-        maxMillis = 12_000,
-        minMillis = 700,
-        silenceAfterSpeechMillis = 450,
-        speechPeakAmplitude = 900,
-        chunkMillis = 100
+        maxMillis = gated.maxMillis.toLong(),
+        minMillis = gated.minMillis.toLong(),
+        silenceAfterSpeechMillis = gated.silenceAfterSpeechMillis.toLong(),
+        speechPeakAmplitude = gated.speechPeakAmplitude,
+        chunkMillis = gated.chunkMillis.toLong()
     )
 }
 
