@@ -334,6 +334,10 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
             state.captureSplitMetrics.forEach { metric ->
                 CaptureSplitRow(metric)
             }
+            Text("Reliability and latency evidence classes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            state.phoneTelemetryEvidenceClasses.forEach { evidenceClass ->
+                EvidenceClassRow(evidenceClass)
+            }
             Text(state.endpointEvidenceText, style = MaterialTheme.typography.bodySmall)
             Text(
                 "Route=${state.selectedInputName}; pass1=${state.pass1Status ?: "unknown"}; capture=${state.capturedBytes}/${state.expectedCaptureBytes} bytes; peak=${state.capturePeakAmplitude}; source=${state.transcriptSource ?: "unknown"}; replyChars=${state.assistantResponse.length}",
@@ -407,6 +411,17 @@ private fun CaptureSplitRow(metric: CaptureSplitMetric) {
             Text(metric.detail, style = MaterialTheme.typography.bodySmall)
         }
         Text(metric.value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun EvidenceClassRow(evidenceClass: PhoneTelemetryEvidenceClass) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(evidenceClass.label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+            Text(evidenceClass.state.label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+        }
+        Text(evidenceClass.detail, style = MaterialTheme.typography.bodySmall)
     }
 }
 

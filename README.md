@@ -119,6 +119,20 @@ make launch ADB="sudo /home/berry/sdk/platform-tools/adb"
 
 The helper validates the PCM payload and route evidence, returns visible transcript/assistant text, returns `provider`, `bytesReceived`, `audioFormat`, and may return PCM audio bytes. The app shows captured/backend/TTS counters so a physical test can identify which segment failed. It does not store raw audio.
 
+## Phone telemetry evidence classes
+
+The phone telemetry UI now separates reliability, latency, and build/source proof so operators do not over-claim a run:
+
+| Evidence class | What it can prove | What it must not claim |
+| --- | --- | --- |
+| Hardware gate | Real phone + Ray-Ban route produced `pass1Ready=true`, `pass1Status=real-speech-proven`, successful STT, and a semantic assistant response. | It is not replaced by Gradle tests, APK build success, or timing bars. |
+| Capture reliability | The app captured expected PCM bytes, non-zero peak amplitude, and a usable capture according to client guardrails. | Capture bytes/peak alone do not prove real speech or backend success. |
+| Backend turn reliability | A non-stub provider returned a successful HTTP turn without a surfaced client error. | Backend success does not prove the Ray-Ban route was physically used unless hardware-gate fields also pass. |
+| Latency scorecard | Canonical timing fields are labeled `pass`, `miss`, or `unknown` against TTFA, ack, backend, total, STT, Xander, and playback targets. | Latency is a tuning/readback baseline, not hardware-gate proof. |
+| Source/build proof | Unit tests and APK assembly prove package health. | Build/source proof is not runtime phone/Ray-Ban evidence. |
+
+Use the UI's `Reliability and latency evidence classes` block after every physical run. A valid report should name both the reliability class and the latency class, for example: `hardware gate=proven; capture reliability=proven; backend turn reliability=proven; latency scorecard=miss/backend; source-build=not runtime evidence`.
+
 ## Sprint 1 hardware sweep protocol
 
 Use `docs/hardware-sweep-protocol.md` to execute the reliability-and-latency hardware sweep recommended by `docs/hardware-threshold-comparison.md`. The protocol requires at least 10 real phone + Ray-Ban turns across normal speech, quiet speech, noisy room, clipped/too-short speech, and silence. Record text summaries only, keep timing scorecards separate from hardware proof, and do not treat source/build success as a substitute for Ray-Ban route evidence.

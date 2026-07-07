@@ -159,4 +159,50 @@ class OtoxanUiStateTest {
         assertEquals(0, summary.missCount)
         assertEquals(1, summary.unknownCount)
     }
+
+    @Test
+    fun phoneTelemetryEvidenceClasses_keepReliabilityLatencyAndBuildEvidenceSeparate() {
+        val classes = OtoxanUiState().phoneTelemetryEvidenceClasses
+
+        assertEquals(5, classes.size)
+        assertEquals("Hardware gate", classes[0].label)
+        assertEquals(EvidenceClassState.NeedsEvidence, classes[0].state)
+        assertEquals("Capture reliability", classes[1].label)
+        assertEquals("Backend turn reliability", classes[2].label)
+        assertEquals("Latency scorecard", classes[3].label)
+        assertEquals(EvidenceClassState.DiagnosticOnly, classes[3].state)
+        assertEquals("Source/build proof", classes[4].label)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[4].state)
+    }
+
+    @Test
+    fun phoneTelemetryEvidenceClasses_markRealHardwareAndLatencyPassWithoutMergingEvidenceClasses() {
+        val classes = OtoxanUiState(
+            pass1Ready = true,
+            pass1Status = "real-speech-proven",
+            transcriptSource = "hermes-stt",
+            sttStatus = "success",
+            capturedBytes = 160000,
+            expectedCaptureBytes = 160000,
+            capturePeakAmplitude = 5990,
+            captureUsable = true,
+            provider = "xander-session",
+            httpStatusCode = 200,
+            backendBytesReceived = 160000,
+            ttfaMs = 1200,
+            postCaptureAckDelayMs = 80,
+            turnTotalMs = 7000,
+            backendRoundTripMs = 3000,
+            sttLatencyMs = 900,
+            xanderSessionMs = 2200,
+            playbackTotalMs = 700
+        ).phoneTelemetryEvidenceClasses
+
+        assertEquals(EvidenceClassState.Proven, classes[0].state)
+        assertTrue(classes[0].detail.contains("real-speech-proven"))
+        assertEquals(EvidenceClassState.Proven, classes[1].state)
+        assertEquals(EvidenceClassState.Proven, classes[2].state)
+        assertEquals(EvidenceClassState.Proven, classes[3].state)
+        assertEquals(EvidenceClassState.NotRuntimeEvidence, classes[4].state)
+    }
 }

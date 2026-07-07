@@ -1,6 +1,8 @@
 package com.otoxan.mobile.ui
 
 import com.otoxan.mobile.voice.VOICE_TURN_ACK_GAP_TARGET_MS
+import com.otoxan.mobile.voice.VOICE_TURN_BACKEND_TARGET_MS
+import com.otoxan.mobile.voice.VOICE_TURN_TOTAL_TARGET_MS
 import com.otoxan.mobile.voice.VOICE_TURN_TTFA_TARGET_MS
 
 data class TelemetryPassSummary(
@@ -58,6 +60,19 @@ data class LatencyCardMetric(
 data class CaptureSplitMetric(
     val label: String,
     val value: String,
+    val detail: String
+)
+
+enum class EvidenceClassState(val label: String) {
+    Proven("proven"),
+    NeedsEvidence("needs evidence"),
+    DiagnosticOnly("diagnostic only"),
+    NotRuntimeEvidence("not runtime evidence")
+}
+
+data class PhoneTelemetryEvidenceClass(
+    val label: String,
+    val state: EvidenceClassState,
     val detail: String
 )
 
@@ -206,6 +221,62 @@ val TelemetryPassSummary.timingAcceptanceSummary: TelemetryAcceptanceSummary
 
 val OtoxanUiState.endpointEvidenceText: String
     get() = "endpoint=${voiceEndpoint.ifBlank { "unknown" }}; http=${httpStatusCode?.toString() ?: "unknown"}; dispatch=${endpointDispatchMs.toLatencyMsText()}; responseReady=${endpointResponseReadyMs.toLatencyMsText()}; clientRoundTrip=${backendRoundTripMs.toLatencyMsText()}; request=${requestBytes?.toString() ?: "unknown"} bytes; response=${responseBytes?.toString() ?: "unknown"} bytes"
+
+val OtoxanUiState.phoneTelemetryEvidenceClasses: List<PhoneTelemetryEvidenceClass>
+    get() = listOf(
+        hardwareGateEvidenceClass,
+        captureReliabilityEvidenceClass,
+        backendReliabilityEvidenceClass,
+        latencyScorecardEvidenceClass,
+        PhoneTelemetryEvidenceClass(
+            label = "Source/build proof",
+            state = EvidenceClassState.NotRuntimeEvidence,
+            detail = "Gradle/tests prove package health only; they do not prove Ray-Ban route, speech, or latency on hardware."
+        )
+    )
+
+private val OtoxanUiState.hardwareGateEvidenceClass: PhoneTelemetryEvidenceClass
+    get() {
+        val proven = pass1Ready == true && pass1Status == "real-speech-proven" && transcriptSource != null && sttStatus == "success"
+        return PhoneTelemetryEvidenceClass(
+            label = "Hardware gate",
+            state = if (proven) EvidenceClassState.Proven else EvidenceClassState.NeedsEvidence,
+            detail = "Requires real phone + Ray-Ban route, pass1Ready=true/pass1Status=real-speech-proven, successful STT, and semantic response; current pass1=${pass1Status ?: "unknown"}, source=${transcriptSource ?: "unknown"}, stt=${sttStatus ?: "unknown"}."
+        )
+    }
+
+private val OtoxanUiState.captureReliabilityEvidenceClass: PhoneTelemetryEvidenceClass
+    get() {
+        val proven = captureUsable == true && capturedBytes > 0 && capturePeakAmplitude > 0
+        return PhoneTelemetryEvidenceClass(
+            label = "Capture reliability",
+            state = if (proven) EvidenceClassState.Proven else EvidenceClassState.NeedsEvidence,
+            detail = "Guardrail evidence only: captured=$capturedBytes/$expectedCaptureBytes bytes, peak=$capturePeakAmplitude, usable=${captureUsable?.toString() ?: "unknown"}. It detects bad captures but does not alone prove real speech."
+        )
+    }
+
+private val OtoxanUiState.backendReliabilityEvidenceClass: PhoneTelemetryEvidenceClass
+    get() {
+        val status = httpStatusCode
+        val httpOk = status != null && status in 200..299
+        val backendOk = httpOk && provider != null && provider != "stub" && lastError == null
+        return PhoneTelemetryEvidenceClass(
+            label = "Backend turn reliability",
+            state = if (backendOk) EvidenceClassState.Proven else EvidenceClassState.NeedsEvidence,
+            detail = "Needs non-stub backend response with successful HTTP and no turn error; provider=${provider ?: "unknown"}, http=${httpStatusCode?.toString() ?: "unknown"}, backendBytes=${backendBytesReceived?.toString() ?: "unknown"}, error=${lastError ?: "none"}."
+        )
+    }
+
+private val OtoxanUiState.latencyScorecardEvidenceClass: PhoneTelemetryEvidenceClass
+    get() = PhoneTelemetryEvidenceClass(
+        label = "Latency scorecard",
+        state = when (timingAcceptanceSummary.overallState) {
+            TimingAcceptanceState.Pass -> EvidenceClassState.Proven
+            TimingAcceptanceState.Miss -> EvidenceClassState.NeedsEvidence
+            TimingAcceptanceState.Unknown -> EvidenceClassState.DiagnosticOnly
+        },
+        detail = "Timing acceptance=${timingAcceptanceSummary.summaryText}. These targets are tuning baselines/readback evidence and never override hardware-gate proof."
+    )
 
 private val OtoxanUiState.endpointWaitMs: Long?
     get() = if (endpointDispatchMs != null && endpointResponseReadyMs != null) {
