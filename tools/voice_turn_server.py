@@ -58,6 +58,8 @@ XANDER_FAST_MAX_WORDS = 16
 XANDER_SPOKEN_MAX_CHARS = 140
 MOBILE_FAST_RUNTIME_CONTRACT_NAME = "otoxan-mobile-minimax-runtime"
 MOBILE_FAST_RUNTIME_CONTRACT_VERSION = 1
+MINIMAX_M3_ADAPTER_NAME = "minimax-m3-chat-completions-parser"
+MINIMAX_M3_ADAPTER_VERSION = 1
 TTS_PROVIDER_DEFAULT = "android"
 TTS_PROVIDER_ALIASES = {"android", "none", "off", "kokoro", "kokoro-command"}
 STT_PROVIDER_DEFAULT = "hermes"
@@ -1709,6 +1711,7 @@ def mobile_fast_runtime_contract() -> dict[str, Any]:
             "defaultTemperature": 0.2,
             "reasoningSplit": True,
         },
+        "adapterParser": minimax_m3_adapter_descriptor(),
         "callGate": "only_after_stt_success_or_debug_transcript_not_route_evidence_fallback",
         "fallbackPolicy": {
             "sessionFallbackEnv": "OTOXAN_MOBILE_FAST_SESSION_FALLBACK",
@@ -1734,6 +1737,33 @@ def mobile_fast_runtime_contract() -> dict[str, Any]:
             "explicitSessionOnly": True,
         },
         "evidenceClass": "runtime_contract_readback_not_hardware_proof",
+    }
+
+
+def minimax_m3_adapter_descriptor() -> dict[str, Any]:
+    """Describe the named MiniMax M3 response parser without secrets.
+
+    MiniMax M3 can return OpenAI-compatible chat responses where reasoning is
+    split away from ``message.content``. For glasses audio, only spoken content
+    may be read aloud; reasoning fields and reasoning markup are evidence for
+    diagnostics/fallback, never speech material.
+    """
+    return {
+        "name": MINIMAX_M3_ADAPTER_NAME,
+        "version": MINIMAX_M3_ADAPTER_VERSION,
+        "targetModel": "MiniMax-M3",
+        "apiCompatibility": "openai_chat_completions",
+        "spokenContentPath": "choices[0].message.content",
+        "reasoningEvidenceFields": [
+            "choices[0].message.reasoning_content",
+            "choices[0].message.reasoningContent",
+            "choices[0].message.reasoning",
+            "choices[0].message.reasoning_details",
+            "choices[0].message.content:<think>...</think>",
+        ],
+        "emptyContentEvidence": True,
+        "reasoningPolicy": "reasoning_never_spoken_empty_content_triggers_fallback",
+        "evidenceClass": "adapter_parser_readback_not_hardware_proof",
     }
 
 
@@ -1798,14 +1828,72 @@ def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
     except TimeoutError as exc:
         raise VoiceTurnError(f"mobile-fast provider timed out after {timeout:.0f}s", 504) from exc
 
-    try:
-        text = data["choices"][0]["message"].get("content", "")
-    except (KeyError, IndexError, TypeError) as exc:
-        raise VoiceTurnError("mobile-fast provider returned an unexpected response shape", 502) from exc
-    text = _strip_reasoning_markup(str(text))
-    if not text.strip():
-        raise VoiceTurnError("mobile-fast provider returned no spoken content", 502)
+    text = _parse_minimax_m3_chat_completion(data)
     return _shape_mobile_spoken_response(text, max_words=XANDER_FAST_MAX_WORDS)
+
+
+def _parse_minimax_m3_chat_completion(data: Mapping[str, Any]) -> str:
+    """Extract spoken MiniMax M3 content and preserve reasoning/empty evidence.
+
+    The return value is intentionally only the speakable text. Evidence is kept
+    in the descriptor and in sanitized error text so the mobile-fast lane can
+    fall back without leaking reasoning into Ray-Ban audio or telemetry.
+    """
+    try:
+        message = data["choices"][0]["message"]  # type: ignore[index]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise VoiceTurnError(f"{MINIMAX_M3_ADAPTER_NAME} returned an unexpected response shape", 502) from exc
+    if not isinstance(message, Mapping):
+        raise VoiceTurnError(f"{MINIMAX_M3_ADAPTER_NAME} returned an unexpected response shape", 502)
+
+    raw_content = _chat_message_content_text(message.get("content", ""))
+    reasoning_evidence = _minimax_m3_reasoning_evidence(message, raw_content)
+    text = _strip_reasoning_markup(raw_content)
+    if not text.strip():
+        fields = ",".join(reasoning_evidence["fields"]) or "none"
+        raise VoiceTurnError(
+            f"{MINIMAX_M3_ADAPTER_NAME} returned no spoken content "
+            f"(contentEmpty={str(reasoning_evidence['contentEmpty']).lower()}, "
+            f"reasoningPresent={str(reasoning_evidence['reasoningPresent']).lower()}, "
+            f"reasoningFields={fields})",
+            502,
+        )
+    return text
+
+
+def _chat_message_content_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, Mapping):
+                item_text = item.get("text")
+                if isinstance(item_text, str):
+                    parts.append(item_text)
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    return str(content)
+
+
+def _minimax_m3_reasoning_evidence(message: Mapping[str, Any], raw_content: str) -> dict[str, Any]:
+    fields: list[str] = []
+    for key in ("reasoning_content", "reasoningContent", "reasoning", "reasoning_details"):
+        value = message.get(key)
+        if value:
+            fields.append(key)
+    lower = raw_content.lower()
+    if "<think>" in lower or "</think>" in lower:
+        fields.append("content_think_markup")
+    return {
+        "adapter": MINIMAX_M3_ADAPTER_NAME,
+        "contentEmpty": not raw_content.strip(),
+        "reasoningPresent": bool(fields),
+        "fields": fields,
+    }
 
 
 def _mobile_fast_degraded_spoken_response(transcript: str) -> str:

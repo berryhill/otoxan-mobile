@@ -26,6 +26,8 @@ providerMode=mobile-fast
 apiCompatibility=openai_chat_completions
 endpointSuffix=/chat/completions
 reasoningSplit=true
+adapterParser=minimax-m3-chat-completions-parser
+emptyContentEvidence=true
 defaultRequestTimeoutSeconds=4
 defaultHardTimeoutSeconds=4.0
 maxSpokenWords=16
@@ -42,6 +44,8 @@ max_tokens=OTOXAN_MOBILE_FAST_MAX_TOKENS or 96
 temperature=OTOXAN_MOBILE_FAST_TEMPERATURE or 0.2
 reasoning_split=true
 ```
+
+The response parser is named `minimax-m3-chat-completions-parser`. It reads speakable audio only from `choices[0].message.content`, strips `<think>...</think>` markup before shaping, records whether MiniMax-style reasoning evidence was present (`reasoning_content`, `reasoningContent`, `reasoning`, `reasoning_details`, or think markup), and reports sanitized empty-content evidence without copying private reasoning text into spoken output or error telemetry.
 
 The provider call is gated behind real STT success or an explicit debug transcript. If STT is empty and only route evidence exists, the backend returns `Audio arrived, but words did not decode.` and does not call the model with route metadata as fake user speech.
 

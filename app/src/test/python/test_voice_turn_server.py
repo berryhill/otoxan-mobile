@@ -1040,6 +1040,9 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("openai_chat_completions", contract["requestShape"]["apiCompatibility"])
         self.assertEqual("/chat/completions", contract["requestShape"]["endpointSuffix"])
         self.assertTrue(contract["requestShape"]["reasoningSplit"])
+        self.assertEqual("minimax-m3-chat-completions-parser", contract["adapterParser"]["name"])
+        self.assertTrue(contract["adapterParser"]["emptyContentEvidence"])
+        self.assertIn("reasoning_content", " ".join(contract["adapterParser"]["reasoningEvidenceFields"]))
         self.assertEqual(4, contract["defaultRequestTimeoutSeconds"])
         self.assertEqual(4.0, contract["defaultHardTimeoutSeconds"])
         self.assertFalse(contract["privacy"]["secretMaterialInTelemetry"])
@@ -1134,6 +1137,63 @@ class VoiceTurnServerTest(unittest.TestCase):
         )
 
         self.assertEqual("The backend is responding, but the slowest lane is speech recognition.", text)
+
+    def test_minimax_m3_parser_extracts_content_and_tracks_reasoning_markup(self):
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "<think>private reasoning</think>Route is live.",
+                        "reasoning_content": "private reasoning",
+                    }
+                }
+            ]
+        }
+
+        text = voice_turn_server._parse_minimax_m3_chat_completion(response_body)
+        evidence = voice_turn_server._minimax_m3_reasoning_evidence(
+            response_body["choices"][0]["message"],
+            response_body["choices"][0]["message"]["content"],
+        )
+
+        self.assertEqual("Route is live.", text)
+        self.assertTrue(evidence["reasoningPresent"])
+        self.assertFalse(evidence["contentEmpty"])
+        self.assertIn("reasoning_content", evidence["fields"])
+        self.assertIn("content_think_markup", evidence["fields"])
+
+    def test_minimax_m3_parser_reports_empty_content_with_reasoning_evidence(self):
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "I know the answer but did not emit spoken content.",
+                    }
+                }
+            ]
+        }
+
+        with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
+            voice_turn_server._parse_minimax_m3_chat_completion(response_body)
+
+        message = str(raised.exception)
+        self.assertIn("minimax-m3-chat-completions-parser", message)
+        self.assertIn("contentEmpty=true", message)
+        self.assertIn("reasoningPresent=true", message)
+        self.assertIn("reasoning_content", message)
+        self.assertNotIn("I know the answer", message)
+
+    def test_minimax_m3_parser_reports_empty_content_without_reasoning_evidence(self):
+        response_body = {"choices": [{"message": {"content": None}}]}
+
+        with self.assertRaises(voice_turn_server.VoiceTurnError) as raised:
+            voice_turn_server._parse_minimax_m3_chat_completion(response_body)
+
+        message = str(raised.exception)
+        self.assertIn("contentEmpty=true", message)
+        self.assertIn("reasoningPresent=false", message)
+        self.assertIn("reasoningFields=none", message)
 
     def test_mobile_fast_reasoning_only_output_raises_for_fallback(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
