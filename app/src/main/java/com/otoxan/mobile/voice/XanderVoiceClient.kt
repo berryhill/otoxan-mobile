@@ -1,8 +1,14 @@
 package com.otoxan.mobile.voice
 
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.URI
 import java.net.URL
+import java.security.SecureRandom
 import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -199,8 +205,19 @@ data class StreamingVoiceClientConfig(
     val endpointUrl: String = ""
 )
 
+data class DiagnosticPcmChunkConfig(
+    val enabled: Boolean = false,
+    val endpointUrl: String = "",
+    val chunkBytes: Int = 3_200,
+    val timeoutMillis: Int = 2_000
+)
+
 interface StreamingVoiceClient {
     suspend fun sendStreamingVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult
+}
+
+interface DiagnosticPcmChunkClient {
+    suspend fun sendDiagnosticPcmChunks(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence)
 }
 
 class HttpXanderVoiceClient(
@@ -599,6 +616,80 @@ class StreamingXanderVoiceClient(
     }
 }
 
+class DiagnosticPcmXanderVoiceClient(
+    private val diagnosticClient: DiagnosticPcmChunkClient,
+    private val fallbackClient: XanderVoiceClient
+) : XanderVoiceClient {
+    override suspend fun sendVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult {
+        runCatching { diagnosticClient.sendDiagnosticPcmChunks(pcm16Mono16k, routeEvidence) }
+        return fallbackClient.sendVoiceTurn(pcm16Mono16k, routeEvidence)
+    }
+
+    override suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult {
+        return fallbackClient.postVoiceTurnMetrics(packet)
+    }
+
+    override suspend fun fetchRecentVoiceTurnMetrics(limit: Int): VoiceTurnTelemetryHistoryResult {
+        return fallbackClient.fetchRecentVoiceTurnMetrics(limit)
+    }
+}
+
+class RealtimeDiagnosticPcmChunkClient(
+    endpointUrl: String,
+    private val chunkBytes: Int = 3_200,
+    private val timeoutMillis: Int = 2_000
+) : DiagnosticPcmChunkClient {
+    private val realtimeEndpointUrl = normalizeRealtimeEndpoint(endpointUrl)
+
+    override suspend fun sendDiagnosticPcmChunks(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): Unit = withContext(Dispatchers.IO) {
+        if (pcm16Mono16k.isEmpty() || realtimeEndpointUrl.isBlank()) return@withContext
+        val uri = URI(realtimeEndpointUrl)
+        val scheme = uri.scheme?.lowercase() ?: "ws"
+        if (scheme != "ws") {
+            throw XanderVoiceClientException("Diagnostic PCM chunks require ws:// realtime endpoint; got $realtimeEndpointUrl")
+        }
+        val host = uri.host ?: throw XanderVoiceClientException("Diagnostic PCM endpoint missing host: $realtimeEndpointUrl")
+        val port = if (uri.port > 0) uri.port else 80
+        val path = uri.rawPath.takeUnless { it.isNullOrBlank() } ?: "/realtime"
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(host, port), timeoutMillis)
+            socket.soTimeout = timeoutMillis
+            socket.getOutputStream().buffered().use { output ->
+                socket.getInputStream().buffered().use { input ->
+                    val key = websocketClientKey()
+                    val hostHeader = if (uri.port > 0) "$host:$port" else host
+                    output.write(
+                        (
+                            "GET $path HTTP/1.1\r\n" +
+                                "Host: $hostHeader\r\n" +
+                                "Upgrade: websocket\r\n" +
+                                "Connection: Upgrade\r\n" +
+                                "Sec-WebSocket-Key: $key\r\n" +
+                                "Sec-WebSocket-Version: 13\r\n" +
+                                "\r\n"
+                            ).toByteArray(Charsets.US_ASCII)
+                    )
+                    output.flush()
+                    val handshake = readHttpHandshake(input)
+                    if (!handshake.startsWith("HTTP/1.1 101")) {
+                        throw XanderVoiceClientException("Diagnostic PCM WebSocket handshake failed: ${handshake.lineSequence().firstOrNull().orEmpty()}")
+                    }
+                    writeWebSocketFrame(output, opcode = 0x1, payload = buildSessionUpdateBody(routeEvidence).toByteArray(Charsets.UTF_8))
+                    val boundedChunkBytes = chunkBytes.coerceIn(320, 32_000)
+                    var offset = 0
+                    while (offset < pcm16Mono16k.size) {
+                        val end = (offset + boundedChunkBytes).coerceAtMost(pcm16Mono16k.size)
+                        writeWebSocketFrame(output, opcode = 0x2, payload = pcm16Mono16k.copyOfRange(offset, end))
+                        offset = end
+                    }
+                    writeWebSocketFrame(output, opcode = 0x1, payload = "{\"type\":\"input_audio.clear\"}".toByteArray(Charsets.UTF_8))
+                    writeWebSocketFrame(output, opcode = 0x8, payload = ByteArray(0))
+                }
+            }
+        }
+    }
+}
+
 class StubXanderVoiceClient : XanderVoiceClient {
     override suspend fun sendVoiceTurn(
         pcm16Mono16k: ByteArray,
@@ -628,9 +719,10 @@ class StubXanderVoiceClient : XanderVoiceClient {
 fun createXanderVoiceClient(
     endpointUrl: String,
     endpointPolicy: XanderVoiceEndpointPolicy = XanderVoiceEndpointPolicy(),
-    streamingConfig: StreamingVoiceClientConfig = StreamingVoiceClientConfig()
+    streamingConfig: StreamingVoiceClientConfig = StreamingVoiceClientConfig(),
+    diagnosticPcmChunkConfig: DiagnosticPcmChunkConfig = DiagnosticPcmChunkConfig()
 ): XanderVoiceClient {
-    return if (endpointUrl.isBlank()) {
+    val baseClient: XanderVoiceClient = if (endpointUrl.isBlank()) {
         StubXanderVoiceClient()
     } else if (streamingConfig.enabled) {
         val fallbackClient = HttpXanderVoiceClient(
@@ -655,6 +747,18 @@ fun createXanderVoiceClient(
             metricsTimeoutMillis = endpointPolicy.metricsTimeoutMillis
         )
     }
+    return if (diagnosticPcmChunkConfig.enabled && endpointUrl.isNotBlank()) {
+        DiagnosticPcmXanderVoiceClient(
+            diagnosticClient = RealtimeDiagnosticPcmChunkClient(
+                endpointUrl = diagnosticPcmChunkConfig.endpointUrl.ifBlank { endpointUrl },
+                chunkBytes = diagnosticPcmChunkConfig.chunkBytes,
+                timeoutMillis = diagnosticPcmChunkConfig.timeoutMillis
+            ),
+            fallbackClient = baseClient
+        )
+    } else {
+        baseClient
+    }
 }
 
 private fun buildVoiceTurnRequestBody(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): String {
@@ -672,6 +776,71 @@ private fun buildVoiceTurnRequestBody(pcm16Mono16k: ByteArray, routeEvidence: Ro
           }
         }
     """.trimIndent().replace("\n", "").replace("  ", "")
+}
+
+private fun buildSessionUpdateBody(routeEvidence: RouteEvidence): String {
+    return """
+        {
+          "type":"session.update",
+          "audioFormat":"pcm_s16le_16khz_mono",
+          "routeEvidence":{
+            "inputName":"${routeEvidence.inputName.jsonEscape()}",
+            "inputType":"${routeEvidence.inputType.jsonEscape()}",
+            "outputName":"${routeEvidence.outputName.jsonEscape()}",
+            "outputType":"${routeEvidence.outputType.jsonEscape()}",
+            "wearableActive":${routeEvidence.wearableActive},
+            "message":"${routeEvidence.message.jsonEscape()}"
+          },
+          "diagnosticOnly":true,
+          "canonicalHttpFallback":"/voice-turn"
+        }
+    """.trimIndent().replace("\n", "").replace("  ", "")
+}
+
+private fun websocketClientKey(): String {
+    val bytes = ByteArray(16)
+    SecureRandom().nextBytes(bytes)
+    return Base64.getEncoder().encodeToString(bytes)
+}
+
+private fun readHttpHandshake(input: InputStream): String {
+    val bytes = ArrayList<Byte>()
+    var previous = intArrayOf(-1, -1, -1, -1)
+    while (true) {
+        val next = input.read()
+        if (next < 0) break
+        bytes.add(next.toByte())
+        previous = intArrayOf(previous[1], previous[2], previous[3], next)
+        if (previous.contentEquals(intArrayOf('\r'.code, '\n'.code, '\r'.code, '\n'.code))) break
+        if (bytes.size > 8192) throw XanderVoiceClientException("Diagnostic PCM WebSocket handshake exceeded 8192 bytes")
+    }
+    return bytes.toByteArray().toString(Charsets.ISO_8859_1)
+}
+
+private fun writeWebSocketFrame(output: OutputStream, opcode: Int, payload: ByteArray) {
+    val mask = ByteArray(4)
+    SecureRandom().nextBytes(mask)
+    val header = ArrayList<Byte>()
+    header.add((0x80 or (opcode and 0x0F)).toByte())
+    when {
+        payload.size < 126 -> header.add((0x80 or payload.size).toByte())
+        payload.size <= 0xFFFF -> {
+            header.add((0x80 or 126).toByte())
+            header.add(((payload.size ushr 8) and 0xFF).toByte())
+            header.add((payload.size and 0xFF).toByte())
+        }
+        else -> {
+            header.add((0x80 or 127).toByte())
+            for (shift in 56 downTo 0 step 8) {
+                header.add(((payload.size.toLong() ushr shift) and 0xFF).toByte())
+            }
+        }
+    }
+    output.write(header.toByteArray())
+    output.write(mask)
+    val masked = ByteArray(payload.size) { index -> (payload[index].toInt() xor mask[index % 4].toInt()).toByte() }
+    output.write(masked)
+    output.flush()
 }
 
 private fun parseVoiceTurnResult(
@@ -766,6 +935,21 @@ fun normalizeVoiceStreamEndpoint(endpointUrl: String): String {
     }
 }
 
+fun normalizeRealtimeEndpoint(endpointUrl: String): String {
+    val trimmed = endpointUrl.trim().trimEnd('/')
+    if (trimmed.isBlank()) return ""
+    val websocketUrl = when {
+        trimmed.startsWith("http://") -> "ws://" + trimmed.removePrefix("http://")
+        trimmed.startsWith("https://") -> "wss://" + trimmed.removePrefix("https://")
+        else -> trimmed
+    }
+    return when {
+        websocketUrl.endsWith("/realtime") -> websocketUrl
+        websocketUrl.endsWith("/voice-turn") -> websocketUrl.removeSuffix("/voice-turn") + "/realtime"
+        websocketUrl.endsWith("/voice-stream") -> websocketUrl.removeSuffix("/voice-stream") + "/realtime"
+        else -> "$websocketUrl/realtime"
+    }
+}
 
 private fun JSONObject?.optStringOrNull(name: String): String? {
     if (this == null || isNull(name)) return null

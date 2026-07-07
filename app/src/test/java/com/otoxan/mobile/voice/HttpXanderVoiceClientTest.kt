@@ -1,6 +1,12 @@
 package com.otoxan.mobile.voice
 
+import java.io.InputStream
+import java.io.IOException
+import java.net.ServerSocket
 import java.util.Base64
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
@@ -73,6 +79,87 @@ class HttpXanderVoiceClientTest {
         assertEquals("http://10.0.2.2:8787/voice-stream", normalizeVoiceStreamEndpoint(" http://10.0.2.2:8787 "))
         assertEquals("http://10.0.2.2:8787/voice-stream", normalizeVoiceStreamEndpoint("http://10.0.2.2:8787/voice-turn"))
         assertEquals("http://10.0.2.2:8787/voice-stream", normalizeVoiceStreamEndpoint("http://10.0.2.2:8787/voice-stream/"))
+    }
+
+    @Test
+    fun normalizeRealtimeEndpoint_acceptsBaseVoiceTurnStreamOrExplicitRealtimePath() {
+        assertEquals("ws://10.0.2.2:8788/realtime", normalizeRealtimeEndpoint(" http://10.0.2.2:8788 "))
+        assertEquals("ws://10.0.2.2:8788/realtime", normalizeRealtimeEndpoint("http://10.0.2.2:8788/voice-turn"))
+        assertEquals("ws://10.0.2.2:8788/realtime", normalizeRealtimeEndpoint("http://10.0.2.2:8788/voice-stream/"))
+        assertEquals("ws://10.0.2.2:8788/realtime", normalizeRealtimeEndpoint("ws://10.0.2.2:8788/realtime/"))
+    }
+
+    @Test
+    fun diagnosticPcmWrapperSendsDiagnosticChunksThenAlwaysPreservesVoiceTurnFallback() {
+        val diagnosticClient = RecordingDiagnosticPcmChunkClient()
+        val fallbackClient = RecordingXanderVoiceClient()
+        val client = DiagnosticPcmXanderVoiceClient(diagnosticClient, fallbackClient)
+
+        val result = kotlinx.coroutines.runBlocking {
+            client.sendVoiceTurn(byteArrayOf(1, 2, 3), RouteEvidence.default("diagnostic route"))
+        }
+
+        assertEquals("fallback transcript", result.transcript)
+        assertEquals(1, diagnosticClient.calls)
+        assertEquals(1, fallbackClient.calls)
+        assertEquals(listOf<Byte>(1, 2, 3), diagnosticClient.lastPcm!!.toList())
+        assertEquals(listOf<Byte>(1, 2, 3), fallbackClient.lastPcm!!.toList())
+
+        val failingDiagnosticClient = RecordingDiagnosticPcmChunkClient(IOException("diagnostic endpoint down"))
+        val fallbackAfterFailure = RecordingXanderVoiceClient()
+        val fallbackResult = kotlinx.coroutines.runBlocking {
+            DiagnosticPcmXanderVoiceClient(failingDiagnosticClient, fallbackAfterFailure)
+                .sendVoiceTurn(byteArrayOf(4, 5), RouteEvidence.default("diagnostic failure route"))
+        }
+
+        assertEquals("fallback transcript", fallbackResult.transcript)
+        assertEquals(1, failingDiagnosticClient.calls)
+        assertEquals(1, fallbackAfterFailure.calls)
+    }
+
+    @Test
+    fun realtimeDiagnosticPcmClientSendsSessionUpdateBinaryPcmChunksClearAndCloseWithoutCommit() {
+        val capturedFrames = LinkedBlockingQueue<List<CapturedWebSocketFrame>>()
+        ServerSocket(0).use { serverSocket ->
+            val port = serverSocket.localPort
+            val serverThread = thread(start = true) {
+                serverSocket.accept().use { socket ->
+                    socket.soTimeout = 2_000
+                    readHttpRequest(socket.getInputStream())
+                    socket.getOutputStream().write(
+                        (
+                            "HTTP/1.1 101 Switching Protocols\r\n" +
+                                "Upgrade: websocket\r\n" +
+                                "Connection: Upgrade\r\n" +
+                                "Sec-WebSocket-Accept: test\r\n" +
+                                "\r\n"
+                            ).toByteArray(Charsets.US_ASCII)
+                    )
+                    socket.getOutputStream().flush()
+                    capturedFrames.offer(List(6) { readClientFrame(socket.getInputStream()) })
+                }
+            }
+
+            val pcm = ByteArray(650) { index -> (index % 127).toByte() }
+            kotlinx.coroutines.runBlocking {
+                RealtimeDiagnosticPcmChunkClient(
+                    endpointUrl = "ws://127.0.0.1:$port/realtime",
+                    chunkBytes = 320,
+                    timeoutMillis = 2_000
+                ).sendDiagnosticPcmChunks(pcm, RouteEvidence.default("diagnostic websocket route"))
+            }
+            serverThread.join(2_000)
+        }
+
+        val frames = capturedFrames.poll(2, TimeUnit.SECONDS) ?: error("diagnostic server did not capture frames")
+        assertEquals(listOf(0x1, 0x2, 0x2, 0x2, 0x1, 0x8), frames.map { it.opcode })
+        assertTrue(frames[0].payload.toString(Charsets.UTF_8).contains("\"type\":\"session.update\""))
+        assertTrue(frames[0].payload.toString(Charsets.UTF_8).contains("diagnostic websocket route"))
+        assertEquals(320, frames[1].payload.size)
+        assertEquals(320, frames[2].payload.size)
+        assertEquals(10, frames[3].payload.size)
+        assertEquals("{\"type\":\"input_audio.clear\"}", frames[4].payload.toString(Charsets.UTF_8))
+        assertEquals(0, frames[5].payload.size)
     }
 
     @Test
@@ -606,4 +693,96 @@ class HttpXanderVoiceClientTest {
 
 private fun Any.privateIntField(name: String): Int {
     return javaClass.getDeclaredField(name).apply { isAccessible = true }.getInt(this)
+}
+
+private class RecordingDiagnosticPcmChunkClient(
+    private val error: Throwable? = null
+) : DiagnosticPcmChunkClient {
+    var calls: Int = 0
+    var lastPcm: ByteArray? = null
+
+    override suspend fun sendDiagnosticPcmChunks(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence) {
+        calls += 1
+        lastPcm = pcm16Mono16k
+        error?.let { throw it }
+    }
+}
+
+private class RecordingXanderVoiceClient : XanderVoiceClient {
+    var calls: Int = 0
+    var lastPcm: ByteArray? = null
+
+    override suspend fun sendVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult {
+        calls += 1
+        lastPcm = pcm16Mono16k
+        return VoiceTurnResult(transcript = "fallback transcript", assistantText = "fallback assistant")
+    }
+
+    override suspend fun postVoiceTurnMetrics(packet: VoiceTurnTelemetryPacket): VoiceTurnTelemetryResult {
+        return VoiceTurnTelemetryResult(ok = true, recordId = "fallback")
+    }
+
+    override suspend fun fetchRecentVoiceTurnMetrics(limit: Int): VoiceTurnTelemetryHistoryResult {
+        return VoiceTurnTelemetryHistoryResult(ok = true)
+    }
+}
+
+private data class CapturedWebSocketFrame(val opcode: Int, val payload: ByteArray)
+
+private fun readHttpRequest(input: InputStream): String {
+    val bytes = mutableListOf<Byte>()
+    while (true) {
+        val next = input.read()
+        if (next < 0) break
+        bytes.add(next.toByte())
+        val size = bytes.size
+        if (size >= 4 &&
+            bytes[size - 4] == '\r'.code.toByte() &&
+            bytes[size - 3] == '\n'.code.toByte() &&
+            bytes[size - 2] == '\r'.code.toByte() &&
+            bytes[size - 1] == '\n'.code.toByte()
+        ) break
+    }
+    return bytes.toByteArray().toString(Charsets.ISO_8859_1)
+}
+
+private fun readClientFrame(input: InputStream): CapturedWebSocketFrame {
+    val first = input.read()
+    val second = input.read()
+    if (first < 0 || second < 0) error("unexpected end of websocket frame")
+    val opcode = first and 0x0F
+    val masked = (second and 0x80) != 0
+    var length = second and 0x7F
+    if (length == 126) {
+        length = (input.readExactByte() shl 8) or input.readExactByte()
+    } else if (length == 127) {
+        var longLength = 0L
+        repeat(8) { longLength = (longLength shl 8) or input.readExactByte().toLong() }
+        length = longLength.toInt()
+    }
+    val mask = if (masked) input.readExactBytes(4) else ByteArray(0)
+    val payload = input.readExactBytes(length)
+    val unmaskedPayload = if (masked) {
+        ByteArray(payload.size) { index -> (payload[index].toInt() xor mask[index % 4].toInt()).toByte() }
+    } else {
+        payload
+    }
+    return CapturedWebSocketFrame(opcode = opcode, payload = unmaskedPayload)
+}
+
+private fun InputStream.readExactByte(): Int {
+    val value = read()
+    if (value < 0) error("unexpected end of stream")
+    return value
+}
+
+private fun InputStream.readExactBytes(length: Int): ByteArray {
+    val bytes = ByteArray(length)
+    var offset = 0
+    while (offset < length) {
+        val read = read(bytes, offset, length - offset)
+        if (read < 0) error("unexpected end of stream")
+        offset += read
+    }
+    return bytes
 }

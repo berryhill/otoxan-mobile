@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.otoxan.mobile.BuildConfig
 import com.otoxan.mobile.voice.AudioRouter
 import com.otoxan.mobile.voice.ConversationCaptureTuning
+import com.otoxan.mobile.voice.DiagnosticPcmChunkConfig
 import com.otoxan.mobile.voice.MicCapture
 import com.otoxan.mobile.voice.RouteEvidence
 import com.otoxan.mobile.voice.SpeechPlayback
@@ -918,6 +919,12 @@ class OtoxanViewModel(
                         streamingConfig = StreamingVoiceClientConfig(
                             enabled = BuildConfig.OTOXAN_STREAMING_VOICE_CLIENT_ENABLED,
                             endpointUrl = BuildConfig.OTOXAN_STREAMING_VOICE_ENDPOINT
+                        ),
+                        diagnosticPcmChunkConfig = DiagnosticPcmChunkConfig(
+                            enabled = BuildConfig.OTOXAN_DIAGNOSTIC_PCM_CHUNKS_ENABLED,
+                            endpointUrl = BuildConfig.OTOXAN_DIAGNOSTIC_PCM_ENDPOINT,
+                            chunkBytes = BuildConfig.OTOXAN_DIAGNOSTIC_PCM_CHUNK_BYTES,
+                            timeoutMillis = BuildConfig.OTOXAN_DIAGNOSTIC_PCM_TIMEOUT_MILLIS
                         )
                     )
                 ) as T

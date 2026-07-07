@@ -10,6 +10,10 @@ val defaultXanderVoiceReadTimeoutMillis = 60_000
 val defaultXanderVoiceMetricsTimeoutMillis = 5_000
 val defaultOtoxanStreamingVoiceClientEnabled = false
 val defaultOtoxanStreamingVoiceEndpoint = ""
+val defaultOtoxanDiagnosticPcmChunksEnabled = false
+val defaultOtoxanDiagnosticPcmEndpoint = ""
+val defaultOtoxanDiagnosticPcmChunkBytes = 3_200
+val defaultOtoxanDiagnosticPcmTimeoutMillis = 2_000
 val defaultConversationCaptureTuningEvidenceGate = false
 val defaultConversationCaptureMaxMillis = 12_000
 val defaultConversationCaptureMinMillis = 700
@@ -60,6 +64,24 @@ val otoxanStreamingVoiceEndpoint: String = providers.gradleProperty("OTOXAN_STRE
     .orElse(providers.environmentVariable("OTOXAN_STREAMING_VOICE_ENDPOINT"))
     .orElse(defaultOtoxanStreamingVoiceEndpoint)
     .get()
+val otoxanDiagnosticPcmChunksEnabled = policyBoolean(
+    "OTOXAN_DIAGNOSTIC_PCM_CHUNKS_ENABLED",
+    defaultOtoxanDiagnosticPcmChunksEnabled
+)
+val otoxanDiagnosticPcmEndpoint: String = providers.gradleProperty("OTOXAN_DIAGNOSTIC_PCM_ENDPOINT")
+    .orElse(providers.environmentVariable("OTOXAN_DIAGNOSTIC_PCM_ENDPOINT"))
+    .orElse(defaultOtoxanDiagnosticPcmEndpoint)
+    .get()
+val otoxanDiagnosticPcmChunkBytes = boundedPolicyInt(
+    "OTOXAN_DIAGNOSTIC_PCM_CHUNK_BYTES",
+    defaultOtoxanDiagnosticPcmChunkBytes,
+    320..32_000
+)
+val otoxanDiagnosticPcmTimeoutMillis = boundedPolicyInt(
+    "OTOXAN_DIAGNOSTIC_PCM_TIMEOUT_MILLIS",
+    defaultOtoxanDiagnosticPcmTimeoutMillis,
+    250..10_000
+)
 val conversationCaptureTuningEvidenceGate = policyBoolean(
     "OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE",
     defaultConversationCaptureTuningEvidenceGate
@@ -109,6 +131,10 @@ android {
         buildConfigField("int", "XANDER_VOICE_METRICS_TIMEOUT_MILLIS", xanderVoiceMetricsTimeoutMillis.toString())
         buildConfigField("boolean", "OTOXAN_STREAMING_VOICE_CLIENT_ENABLED", otoxanStreamingVoiceClientEnabled.toString())
         buildConfigField("String", "OTOXAN_STREAMING_VOICE_ENDPOINT", "\"${otoxanStreamingVoiceEndpoint.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("boolean", "OTOXAN_DIAGNOSTIC_PCM_CHUNKS_ENABLED", otoxanDiagnosticPcmChunksEnabled.toString())
+        buildConfigField("String", "OTOXAN_DIAGNOSTIC_PCM_ENDPOINT", "\"${otoxanDiagnosticPcmEndpoint.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("int", "OTOXAN_DIAGNOSTIC_PCM_CHUNK_BYTES", otoxanDiagnosticPcmChunkBytes.toString())
+        buildConfigField("int", "OTOXAN_DIAGNOSTIC_PCM_TIMEOUT_MILLIS", otoxanDiagnosticPcmTimeoutMillis.toString())
         buildConfigField("boolean", "OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE", conversationCaptureTuningEvidenceGate.toString())
         buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS", conversationCaptureMaxMillis.toString())
         buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_MIN_MILLIS", conversationCaptureMinMillis.toString())

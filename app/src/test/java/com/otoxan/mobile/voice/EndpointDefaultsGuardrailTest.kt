@@ -48,6 +48,14 @@ class EndpointDefaultsGuardrailTest {
     }
 
     @Test
+    fun diagnosticPcmChunkDefaultsStayDisabledAndBounded() {
+        assertFalse(BuildConfig.OTOXAN_DIAGNOSTIC_PCM_CHUNKS_ENABLED)
+        assertEquals("", BuildConfig.OTOXAN_DIAGNOSTIC_PCM_ENDPOINT)
+        assertEquals(3_200, BuildConfig.OTOXAN_DIAGNOSTIC_PCM_CHUNK_BYTES)
+        assertEquals(2_000, BuildConfig.OTOXAN_DIAGNOSTIC_PCM_TIMEOUT_MILLIS)
+    }
+
+    @Test
     fun conversationCaptureTuningDefaultsStayEvidenceGatedAndBounded() {
         assertFalse(BuildConfig.OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE)
         assertEquals(12_000, BuildConfig.OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS)
