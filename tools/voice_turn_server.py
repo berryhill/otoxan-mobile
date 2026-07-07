@@ -107,6 +107,10 @@ STT_STREAM_EVENT_SCHEMA_VERSION = 1
 REALTIME_VAD_DIAGNOSTIC_PROVIDER = "energy-vad-phase3"
 REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD = int(os.environ.get("OTOXAN_REALTIME_VAD_PEAK_THRESHOLD", "700"))
 REALTIME_VAD_DIAGNOSTIC_END_SILENCE_CHUNKS = int(os.environ.get("OTOXAN_REALTIME_VAD_END_SILENCE_CHUNKS", "3"))
+MOONSHINE_STREAMING_ADAPTER_NAME = "moonshine-streaming-adapter"
+MOONSHINE_STREAMING_ADAPTER_VERSION = 1
+MOONSHINE_STREAMING_ADAPTER_ENV = "OTOXAN_MOONSHINE_STREAMING_ADAPTER"
+MOONSHINE_STREAMING_COMMAND_ENV = "OTOXAN_MOONSHINE_STREAMING_COMMAND"
 _STT_LOCK = threading.Lock()
 _STT_TRANSCRIBE_AUDIO: Callable[[str], Mapping[str, Any]] | None = None
 _STT_FAST_LOCAL_TRANSCRIBE: Callable[[str], Mapping[str, Any]] | None = None
@@ -137,6 +141,50 @@ def stream_transport_descriptor() -> dict[str, Any]:
         },
         "sttEventSchema": stt_stream_event_schema(),
         "sttBudget": stt_budget_model(),
+        "moonshineStreamingAdapter": moonshine_streaming_adapter_descriptor(),
+    }
+
+
+def moonshine_streaming_adapter_descriptor() -> dict[str, Any]:
+    """Describe the optional local Moonshine streaming seam without importing it.
+
+    The mobile backend can now advertise where a future/chosen Moonshine streaming
+    adapter plugs in, but a clean clone must keep working without Moonshine Python
+    packages installed. Runtime audio remains on the existing /voice-turn contract
+    until an operator explicitly configures the command adapter.
+    """
+    mode = os.environ.get(MOONSHINE_STREAMING_ADAPTER_ENV, "disabled").strip().lower() or "disabled"
+    command_template = os.environ.get(MOONSHINE_STREAMING_COMMAND_ENV, "").strip()
+    command_configured = bool(command_template)
+    command_mode_requested = mode in {"1", "true", "yes", "on", "command"}
+    enabled = command_mode_requested and command_configured
+    status = "configured" if enabled else "disabled"
+    if command_mode_requested and not command_configured:
+        status = "command-not-configured"
+    return {
+        "name": MOONSHINE_STREAMING_ADAPTER_NAME,
+        "version": MOONSHINE_STREAMING_ADAPTER_VERSION,
+        "provider": "moonshine-stt",
+        "enabled": enabled,
+        "status": status,
+        "mode": "command" if command_mode_requested else "disabled",
+        "hardDependency": False,
+        "importPolicy": "no Moonshine package import at server startup",
+        "commandEnv": MOONSHINE_STREAMING_COMMAND_ENV,
+        "commandConfigured": command_configured,
+        "adapterFlag": MOONSHINE_STREAMING_ADAPTER_ENV,
+        "inputAudioFormat": SUPPORTED_FORMAT,
+        "events": ["stt.partial", "stt.completed"],
+        "canonicalFallback": {
+            "endpoint": "/voice-turn",
+            "method": "POST",
+            "semantics": "same_request_response_contract",
+        },
+        "privacy": {
+            "rawAudioPersisted": False,
+            "explicitSessionOnly": True,
+        },
+        "evidenceClass": "adapter_seam_readback_not_hardware_proof",
     }
 
 

@@ -156,12 +156,38 @@ Closes the explicit realtime session. Server response: `session.closed`, state `
 
 `POST /voice-stream` is an experimental backend transport shim for the same explicit push-to-talk turn that `/voice-turn` serves. It is disabled by default and returns `404` unless `OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT` is truthy. When enabled, the server replies as `application/x-ndjson` with one JSON event per line:
 
-1. `stream.started` — includes protocol descriptor, fallback pointer, flag name, privacy defaults, STT event schema, and STT budget model.
+1. `stream.started` — includes protocol descriptor, fallback pointer, flag name, privacy defaults, STT event schema, STT budget model, and the optional Moonshine streaming adapter seam.
 2. `stt.completed` — emits STT provider/status/latency/budget readback without raw audio or transcript text persistence.
 3. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
 4. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics and STT budget model.
 
 This endpoint does not add always-on capture, raw-audio persistence, or a new assistant authority surface. It is a backend transport experiment so the Android client can test stream-shaped parsing while retaining the proven `/voice-turn` contract and fallback.
+
+### Optional Moonshine streaming adapter seam
+
+`stream.started.transport.moonshineStreamingAdapter` advertises a disabled-by-default seam for a local Moonshine streaming command adapter. It is a readback contract, not a Python package dependency. The server does not import `moonshine`, `moonshine_onnx`, or `moonshine_voice` at startup.
+
+Default clean-clone state:
+
+```json
+{
+  "name": "moonshine-streaming-adapter",
+  "version": 1,
+  "provider": "moonshine-stt",
+  "enabled": false,
+  "status": "disabled",
+  "mode": "disabled",
+  "hardDependency": false,
+  "importPolicy": "no Moonshine package import at server startup",
+  "commandEnv": "OTOXAN_MOONSHINE_STREAMING_COMMAND",
+  "adapterFlag": "OTOXAN_MOONSHINE_STREAMING_ADAPTER",
+  "inputAudioFormat": "pcm_s16le_16khz_mono",
+  "events": ["stt.partial", "stt.completed"],
+  "evidenceClass": "adapter_seam_readback_not_hardware_proof"
+}
+```
+
+To opt in for an evidence run, set `OTOXAN_MOONSHINE_STREAMING_ADAPTER=command` and provide `OTOXAN_MOONSHINE_STREAMING_COMMAND`. If the flag is set without the command, the descriptor reports `status: command-not-configured` and remains disabled. The canonical fallback remains `/voice-turn` with the same request/response semantics.
 
 ### STT stream event schema
 

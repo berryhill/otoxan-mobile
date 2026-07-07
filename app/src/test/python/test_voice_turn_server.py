@@ -46,6 +46,8 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_KOKORO_TTS_COMMAND",
                 "OTOXAN_TTS_TIMEOUT_SECONDS",
                 "OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT",
+                "OTOXAN_MOONSHINE_STREAMING_ADAPTER",
+                "OTOXAN_MOONSHINE_STREAMING_COMMAND",
             )
         }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
@@ -253,6 +255,28 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("otoxan-mobile-stt-stream-events", descriptor["sttEventSchema"]["name"])
         self.assertEqual(1500, descriptor["sttBudget"]["targetMs"])
         self.assertEqual("latency_budget_readback_not_hardware_proof", descriptor["sttBudget"]["evidenceClass"])
+        self.assertEqual("moonshine-streaming-adapter", descriptor["moonshineStreamingAdapter"]["name"])
+        self.assertFalse(descriptor["moonshineStreamingAdapter"]["enabled"])
+        self.assertFalse(descriptor["moonshineStreamingAdapter"]["hardDependency"])
+        self.assertEqual("no Moonshine package import at server startup", descriptor["moonshineStreamingAdapter"]["importPolicy"])
+
+    def test_moonshine_streaming_adapter_descriptor_enables_only_when_command_configured(self):
+        os.environ["OTOXAN_MOONSHINE_STREAMING_ADAPTER"] = "command"
+        missing_command = voice_turn_server.moonshine_streaming_adapter_descriptor()
+        self.assertFalse(missing_command["enabled"])
+        self.assertEqual("command-not-configured", missing_command["status"])
+        self.assertFalse(missing_command["hardDependency"])
+
+        os.environ["OTOXAN_MOONSHINE_STREAMING_COMMAND"] = "fake-moonshine-stream --input {input} --output {output}"
+        configured = voice_turn_server.moonshine_streaming_adapter_descriptor()
+        self.assertTrue(configured["enabled"])
+        self.assertEqual("configured", configured["status"])
+        self.assertEqual("command", configured["mode"])
+        self.assertEqual("pcm_s16le_16khz_mono", configured["inputAudioFormat"])
+        self.assertEqual(["stt.partial", "stt.completed"], configured["events"])
+        self.assertEqual("/voice-turn", configured["canonicalFallback"]["endpoint"])
+        self.assertTrue(configured["privacy"]["explicitSessionOnly"])
+        self.assertFalse(configured["privacy"]["rawAudioPersisted"])
 
     def test_stt_budget_model_uses_sprint4_defaults_and_bounded_overrides(self):
         budget = voice_turn_server.stt_budget_model()
