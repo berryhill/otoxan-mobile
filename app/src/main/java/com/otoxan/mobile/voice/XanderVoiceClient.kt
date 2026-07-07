@@ -112,6 +112,10 @@ data class VoiceTurnTelemetryPacket(
     val streamCompleted: Boolean? = null,
     val streamProtocolName: String? = null,
     val streamProtocolVersion: Int? = null,
+    val streamPartialTranscriptCount: Int? = null,
+    val streamLatestPartialTranscriptLength: Int? = null,
+    val streamFinalTranscriptObserved: Boolean? = null,
+    val streamFinalTranscriptLength: Int? = null,
     val backendTotalMs: Int? = null,
     val decodePcmMs: Int? = null,
     val audioStatsMs: Int? = null,
@@ -204,7 +208,11 @@ data class VoiceTurnResult(
     val streamStarted: Boolean? = null,
     val streamCompleted: Boolean? = null,
     val streamProtocolName: String? = null,
-    val streamProtocolVersion: Int? = null
+    val streamProtocolVersion: Int? = null,
+    val streamPartialTranscriptCount: Int? = null,
+    val streamLatestPartialTranscriptLength: Int? = null,
+    val streamFinalTranscriptObserved: Boolean? = null,
+    val streamFinalTranscriptLength: Int? = null
 )
 
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -497,6 +505,10 @@ class HttpXanderVoiceClient(
                 "streamCompleted":${packet.streamCompleted.jsonValue()},
                 "streamProtocolName":${packet.streamProtocolName.jsonValue()},
                 "streamProtocolVersion":${packet.streamProtocolVersion.jsonValue()},
+                "streamPartialTranscriptCount":${packet.streamPartialTranscriptCount.jsonValue()},
+                "streamLatestPartialTranscriptLength":${packet.streamLatestPartialTranscriptLength.jsonValue()},
+                "streamFinalTranscriptObserved":${packet.streamFinalTranscriptObserved.jsonValue()},
+                "streamFinalTranscriptLength":${packet.streamFinalTranscriptLength.jsonValue()},
                 "evidenceClass":"diagnostic_transport_only_not_hardware_proof"
               },
               "backend":{
@@ -620,7 +632,11 @@ class HttpStreamingVoiceClient(
                 streamStarted = streamTelemetry.streamStarted,
                 streamCompleted = streamTelemetry.streamCompleted,
                 streamProtocolName = streamTelemetry.protocolName,
-                streamProtocolVersion = streamTelemetry.protocolVersion
+                streamProtocolVersion = streamTelemetry.protocolVersion,
+                streamPartialTranscriptCount = streamTelemetry.partialTranscriptCount,
+                streamLatestPartialTranscriptLength = streamTelemetry.latestPartialTranscriptLength,
+                streamFinalTranscriptObserved = streamTelemetry.finalTranscriptObserved,
+                streamFinalTranscriptLength = streamTelemetry.finalTranscriptLength
             )
         } catch (error: XanderVoiceClientException) {
             throw error
@@ -893,7 +909,11 @@ private fun parseVoiceTurnResult(
     streamStarted: Boolean? = null,
     streamCompleted: Boolean? = null,
     streamProtocolName: String? = null,
-    streamProtocolVersion: Int? = null
+    streamProtocolVersion: Int? = null,
+    streamPartialTranscriptCount: Int? = null,
+    streamLatestPartialTranscriptLength: Int? = null,
+    streamFinalTranscriptObserved: Boolean? = null,
+    streamFinalTranscriptLength: Int? = null
 ): VoiceTurnResult {
     val ttsPcm = responseBody.optionalJsonString("ttsPcm16Mono16kBase64")?.let { decodeTtsPcm(it) }
     return VoiceTurnResult(
@@ -945,7 +965,11 @@ private fun parseVoiceTurnResult(
         streamStarted = streamStarted,
         streamCompleted = streamCompleted,
         streamProtocolName = streamProtocolName,
-        streamProtocolVersion = streamProtocolVersion
+        streamProtocolVersion = streamProtocolVersion,
+        streamPartialTranscriptCount = streamPartialTranscriptCount,
+        streamLatestPartialTranscriptLength = streamLatestPartialTranscriptLength,
+        streamFinalTranscriptObserved = streamFinalTranscriptObserved,
+        streamFinalTranscriptLength = streamFinalTranscriptLength
     )
 }
 
@@ -955,7 +979,11 @@ private data class StreamVoiceTurnTelemetry(
     val streamStarted: Boolean,
     val streamCompleted: Boolean,
     val protocolName: String?,
-    val protocolVersion: Int?
+    val protocolVersion: Int?,
+    val partialTranscriptCount: Int,
+    val latestPartialTranscriptLength: Int?,
+    val finalTranscriptObserved: Boolean,
+    val finalTranscriptLength: Int?
 )
 
 private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTelemetry {
@@ -963,6 +991,10 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
     var voiceTurnJson: String? = null
     var protocolName: String? = null
     var protocolVersion: Int? = null
+    var partialTranscriptCount = 0
+    var latestPartialTranscriptLength: Int? = null
+    var finalTranscriptObserved = false
+    var finalTranscriptLength: Int? = null
     ndjson.lineSequence()
         .map { it.trim() }
         .filter { it.isNotBlank() }
@@ -977,10 +1009,22 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
                 protocolName = protocol.optStringOrNull("name") ?: protocolName
                 protocolVersion = protocol.optIntOrNull("version") ?: protocolVersion
             }
+            if (type == "stt.partial") {
+                partialTranscriptCount += 1
+                latestPartialTranscriptLength = event.transcriptStateLength()
+            }
+            if (type == "stt.final") {
+                finalTranscriptObserved = true
+                finalTranscriptLength = event.transcriptStateLength()
+            }
             if (type == "response.completed") {
                 val voiceTurn = event.optJSONObject("voiceTurn")
                     ?: throw XanderVoiceClientException("Otoxan stream response.completed missing voiceTurn")
                 voiceTurnJson = voiceTurn.toString()
+                if (!finalTranscriptObserved) {
+                    finalTranscriptObserved = true
+                    finalTranscriptLength = voiceTurn.optStringOrNull("transcript")?.length
+                }
             }
         }
     val completedVoiceTurn = voiceTurnJson
@@ -991,8 +1035,21 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
         streamStarted = "stream.started" in eventTypes || "session.created" in eventTypes,
         streamCompleted = "stream.completed" in eventTypes || "session.closed" in eventTypes,
         protocolName = protocolName,
-        protocolVersion = protocolVersion
+        protocolVersion = protocolVersion,
+        partialTranscriptCount = partialTranscriptCount,
+        latestPartialTranscriptLength = latestPartialTranscriptLength,
+        finalTranscriptObserved = finalTranscriptObserved,
+        finalTranscriptLength = finalTranscriptLength
     )
+}
+
+private fun JSONObject.transcriptStateLength(): Int? {
+    val stt = optJSONObject("stt")
+    return stt.optIntOrNull("transcriptLength")
+        ?: optIntOrNull("transcriptLength")
+        ?: stt.optStringOrNull("transcript")?.length
+        ?: optStringOrNull("transcript")?.length
+        ?: optStringOrNull("text")?.length
 }
 
 fun normalizeVoiceTurnEndpoint(endpointUrl: String): String {

@@ -157,9 +157,11 @@ Closes the explicit realtime session. Server response: `session.closed`, state `
 `POST /voice-stream` is an experimental backend transport shim for the same explicit push-to-talk turn that `/voice-turn` serves. It is disabled by default and returns `404` unless `OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT` is truthy. When enabled, the server replies as `application/x-ndjson` with one JSON event per line:
 
 1. `stream.started` — includes protocol descriptor, fallback pointer, flag name, privacy defaults, STT event schema, STT budget model, and the optional Moonshine streaming adapter seam.
-2. `stt.completed` — emits STT provider/status/latency/budget readback without raw audio or transcript text persistence.
-3. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
-4. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics and STT budget model.
+2. `stt.partial` — optional diagnostic transcript-state readback: provider/status/source plus transcript length only; no standalone raw transcript text persistence.
+3. `stt.final` — final transcript-state readback before the wrapped voice turn: provider/status/source plus final transcript length only.
+4. `stt.completed` — emits STT provider/status/latency/budget readback without raw audio or transcript text persistence.
+5. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
+6. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics and STT budget model.
 
 This endpoint does not add always-on capture, raw-audio persistence, or a new assistant authority surface. It is a backend transport experiment so the Android client can test stream-shaped parsing while retaining the proven `/voice-turn` contract and fallback.
 
@@ -182,7 +184,7 @@ Default clean-clone state:
   "commandEnv": "OTOXAN_MOONSHINE_STREAMING_COMMAND",
   "adapterFlag": "OTOXAN_MOONSHINE_STREAMING_ADAPTER",
   "inputAudioFormat": "pcm_s16le_16khz_mono",
-  "events": ["stt.partial", "stt.completed"],
+  "events": ["stt.partial", "stt.final", "stt.completed"],
   "evidenceClass": "adapter_seam_readback_not_hardware_proof"
 }
 ```
@@ -219,6 +221,33 @@ Budget model published on `stream.started`, `stt.completed`, and `stream.complet
   "fallbackProvider": "hermes-stt",
   "evidenceClass": "latency_budget_readback_not_hardware_proof",
   "hardwareGate": "requires_fresh_phone_rayban_turn"
+}
+```
+
+`stt.partial` / `stt.final` transcript-state event shape (diagnostic state only; raw transcript text omitted):
+
+```json
+{
+  "type": "stt.final",
+  "streamId": "vs_...",
+  "sequence": 3,
+  "schema": {
+    "name": "otoxan-mobile-stt-stream-events",
+    "version": 1
+  },
+  "stt": {
+    "provider": "moonshine-stt|hermes-stt|not-run",
+    "status": "success|empty|timeout|not-run|...",
+    "transcriptLength": 42,
+    "isFinal": true,
+    "transcriptSource": "moonshine-stt|hermes-stt|route-evidence-fallback|proof|debug",
+    "textOmitted": true,
+    "evidenceClass": "transcript_state_readback_not_hardware_proof"
+  },
+  "privacy": {
+    "rawTranscriptPersistedByEvent": false,
+    "rawAudioPersisted": false
+  }
 }
 ```
 

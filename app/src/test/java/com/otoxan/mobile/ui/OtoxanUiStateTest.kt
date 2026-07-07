@@ -181,12 +181,16 @@ class OtoxanUiStateTest {
     fun streamTelemetrySummary_surfacesStreamEventsAsDiagnosticOnly() {
         val state = OtoxanUiState(
             transportKind = "http_voice_stream_ndjson",
-            streamEventCount = 3,
-            streamEventTypes = listOf("stream.started", "response.completed", "stream.completed"),
+            streamEventCount = 5,
+            streamEventTypes = listOf("stream.started", "stt.partial", "stt.final", "response.completed", "stream.completed"),
             streamStarted = true,
             streamCompleted = true,
             streamProtocolName = "otoxan-mobile-realtime-stream",
             streamProtocolVersion = 1,
+            streamPartialTranscriptCount = 1,
+            streamLatestPartialTranscriptLength = 8,
+            streamFinalTranscriptObserved = true,
+            streamFinalTranscriptLength = 12,
             pass1Ready = false,
             pass1Status = "proof-mode-not-real-speech"
         )
@@ -194,8 +198,9 @@ class OtoxanUiStateTest {
         val summary = state.streamTelemetrySummary
         val evidence = state.phoneTelemetryEvidenceClasses[3]
 
-        assertEquals("transport=http_voice_stream_ndjson; events=3; started=true; completed=true", summary.statusText)
-        assertEquals("stream.started → response.completed → stream.completed", summary.eventsText)
+        assertEquals("transport=http_voice_stream_ndjson; events=5; started=true; completed=true", summary.statusText)
+        assertEquals("stream.started → stt.partial → stt.final → response.completed → stream.completed", summary.eventsText)
+        assertEquals("partial=1 latestChars=8; final=true finalChars=12", summary.transcriptStateText)
         assertEquals("Stream transport telemetry", evidence.label)
         assertEquals(EvidenceClassState.DiagnosticOnly, evidence.state)
         assertTrue(evidence.detail.contains("not Ray-Ban hardware or real-speech success"))

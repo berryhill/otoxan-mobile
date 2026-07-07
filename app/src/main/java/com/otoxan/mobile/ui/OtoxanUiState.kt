@@ -84,11 +84,16 @@ data class StreamTelemetrySummary(
     val streamStarted: Boolean?,
     val streamCompleted: Boolean?,
     val protocolName: String?,
-    val protocolVersion: Int?
+    val protocolVersion: Int?,
+    val partialTranscriptCount: Int?,
+    val latestPartialTranscriptLength: Int?,
+    val finalTranscriptObserved: Boolean?,
+    val finalTranscriptLength: Int?
 ) {
     val statusText: String = "transport=$transportKind; events=${eventCount?.toString() ?: "unknown"}; started=${streamStarted?.toString() ?: "unknown"}; completed=${streamCompleted?.toString() ?: "unknown"}"
     val protocolText: String = "protocol=${protocolName ?: "unknown"} v${protocolVersion?.toString() ?: "unknown"}"
     val eventsText: String = eventTypes.takeIf { it.isNotEmpty() }?.joinToString(" → ") ?: "no stream events observed"
+    val transcriptStateText: String = "partial=${partialTranscriptCount?.toString() ?: "unknown"} latestChars=${latestPartialTranscriptLength?.toString() ?: "unknown"}; final=${finalTranscriptObserved?.toString() ?: "unknown"} finalChars=${finalTranscriptLength?.toString() ?: "unknown"}"
 }
 
 data class OtoxanUiState(
@@ -163,6 +168,10 @@ data class OtoxanUiState(
     val streamCompleted: Boolean? = null,
     val streamProtocolName: String? = null,
     val streamProtocolVersion: Int? = null,
+    val streamPartialTranscriptCount: Int? = null,
+    val streamLatestPartialTranscriptLength: Int? = null,
+    val streamFinalTranscriptObserved: Boolean? = null,
+    val streamFinalTranscriptLength: Int? = null,
     val backendTotalMs: Int? = null,
     val decodePcmMs: Int? = null,
     val audioStatsMs: Int? = null,
@@ -252,7 +261,11 @@ val OtoxanUiState.streamTelemetrySummary: StreamTelemetrySummary
         streamStarted = streamStarted,
         streamCompleted = streamCompleted,
         protocolName = streamProtocolName,
-        protocolVersion = streamProtocolVersion
+        protocolVersion = streamProtocolVersion,
+        partialTranscriptCount = streamPartialTranscriptCount,
+        latestPartialTranscriptLength = streamLatestPartialTranscriptLength,
+        finalTranscriptObserved = streamFinalTranscriptObserved,
+        finalTranscriptLength = streamFinalTranscriptLength
     )
 
 val OtoxanUiState.phoneTelemetryEvidenceClasses: List<PhoneTelemetryEvidenceClass>

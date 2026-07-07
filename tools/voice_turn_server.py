@@ -175,7 +175,7 @@ def moonshine_streaming_adapter_descriptor() -> dict[str, Any]:
         "commandConfigured": command_configured,
         "adapterFlag": MOONSHINE_STREAMING_ADAPTER_ENV,
         "inputAudioFormat": SUPPORTED_FORMAT,
-        "events": ["stt.partial", "stt.completed"],
+        "events": ["stt.partial", "stt.final", "stt.completed"],
         "canonicalFallback": {
             "endpoint": "/voice-turn",
             "method": "POST",
@@ -268,6 +268,32 @@ def stt_stream_event_schema() -> dict[str, Any]:
                 "emission": "stream.started discovery/readback",
             },
             {
+                "type": "stt.partial",
+                "sequence": "monotonic stream sequence",
+                "payload": [
+                    "stt.provider",
+                    "stt.status",
+                    "stt.transcriptLength",
+                    "stt.isFinal",
+                    "stt.transcriptSource",
+                    "stt.textOmitted",
+                ],
+                "emission": "optional diagnostic readback before final transcript state; no raw transcript text is persisted by schema",
+            },
+            {
+                "type": "stt.final",
+                "sequence": "monotonic stream sequence",
+                "payload": [
+                    "stt.provider",
+                    "stt.status",
+                    "stt.transcriptLength",
+                    "stt.isFinal",
+                    "stt.transcriptSource",
+                    "stt.textOmitted",
+                ],
+                "emission": "final transcript state readback before response.completed; no standalone raw transcript persistence",
+            },
+            {
                 "type": "stt.completed",
                 "sequence": "monotonic stream sequence",
                 "payload": [
@@ -313,6 +339,32 @@ def _stt_completed_event_from_voice_turn(result: Mapping[str, Any], stream_id: s
             "evidenceClass": "latency_budget_readback_not_hardware_proof",
         },
         "sttBudget": stt_budget_model(),
+    }
+
+
+def _stt_transcript_state_event_from_voice_turn(result: Mapping[str, Any], stream_id: str, sequence: int, event_type: str, is_final: bool) -> dict[str, Any]:
+    transcript = str(result.get("transcript") or "")
+    return {
+        "type": event_type,
+        "streamId": stream_id,
+        "sequence": sequence,
+        "schema": {
+            "name": STT_STREAM_EVENT_SCHEMA_NAME,
+            "version": STT_STREAM_EVENT_SCHEMA_VERSION,
+        },
+        "stt": {
+            "provider": result.get("sttProvider"),
+            "status": result.get("sttStatus"),
+            "transcriptLength": len(transcript),
+            "isFinal": is_final,
+            "transcriptSource": result.get("transcriptSource"),
+            "textOmitted": True,
+            "evidenceClass": "transcript_state_readback_not_hardware_proof",
+        },
+        "privacy": {
+            "rawTranscriptPersistedByEvent": False,
+            "rawAudioPersisted": False,
+        },
     }
 
 
@@ -497,12 +549,14 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         }
     ]
     result = handle_voice_turn(payload)
-    events.append(_stt_completed_event_from_voice_turn(result, stream_id, 2))
+    events.append(_stt_transcript_state_event_from_voice_turn(result, stream_id, 2, "stt.partial", False))
+    events.append(_stt_transcript_state_event_from_voice_turn(result, stream_id, 3, "stt.final", True))
+    events.append(_stt_completed_event_from_voice_turn(result, stream_id, 4))
     events.append(
         {
             "type": "response.completed",
             "streamId": stream_id,
-            "sequence": 3,
+            "sequence": 5,
             "voiceTurn": result,
         }
     )
@@ -510,7 +564,7 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         {
             "type": "stream.completed",
             "streamId": stream_id,
-            "sequence": 4,
+            "sequence": 6,
             "elapsedMs": _elapsed_ms(started),
             "fallback": stream_transport_descriptor()["canonicalFallback"],
             "sttBudget": stt_budget_model(),
@@ -1945,10 +1999,12 @@ class Handler(BaseHTTPRequestHandler):
             events = handle_voice_stream(payload)
             events[0].setdefault("timing", {})["httpRequestReadMs"] = request_read_ms
             events[0].setdefault("timing", {})["httpJsonParseMs"] = json_parse_ms
+            response_event = next((event for event in events if event.get("type") == "response.completed"), {})
+            response_voice_turn = response_event.get("voiceTurn", {})
             _safe_log(
                 "voice-stream ok "
-                f"provider={events[1].get('voiceTurn', {}).get('provider')} "
-                f"bytes={events[1].get('voiceTurn', {}).get('bytesReceived')} "
+                f"provider={response_voice_turn.get('provider')} "
+                f"bytes={response_voice_turn.get('bytesReceived')} "
                 f"events={len(events)}"
             )
             self._send_ndjson(200, events)

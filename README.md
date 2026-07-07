@@ -159,7 +159,7 @@ client -> {"type":"input_audio.commit"}
 server -> {"type":"response.completed","voiceTurn":{...existing /voice-turn response...}}
 ```
 
-This is transport-only Phase 1. VAD, partial transcripts, barge-in, and WebRTC stay in later phases.
+This is transport-only Phase 1. Realtime VAD, barge-in, and WebRTC stay in later phases; the experimental `/voice-stream` backend shim now emits transcript-state diagnostics (`stt.partial`/`stt.final`) as length-only readback, not a raw-transcript persistence surface.
 
 ## Phase 2 event/state contract
 

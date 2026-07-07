@@ -171,6 +171,8 @@ class HttpXanderVoiceClientTest {
                 .setBody(
                     """
                     {"type":"stream.started","transport":{"protocol":{"name":"otoxan-mobile-backend-stream","version":1}},"sttEventSchema":{"name":"otoxan-mobile-stt-stream-events","version":1},"sttBudget":{"targetMs":1500}}
+                    {"type":"stt.partial","stt":{"provider":"moonshine-stt","status":"listening","transcriptLength":6,"isFinal":false,"transcriptSource":"moonshine-stt","textOmitted":true}}
+                    {"type":"stt.final","stt":{"provider":"moonshine-stt","status":"success","transcriptLength":12,"isFinal":true,"transcriptSource":"moonshine-stt","textOmitted":true}}
                     {"type":"stt.completed","stt":{"provider":"moonshine-stt","status":"success","latencyMs":42,"budgetRemainingMs":1458}}
                     {"type":"response.completed","voiceTurn":{"provider":"stream-proof","transcript":"stream hello","assistantText":"stream route confirmed","bytesReceived":4,"transcriptSource":"proof-stream","sttStatus":"success","pass1Ready":true}}
                     {"type":"stream.completed"}
@@ -204,12 +206,16 @@ class HttpXanderVoiceClientTest {
         assertEquals(200, result.httpStatusCode)
         assertTrue(result.responseBytes!! > 0)
         assertEquals("http_voice_stream_ndjson", result.transportKind)
-        assertEquals(4, result.streamEventCount)
-        assertEquals(listOf("stream.started", "stt.completed", "response.completed", "stream.completed"), result.streamEventTypes)
+        assertEquals(6, result.streamEventCount)
+        assertEquals(listOf("stream.started", "stt.partial", "stt.final", "stt.completed", "response.completed", "stream.completed"), result.streamEventTypes)
         assertEquals(true, result.streamStarted)
         assertEquals(true, result.streamCompleted)
         assertEquals("otoxan-mobile-backend-stream", result.streamProtocolName)
         assertEquals(1, result.streamProtocolVersion)
+        assertEquals(1, result.streamPartialTranscriptCount)
+        assertEquals(6, result.streamLatestPartialTranscriptLength)
+        assertEquals(true, result.streamFinalTranscriptObserved)
+        assertEquals(12, result.streamFinalTranscriptLength)
     }
 
     @Test
