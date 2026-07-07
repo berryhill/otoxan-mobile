@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.otoxan.mobile.voice.VOICE_TURN_ACK_GAP_TARGET_MS
 import com.otoxan.mobile.voice.VOICE_TURN_BACKEND_TARGET_MS
+import com.otoxan.mobile.voice.VOICE_TURN_STT_TARGET_MS
 import com.otoxan.mobile.voice.VOICE_TURN_TIMING_CONTRACT_NAME
 import com.otoxan.mobile.voice.VOICE_TURN_TIMING_CONTRACT_VERSION
 import com.otoxan.mobile.voice.VOICE_TURN_TOTAL_TARGET_MS
@@ -273,7 +274,7 @@ private fun LatencyCard(state: OtoxanUiState) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Latency", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "Contract: $VOICE_TURN_TIMING_CONTRACT_NAME v$VOICE_TURN_TIMING_CONTRACT_VERSION · targets TTFA=${VOICE_TURN_TTFA_TARGET_MS}ms, ack=${VOICE_TURN_ACK_GAP_TARGET_MS}ms, backend=${VOICE_TURN_BACKEND_TARGET_MS}ms, total=${VOICE_TURN_TOTAL_TARGET_MS}ms",
+                "Contract: $VOICE_TURN_TIMING_CONTRACT_NAME v$VOICE_TURN_TIMING_CONTRACT_VERSION · targets TTFA=${VOICE_TURN_TTFA_TARGET_MS}ms, ack=${VOICE_TURN_ACK_GAP_TARGET_MS}ms, backend=${VOICE_TURN_BACKEND_TARGET_MS}ms, STT=${VOICE_TURN_STT_TARGET_MS}ms, total=${VOICE_TURN_TOTAL_TARGET_MS}ms",
                 style = MaterialTheme.typography.bodySmall
             )
             Row(
@@ -327,7 +328,7 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
             TelemetryBar("Ack delay", state.postCaptureAckDelayMs, targetMs = VOICE_TURN_ACK_GAP_TARGET_MS)
             TelemetryBar("Total", state.turnTotalMs, targetMs = VOICE_TURN_TOTAL_TARGET_MS)
             TelemetryBar("Backend", state.backendRoundTripMs, targetMs = VOICE_TURN_BACKEND_TARGET_MS)
-            TelemetryBar("STT", state.sttLatencyMs?.toLong(), targetMs = 1_500L)
+            TelemetryBar("STT", state.sttLatencyMs?.toLong(), targetMs = VOICE_TURN_STT_TARGET_MS)
             TelemetryBar("Xander", state.xanderSessionMs?.toLong(), targetMs = 2_500L)
             TelemetryBar("Playback", state.playbackTotalMs, targetMs = 1_500L)
             Text("Capture split + endpoint evidence", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
