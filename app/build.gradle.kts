@@ -5,11 +5,33 @@ plugins {
 }
 
 val defaultXanderVoiceEndpoint = "http://100.126.0.110:8787/voice-turn"
+val defaultXanderVoiceConnectTimeoutMillis = 10_000
+val defaultXanderVoiceReadTimeoutMillis = 60_000
+val defaultXanderVoiceMetricsTimeoutMillis = 5_000
 
 val xanderVoiceEndpoint: String = providers.gradleProperty("XANDER_VOICE_ENDPOINT")
     .orElse(providers.environmentVariable("XANDER_VOICE_ENDPOINT"))
     .orElse(defaultXanderVoiceEndpoint)
     .get()
+
+fun endpointPolicyInt(name: String, defaultValue: Int): Int = providers.gradleProperty(name)
+    .orElse(providers.environmentVariable(name))
+    .map { value -> value.toInt() }
+    .orElse(defaultValue)
+    .get()
+
+val xanderVoiceConnectTimeoutMillis = endpointPolicyInt(
+    "XANDER_VOICE_CONNECT_TIMEOUT_MILLIS",
+    defaultXanderVoiceConnectTimeoutMillis
+)
+val xanderVoiceReadTimeoutMillis = endpointPolicyInt(
+    "XANDER_VOICE_READ_TIMEOUT_MILLIS",
+    defaultXanderVoiceReadTimeoutMillis
+)
+val xanderVoiceMetricsTimeoutMillis = endpointPolicyInt(
+    "XANDER_VOICE_METRICS_TIMEOUT_MILLIS",
+    defaultXanderVoiceMetricsTimeoutMillis
+)
 
 android {
     namespace = "com.otoxan.mobile"
@@ -22,6 +44,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "XANDER_VOICE_ENDPOINT", "\"${xanderVoiceEndpoint.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("int", "XANDER_VOICE_CONNECT_TIMEOUT_MILLIS", xanderVoiceConnectTimeoutMillis.toString())
+        buildConfigField("int", "XANDER_VOICE_READ_TIMEOUT_MILLIS", xanderVoiceReadTimeoutMillis.toString())
+        buildConfigField("int", "XANDER_VOICE_METRICS_TIMEOUT_MILLIS", xanderVoiceMetricsTimeoutMillis.toString())
     }
 
     compileOptions {

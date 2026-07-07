@@ -23,6 +23,31 @@ class HttpXanderVoiceClientTest {
     }
 
     @Test
+    fun createXanderVoiceClient_appliesEndpointPolicyWithoutChangingDefaultStubBehavior() {
+        val blankClient = createXanderVoiceClient(
+            endpointUrl = "",
+            endpointPolicy = XanderVoiceEndpointPolicy(
+                connectTimeoutMillis = 111,
+                readTimeoutMillis = 222,
+                metricsTimeoutMillis = 333
+            )
+        )
+        val httpClient = createXanderVoiceClient(
+            endpointUrl = "http://10.0.2.2:8787",
+            endpointPolicy = XanderVoiceEndpointPolicy(
+                connectTimeoutMillis = 111,
+                readTimeoutMillis = 222,
+                metricsTimeoutMillis = 333
+            )
+        ) as HttpXanderVoiceClient
+
+        assertTrue(blankClient is StubXanderVoiceClient)
+        assertEquals(111, httpClient.privateIntField("connectTimeoutMillis"))
+        assertEquals(222, httpClient.privateIntField("readTimeoutMillis"))
+        assertEquals(333, httpClient.privateIntField("metricsTimeoutMillis"))
+    }
+
+    @Test
     fun sendVoiceTurn_postsPcmAndRouteEvidenceAndParsesResponse() {
         val ttsBytes = Base64.getEncoder().encodeToString(byteArrayOf(9, 8, 7))
         server.enqueue(
@@ -401,4 +426,8 @@ class HttpXanderVoiceClientTest {
         assertEquals("real-speech-proven", record.pass1Status)
     }
 
+}
+
+private fun Any.privateIntField(name: String): Int {
+    return javaClass.getDeclaredField(name).apply { isAccessible = true }.getInt(this)
 }

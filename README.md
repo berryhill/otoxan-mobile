@@ -75,16 +75,28 @@ For the first physical voice-loop test, use the repo-local Python helper instead
 python3 tools/voice_turn_server.py --host 0.0.0.0 --port 8787
 ```
 
-Build the Android app with the default phone-reachable proof host, or override it for another LAN/Tailscale route. The checked-in debug default is `http://100.126.0.110:8787/voice-turn` so a normal debug build does not silently fall back to the stub client. Either pass the Gradle property explicitly or export the environment variable; the Gradle property wins when both are present. The app accepts either the full `/voice-turn` URL or the base server URL and normalizes the capture endpoint to `/voice-turn`:
+Build the Android app with the default phone-reachable proof host, or override it for another LAN/Tailscale route. The checked-in debug default is `http://100.126.0.110:8787/voice-turn` so a normal debug build does not silently fall back to the stub client. Either pass the Gradle property explicitly or export the environment variable; the Gradle property wins when both are present. The app accepts either the full `/voice-turn` URL or the base server URL and normalizes the capture endpoint to `/voice-turn`.
+
+The endpoint policy is configurable at build time without changing the default behavior:
+
+- `XANDER_VOICE_CONNECT_TIMEOUT_MILLIS` defaults to `10000`.
+- `XANDER_VOICE_READ_TIMEOUT_MILLIS` defaults to `60000`.
+- `XANDER_VOICE_METRICS_TIMEOUT_MILLIS` defaults to `5000`.
 
 ```bash
-# default physical proof endpoint:
+# default physical proof endpoint and default endpoint policy:
 ./gradlew :app:assembleDebug
 # override with a different phone-reachable host:
 ./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn"
 # equivalent shortcut:
 ./gradlew :app:assembleDebug -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787"
-# or:
+# override endpoint policy fields when a deployment needs different HTTP timing:
+./gradlew :app:assembleDebug \
+  -PXANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn" \
+  -PXANDER_VOICE_CONNECT_TIMEOUT_MILLIS=10000 \
+  -PXANDER_VOICE_READ_TIMEOUT_MILLIS=60000 \
+  -PXANDER_VOICE_METRICS_TIMEOUT_MILLIS=5000
+# or use environment variables:
 XANDER_VOICE_ENDPOINT="http://<LAN-IP>:8787/voice-turn" ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell monkey -p com.otoxan.mobile -c android.intent.category.LAUNCHER 1

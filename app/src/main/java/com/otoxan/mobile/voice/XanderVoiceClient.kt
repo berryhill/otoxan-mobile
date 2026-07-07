@@ -187,10 +187,17 @@ data class VoiceTurnResult(
 
 class XanderVoiceClientException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
+data class XanderVoiceEndpointPolicy(
+    val connectTimeoutMillis: Int = 10_000,
+    val readTimeoutMillis: Int = 60_000,
+    val metricsTimeoutMillis: Int = 5_000
+)
+
 class HttpXanderVoiceClient(
     endpointUrl: String,
     private val connectTimeoutMillis: Int = 10_000,
-    private val readTimeoutMillis: Int = 60_000
+    private val readTimeoutMillis: Int = 60_000,
+    private val metricsTimeoutMillis: Int = 5_000
 ) : XanderVoiceClient {
     private val voiceTurnEndpointUrl = normalizeVoiceTurnEndpoint(endpointUrl)
     private val metricsEndpointUrl = voiceTurnEndpointUrl.replace(Regex("/voice-turn/?$"), "/voice-turn-metrics")
@@ -294,7 +301,7 @@ class HttpXanderVoiceClient(
         val connection = (URL(metricsEndpointUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = connectTimeoutMillis
-            readTimeout = 5_000
+            readTimeout = metricsTimeoutMillis
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "application/json")
@@ -330,7 +337,7 @@ class HttpXanderVoiceClient(
         val connection = (URL(recentUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = connectTimeoutMillis
-            readTimeout = 5_000
+            readTimeout = metricsTimeoutMillis
             setRequestProperty("Accept", "application/json")
         }
         try {
@@ -578,11 +585,19 @@ class StubXanderVoiceClient : XanderVoiceClient {
     }
 }
 
-fun createXanderVoiceClient(endpointUrl: String): XanderVoiceClient {
+fun createXanderVoiceClient(
+    endpointUrl: String,
+    endpointPolicy: XanderVoiceEndpointPolicy = XanderVoiceEndpointPolicy()
+): XanderVoiceClient {
     return if (endpointUrl.isBlank()) {
         StubXanderVoiceClient()
     } else {
-        HttpXanderVoiceClient(endpointUrl = normalizeVoiceTurnEndpoint(endpointUrl))
+        HttpXanderVoiceClient(
+            endpointUrl = normalizeVoiceTurnEndpoint(endpointUrl),
+            connectTimeoutMillis = endpointPolicy.connectTimeoutMillis,
+            readTimeoutMillis = endpointPolicy.readTimeoutMillis,
+            metricsTimeoutMillis = endpointPolicy.metricsTimeoutMillis
+        )
     }
 }
 

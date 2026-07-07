@@ -33,4 +33,11 @@ class EndpointDefaultsGuardrailTest {
         assertTrue(client is HttpXanderVoiceClient)
         assertFalse(client is StubXanderVoiceClient)
     }
+
+    @Test
+    fun defaultEndpointPolicyPreservesExistingTimeoutBehavior() {
+        assertEquals(10_000, BuildConfig.XANDER_VOICE_CONNECT_TIMEOUT_MILLIS)
+        assertEquals(60_000, BuildConfig.XANDER_VOICE_READ_TIMEOUT_MILLIS)
+        assertEquals(5_000, BuildConfig.XANDER_VOICE_METRICS_TIMEOUT_MILLIS)
+    }
 }

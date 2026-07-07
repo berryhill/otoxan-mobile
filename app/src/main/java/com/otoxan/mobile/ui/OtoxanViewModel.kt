@@ -14,6 +14,7 @@ import com.otoxan.mobile.voice.VoiceCaptureConfig
 import com.otoxan.mobile.voice.VoiceTurnTelemetryPacket
 import com.otoxan.mobile.voice.VoiceTurnTelemetryRecord
 import com.otoxan.mobile.voice.XanderVoiceClient
+import com.otoxan.mobile.voice.XanderVoiceEndpointPolicy
 import com.otoxan.mobile.voice.conversationVoiceCaptureConfig
 import com.otoxan.mobile.voice.createXanderVoiceClient
 import com.otoxan.mobile.voice.expectedPcmBytes
@@ -893,7 +894,14 @@ class OtoxanViewModel(
                     audioRouter = AudioRouter(appContext),
                     micCapture = MicCapture(),
                     speechPlayback = speechPlayback,
-                    xanderVoiceClient = createXanderVoiceClient(BuildConfig.XANDER_VOICE_ENDPOINT)
+                    xanderVoiceClient = createXanderVoiceClient(
+                        endpointUrl = BuildConfig.XANDER_VOICE_ENDPOINT,
+                        endpointPolicy = XanderVoiceEndpointPolicy(
+                            connectTimeoutMillis = BuildConfig.XANDER_VOICE_CONNECT_TIMEOUT_MILLIS,
+                            readTimeoutMillis = BuildConfig.XANDER_VOICE_READ_TIMEOUT_MILLIS,
+                            metricsTimeoutMillis = BuildConfig.XANDER_VOICE_METRICS_TIMEOUT_MILLIS
+                        )
+                    )
                 ) as T
             }
         }
