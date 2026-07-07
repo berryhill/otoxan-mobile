@@ -263,8 +263,11 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("otoxan-mobile-cancellable-assistant-prep", contract["name"])
         self.assertFalse(contract["enabled"])
         self.assertFalse(contract["speculativePrepAllowed"])
+        self.assertTrue(contract["promotionRequiresFinalTranscriptValidation"])
         self.assertEqual("stt.partial", contract["startAfterEvent"])
+        self.assertEqual("stt.final", contract["promoteAfterEvent"])
         self.assertEqual("stable_non_final_stt_partial_only", contract["startPolicy"])
+        self.assertEqual("final_transcript_must_match_validated_prep_candidate", contract["promotionPolicy"])
         self.assertIn("route_evidence_fallback", contract["neverTriggerFrom"])
         self.assertIn("input_audio.clear", contract["cancelEvents"])
         self.assertEqual("moonshine-streaming-adapter", descriptor["moonshineStreamingAdapter"]["name"])
@@ -282,7 +285,9 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertFalse(contract["enabled"])
         self.assertFalse(contract["speculativePrepAllowed"])
         self.assertFalse(contract["requiresFinalTranscript"])
+        self.assertTrue(contract["promotionRequiresFinalTranscriptValidation"])
         self.assertEqual("stt.partial", contract["startAfterEvent"])
+        self.assertEqual("stt.final", contract["promoteAfterEvent"])
         self.assertEqual("stable_non_final_stt_partial_only", contract["startPolicy"])
         self.assertEqual(12, contract["minTranscriptChars"])
         self.assertEqual(3, contract["minTranscriptWords"])
@@ -303,6 +308,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("otoxan-mobile-cancellable-assistant-prep", contract["name"])
         self.assertFalse(contract["speculativePrepAllowed"])
         self.assertEqual("stt.partial", contract["startAfterEvent"])
+        self.assertEqual("stt.final", contract["promoteAfterEvent"])
         self.assertEqual("stable_non_final_stt_partial_only", contract["startPolicy"])
         self.assertIn("session.close", contract["cancelEvents"])
 
@@ -367,6 +373,11 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(320, events[4]["voiceTurn"]["bytesReceived"])
         self.assertEqual("/voice-turn", events[5]["fallback"]["endpoint"])
         self.assertEqual(1500, events[5]["sttBudget"]["targetMs"])
+        self.assertFalse(events[4]["assistantPrepPromotion"]["required"])
+        self.assertTrue(events[4]["assistantPrepPromotion"]["validated"])
+        self.assertFalse(events[4]["assistantPrepPromotion"]["promotionAllowed"])
+        self.assertFalse(events[4]["assistantPrepPromotion"]["promotedSpeculativeResponse"])
+        self.assertEqual("no_speculative_prep_candidate", events[5]["assistantPrepPromotion"]["reason"])
         self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[0]))
         self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[3]))
         self.assertNotIn("assistant.prep.started", [event["type"] for event in events])
@@ -402,8 +413,47 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertFalse(prep["assistantInvoked"])
         self.assertTrue(prep["textOmitted"])
         self.assertEqual(len(stable_result["transcript"]), prep["transcriptLength"])
+        self.assertTrue(prep["promotionRequiresFinalTranscriptValidation"])
+        self.assertEqual("stt.final", prep["promotionBlockedUntil"])
         self.assertFalse(events[2]["privacy"]["rawTranscriptPersistedByEvent"])
         self.assertNotIn(stable_result["transcript"], json.dumps(events[2]))
+        promotion = events[5]["assistantPrepPromotion"]
+        self.assertTrue(promotion["required"])
+        self.assertTrue(promotion["validated"])
+        self.assertTrue(promotion["promotionAllowed"])
+        self.assertFalse(promotion["promotedSpeculativeResponse"])
+        self.assertEqual("final_transcript_validated", promotion["reason"])
+        self.assertEqual("stt.final", promotion["validatedAfterEvent"])
+        self.assertTrue(promotion["checks"]["lengthMatches"])
+        self.assertTrue(promotion["checks"]["wordCountMatches"])
+        self.assertFalse(promotion["privacy"]["rawTranscriptPersistedByValidation"])
+        self.assertNotIn(stable_result["transcript"], json.dumps(promotion))
+
+    def test_assistant_prep_promotion_blocks_final_transcript_mismatch(self):
+        prep_result = {
+            "transcript": "route check confirms ray ban microphone path",
+            "transcriptSource": "hermes-stt",
+            "sttStatus": "success",
+        }
+        final_result = {
+            "transcript": "different final words from the stt engine",
+            "transcriptSource": "hermes-stt",
+            "sttStatus": "success",
+        }
+
+        prep_event = voice_turn_server._assistant_prep_event_from_stable_partial(prep_result, "vs_test", 2)
+        validation = voice_turn_server._assistant_prep_final_validation(prep_event, final_result)
+
+        self.assertIsNotNone(prep_event)
+        self.assertTrue(validation["required"])
+        self.assertFalse(validation["validated"])
+        self.assertFalse(validation["promotionAllowed"])
+        self.assertFalse(validation["promotedSpeculativeResponse"])
+        self.assertEqual("final_transcript_mismatch_or_unstable", validation["reason"])
+        self.assertFalse(validation["checks"]["lengthMatches"])
+        self.assertEqual("final_transcript_must_match_validated_prep_candidate", validation["promotionPolicy"])
+        self.assertNotIn(prep_result["transcript"], json.dumps(validation))
+        self.assertNotIn(final_result["transcript"], json.dumps(validation))
 
     def test_voice_stream_rejects_unstable_partial_for_assistant_prep(self):
         unstable_result = {

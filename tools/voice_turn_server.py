@@ -178,8 +178,11 @@ def assistant_prep_contract() -> dict[str, Any]:
         "enabled": False,
         "speculativePrepAllowed": False,
         "requiresFinalTranscript": False,
+        "promotionRequiresFinalTranscriptValidation": True,
         "startAfterEvent": "stt.partial",
+        "promoteAfterEvent": "stt.final",
         "startPolicy": "stable_non_final_stt_partial_only",
+        "promotionPolicy": "final_transcript_must_match_validated_prep_candidate",
         "allowedTranscriptSources": sorted(ASSISTANT_PREP_STABLE_TRANSCRIPT_SOURCES),
         "allowedSttStatuses": sorted(ASSISTANT_PREP_STABLE_STT_STATUSES),
         "minTranscriptChars": ASSISTANT_PREP_MIN_PARTIAL_CHARS,
@@ -209,6 +212,7 @@ def assistant_prep_contract() -> dict[str, Any]:
             "mobileFast": "post_stable_partial_prep_marker_then_post_stt_final_turn",
             "xanderSessionFallback": "opt_in_post_stt_final_deadline_thread",
             "preStablePartialAssistantWork": "forbidden_until_stt_stability_policy_passes",
+            "speculativeResponsePromotion": "blocked_until_stt_final_validates_prep_candidate",
         },
         "evidenceClass": "contract_readback_not_hardware_proof",
     }
@@ -510,12 +514,88 @@ def _assistant_prep_event_from_stable_partial(result: Mapping[str, Any], stream_
             "isFinal": False,
             "textOmitted": True,
             "assistantInvoked": False,
+            "promotionBlockedUntil": "stt.final",
+            "promotionRequiresFinalTranscriptValidation": True,
             "evidenceClass": "safe_prep_policy_readback_not_hardware_proof",
         },
         "privacy": {
             "rawTranscriptPersistedByEvent": False,
             "rawAudioPersisted": False,
         },
+    }
+
+
+def _assistant_prep_final_validation(prep_event: Mapping[str, Any] | None, result: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the final transcript state before any speculative response promotion.
+
+    The current backend still invokes the assistant only after final STT, but this
+    readback locks the future speculative path: a prep candidate cannot be
+    promoted unless the final transcript is from the same stable STT class and
+    still matches the non-final candidate's transcript state. Raw transcript text
+    remains omitted from stream metadata.
+    """
+    if prep_event is None:
+        return {
+            "required": False,
+            "validated": True,
+            "promotionAllowed": False,
+            "promotedSpeculativeResponse": False,
+            "reason": "no_speculative_prep_candidate",
+            "promotionPolicy": "final_transcript_must_match_validated_prep_candidate",
+            "evidenceClass": "speculative_promotion_guard_readback_not_hardware_proof",
+        }
+
+    prep_contract = _mapping(prep_event.get("assistantPrepContract"))
+    final_transcript = str(result.get("transcript") or "").strip()
+    final_length = len(final_transcript)
+    final_word_count = _word_count(final_transcript)
+    final_source = str(result.get("transcriptSource") or "")
+    final_status = str(result.get("sttStatus") or "")
+    length_matches = prep_contract.get("transcriptLength") == final_length
+    words_match = prep_contract.get("transcriptWordCount") == final_word_count
+    source_matches = prep_contract.get("transcriptSource") == final_source
+    status_matches = prep_contract.get("sttStatus") == final_status
+    final_stable = (
+        final_source in ASSISTANT_PREP_STABLE_TRANSCRIPT_SOURCES
+        and final_status in ASSISTANT_PREP_STABLE_STT_STATUSES
+        and final_length >= ASSISTANT_PREP_MIN_PARTIAL_CHARS
+        and final_word_count >= ASSISTANT_PREP_MIN_PARTIAL_WORDS
+    )
+    validated = bool(final_stable and length_matches and words_match and source_matches and status_matches)
+    return {
+        "required": True,
+        "validated": validated,
+        "promotionAllowed": validated,
+        "promotedSpeculativeResponse": False,
+        "reason": "final_transcript_validated" if validated else "final_transcript_mismatch_or_unstable",
+        "promotionPolicy": "final_transcript_must_match_validated_prep_candidate",
+        "validatedAfterEvent": "stt.final",
+        "candidate": {
+            "transcriptLength": prep_contract.get("transcriptLength"),
+            "transcriptWordCount": prep_contract.get("transcriptWordCount"),
+            "transcriptSource": prep_contract.get("transcriptSource"),
+            "sttStatus": prep_contract.get("sttStatus"),
+            "textOmitted": True,
+        },
+        "final": {
+            "transcriptLength": final_length,
+            "transcriptWordCount": final_word_count,
+            "transcriptSource": final_source,
+            "sttStatus": final_status,
+            "textOmitted": True,
+        },
+        "checks": {
+            "finalStable": final_stable,
+            "lengthMatches": length_matches,
+            "wordCountMatches": words_match,
+            "sourceMatches": source_matches,
+            "statusMatches": status_matches,
+        },
+        "privacy": {
+            "rawTranscriptPersistedByValidation": False,
+            "rawAudioPersisted": False,
+        },
+        "evidenceClass": "speculative_promotion_guard_readback_not_hardware_proof",
     }
 
 
@@ -707,12 +787,14 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     if prep_event is not None:
         events.append(prep_event)
     events.append(_stt_transcript_state_event_from_voice_turn(result, stream_id, len(events) + 1, "stt.final", True))
+    prep_validation = _assistant_prep_final_validation(prep_event, result)
     events.append(_stt_completed_event_from_voice_turn(result, stream_id, len(events) + 1))
     events.append(
         {
             "type": "response.completed",
             "streamId": stream_id,
             "sequence": len(events) + 1,
+            "assistantPrepPromotion": prep_validation,
             "voiceTurn": result,
         }
     )
@@ -725,6 +807,7 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             "fallback": stream_transport_descriptor()["canonicalFallback"],
             "sttBudget": stt_budget_model(),
             "assistantPrepContract": assistant_prep_contract(),
+            "assistantPrepPromotion": prep_validation,
         }
     )
     return events
