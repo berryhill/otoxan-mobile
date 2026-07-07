@@ -322,6 +322,7 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Telemetry dashboard", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("Latest pass", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            AcceptanceSummaryRow(state.timingAcceptanceSummary)
             TelemetryBar("TTFA", state.ttfaMs, targetMs = VOICE_TURN_TTFA_TARGET_MS)
             TelemetryBar("Ack delay", state.postCaptureAckDelayMs, targetMs = VOICE_TURN_ACK_GAP_TARGET_MS)
             TelemetryBar("Total", state.turnTotalMs, targetMs = VOICE_TURN_TOTAL_TARGET_MS)
@@ -347,6 +348,17 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
                 Text("Recent passes appear here after each completed turn.", style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+}
+
+@Composable
+private fun AcceptanceSummaryRow(summary: TelemetryAcceptanceSummary) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("Timing acceptance: ${summary.summaryText}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+        Text(
+            summary.metrics.joinToString(" · ") { "${it.label}=${it.state.label}" },
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
@@ -402,6 +414,7 @@ private fun CaptureSplitRow(metric: CaptureSplitMetric) {
 private fun TelemetryHistoryRow(index: Int, pass: TelemetryPassSummary) {
     val total = pass.totalMs ?: 0L
     val fraction = (total.toFloat() / 24_000f).coerceIn(0.06f, 1f)
+    val acceptance = pass.timingAcceptanceSummary
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("#$index ${pass.routeName}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
@@ -421,7 +434,7 @@ private fun TelemetryHistoryRow(index: Int, pass: TelemetryPassSummary) {
             )
         }
         Text(
-            "backend=${pass.backendMs?.let { "${it}ms" } ?: "?"}; stt=${pass.sttMs?.let { "${it}ms" } ?: "?"}; xander=${pass.xanderMs?.let { "${it}ms" } ?: "?"}; playback=${pass.playbackMs?.let { "${it}ms" } ?: "?"}; pass1=${pass.pass1Status ?: "unknown"}; source=${pass.transcriptSource ?: "unknown"}; reply=${pass.assistantTextLength} chars${pass.error?.let { "; error=$it" } ?: ""}",
+            "acceptance=${acceptance.summaryText}; backend=${pass.backendMs?.let { "${it}ms" } ?: "?"}; stt=${pass.sttMs?.let { "${it}ms" } ?: "?"}; xander=${pass.xanderMs?.let { "${it}ms" } ?: "?"}; playback=${pass.playbackMs?.let { "${it}ms" } ?: "?"}; pass1=${pass.pass1Status ?: "unknown"}; source=${pass.transcriptSource ?: "unknown"}; reply=${pass.assistantTextLength} chars${pass.error?.let { "; error=$it" } ?: ""}",
             style = MaterialTheme.typography.bodySmall
         )
     }

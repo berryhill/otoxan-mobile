@@ -99,4 +99,64 @@ class OtoxanUiStateTest {
             evidence
         )
     }
+
+    @Test
+    fun timingAcceptanceSummary_defaultsToUnknownWhenTimingIsMissing() {
+        val summary = OtoxanUiState().timingAcceptanceSummary
+
+        assertEquals(TimingAcceptanceState.Unknown, summary.overallState)
+        assertEquals(0, summary.passCount)
+        assertEquals(0, summary.missCount)
+        assertEquals(7, summary.unknownCount)
+        assertEquals("unknown · pass=0 miss=0 unknown=7", summary.summaryText)
+        assertEquals(TimingAcceptanceMetric("TTFA", null, 1500, TimingAcceptanceState.Unknown), summary.metrics[0])
+        assertEquals("unknown: unknown · target 1500ms", summary.metrics[0].summaryText)
+    }
+
+    @Test
+    fun timingAcceptanceSummary_marksPassAndMissAgainstTargets() {
+        val summary = OtoxanUiState(
+            ttfaMs = 1200,
+            postCaptureAckDelayMs = 300,
+            turnTotalMs = 7900,
+            backendRoundTripMs = 4500,
+            sttLatencyMs = 1500,
+            xanderSessionMs = 2600,
+            playbackTotalMs = 1499
+        ).timingAcceptanceSummary
+
+        assertEquals(TimingAcceptanceState.Miss, summary.overallState)
+        assertEquals(4, summary.passCount)
+        assertEquals(3, summary.missCount)
+        assertEquals(0, summary.unknownCount)
+        assertEquals("TTFA=pass · Ack delay=miss · Total=pass · Backend=miss · STT=pass · Xander=miss · Playback=pass", summary.metrics.joinToString(" · ") { "${it.label}=${it.state.label}" })
+    }
+
+    @Test
+    fun telemetryPassSummary_exposesSameTimingAcceptanceModel() {
+        val pass = TelemetryPassSummary(
+            turnId = "turn-1",
+            success = true,
+            pass1Status = "real-speech-proven",
+            routeName = "Ray-Ban Meta",
+            totalMs = 7000,
+            ttfaMs = 1400,
+            postCaptureAckDelayMs = 100,
+            backendMs = 3000,
+            sttMs = null,
+            xanderMs = 2400,
+            playbackMs = 800,
+            capturedBytes = 32000,
+            peakAmplitude = 9000,
+            transcriptSource = "hermes-stt",
+            assistantTextLength = 42
+        )
+
+        val summary = pass.timingAcceptanceSummary
+
+        assertEquals(TimingAcceptanceState.Unknown, summary.overallState)
+        assertEquals(6, summary.passCount)
+        assertEquals(0, summary.missCount)
+        assertEquals(1, summary.unknownCount)
+    }
 }

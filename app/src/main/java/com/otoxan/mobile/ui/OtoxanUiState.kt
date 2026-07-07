@@ -22,6 +22,33 @@ data class TelemetryPassSummary(
     val error: String? = null
 )
 
+enum class TimingAcceptanceState(val label: String) {
+    Pass("pass"),
+    Miss("miss"),
+    Unknown("unknown")
+}
+
+data class TimingAcceptanceMetric(
+    val label: String,
+    val valueMs: Long?,
+    val targetMs: Long,
+    val state: TimingAcceptanceState
+) {
+    val valueText: String = valueMs.toLatencyMsText()
+    val targetText: String = "target ${targetMs}ms"
+    val summaryText: String = "${state.label}: $valueText · $targetText"
+}
+
+data class TelemetryAcceptanceSummary(
+    val overallState: TimingAcceptanceState,
+    val passCount: Int,
+    val missCount: Int,
+    val unknownCount: Int,
+    val metrics: List<TimingAcceptanceMetric>
+) {
+    val summaryText: String = "${overallState.label} · pass=$passCount miss=$missCount unknown=$unknownCount"
+}
+
 data class LatencyCardMetric(
     val label: String,
     val value: String,
@@ -155,6 +182,28 @@ val OtoxanUiState.captureSplitMetrics: List<CaptureSplitMetric>
         )
     )
 
+val OtoxanUiState.timingAcceptanceSummary: TelemetryAcceptanceSummary
+    get() = timingAcceptanceSummaryOf(
+        totalMs = turnTotalMs,
+        ttfaMs = ttfaMs,
+        postCaptureAckDelayMs = postCaptureAckDelayMs,
+        backendMs = backendRoundTripMs,
+        sttMs = sttLatencyMs,
+        xanderMs = xanderSessionMs,
+        playbackMs = playbackTotalMs
+    )
+
+val TelemetryPassSummary.timingAcceptanceSummary: TelemetryAcceptanceSummary
+    get() = timingAcceptanceSummaryOf(
+        totalMs = totalMs,
+        ttfaMs = ttfaMs,
+        postCaptureAckDelayMs = postCaptureAckDelayMs,
+        backendMs = backendMs,
+        sttMs = sttMs,
+        xanderMs = xanderMs,
+        playbackMs = playbackMs
+    )
+
 val OtoxanUiState.endpointEvidenceText: String
     get() = "endpoint=${voiceEndpoint.ifBlank { "unknown" }}; http=${httpStatusCode?.toString() ?: "unknown"}; dispatch=${endpointDispatchMs.toLatencyMsText()}; responseReady=${endpointResponseReadyMs.toLatencyMsText()}; clientRoundTrip=${backendRoundTripMs.toLatencyMsText()}; request=${requestBytes?.toString() ?: "unknown"} bytes; response=${responseBytes?.toString() ?: "unknown"} bytes"
 
@@ -173,6 +222,51 @@ private val OtoxanUiState.firstAudioLatencyDetail: String
     }
 
 private fun Long?.toLatencyMsText(): String = this?.let { "${it}ms" } ?: "unknown"
+
+private fun timingAcceptanceSummaryOf(
+    totalMs: Long?,
+    ttfaMs: Long?,
+    postCaptureAckDelayMs: Long?,
+    backendMs: Long?,
+    sttMs: Int?,
+    xanderMs: Int?,
+    playbackMs: Long?
+): TelemetryAcceptanceSummary {
+    val metrics = listOf(
+        TimingAcceptanceMetric("TTFA", ttfaMs, VOICE_TURN_TTFA_TARGET_MS, ttfaMs.acceptanceState(VOICE_TURN_TTFA_TARGET_MS)),
+        TimingAcceptanceMetric("Ack delay", postCaptureAckDelayMs, VOICE_TURN_ACK_GAP_TARGET_MS, postCaptureAckDelayMs.acceptanceState(VOICE_TURN_ACK_GAP_TARGET_MS)),
+        TimingAcceptanceMetric("Total", totalMs, VOICE_TURN_TOTAL_TARGET_MS, totalMs.acceptanceState(VOICE_TURN_TOTAL_TARGET_MS)),
+        TimingAcceptanceMetric("Backend", backendMs, VOICE_TURN_BACKEND_TARGET_MS, backendMs.acceptanceState(VOICE_TURN_BACKEND_TARGET_MS)),
+        TimingAcceptanceMetric("STT", sttMs?.toLong(), STT_ACCEPTANCE_TARGET_MS, sttMs?.toLong().acceptanceState(STT_ACCEPTANCE_TARGET_MS)),
+        TimingAcceptanceMetric("Xander", xanderMs?.toLong(), XANDER_ACCEPTANCE_TARGET_MS, xanderMs?.toLong().acceptanceState(XANDER_ACCEPTANCE_TARGET_MS)),
+        TimingAcceptanceMetric("Playback", playbackMs, PLAYBACK_ACCEPTANCE_TARGET_MS, playbackMs.acceptanceState(PLAYBACK_ACCEPTANCE_TARGET_MS))
+    )
+    val passCount = metrics.count { it.state == TimingAcceptanceState.Pass }
+    val missCount = metrics.count { it.state == TimingAcceptanceState.Miss }
+    val unknownCount = metrics.count { it.state == TimingAcceptanceState.Unknown }
+    val overallState = when {
+        missCount > 0 -> TimingAcceptanceState.Miss
+        unknownCount > 0 -> TimingAcceptanceState.Unknown
+        else -> TimingAcceptanceState.Pass
+    }
+    return TelemetryAcceptanceSummary(
+        overallState = overallState,
+        passCount = passCount,
+        missCount = missCount,
+        unknownCount = unknownCount,
+        metrics = metrics
+    )
+}
+
+private fun Long?.acceptanceState(targetMs: Long): TimingAcceptanceState = when {
+    this == null -> TimingAcceptanceState.Unknown
+    this <= targetMs -> TimingAcceptanceState.Pass
+    else -> TimingAcceptanceState.Miss
+}
+
+private const val STT_ACCEPTANCE_TARGET_MS = 1_500L
+private const val XANDER_ACCEPTANCE_TARGET_MS = 2_500L
+private const val PLAYBACK_ACCEPTANCE_TARGET_MS = 1_500L
 
 enum class PermissionState {
     Unknown,
