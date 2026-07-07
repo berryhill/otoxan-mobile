@@ -2152,6 +2152,7 @@ def latest_voice_turn_metrics() -> dict[str, Any]:
         "ok": True,
         "count": recent["count"],
         "latest": latest,
+        "historySummary": recent.get("historySummary"),
         "metricsPath": recent["metricsPath"],
         "corruptLineCount": recent["corruptLineCount"],
     }
@@ -2161,7 +2162,15 @@ def recent_voice_turn_metrics(limit: int = 20) -> dict[str, Any]:
     path = Path(os.environ.get("OTOXAN_VOICE_METRICS_JSONL", METRICS_JSONL_DEFAULT))
     bounded_limit = max(1, min(int(limit or 20), 100))
     if not path.exists():
-        return {"ok": True, "count": 0, "records": [], "metricsPath": str(path), "corruptLineCount": 0}
+        return {
+            "ok": True,
+            "count": 0,
+            "records": [],
+            "historySummary": _metrics_history_summary([]),
+            "metricsPath": str(path),
+            "corruptLineCount": 0,
+            "privacy": "sanitized recursively: no raw audio, transcript text, assistant text, or base64 PCM fields",
+        }
     records: list[dict[str, Any]] = []
     count = 0
     corrupt = 0
@@ -2176,11 +2185,20 @@ def recent_voice_turn_metrics(limit: int = 20) -> dict[str, Any]:
                 corrupt += 1
                 continue
             _attach_metrics_timing_summary(record)
+            _attach_metrics_record_summary(record)
             records.append(record)
             if len(records) > bounded_limit:
                 records.pop(0)
     records.reverse()
-    return {"ok": True, "count": count, "records": records, "metricsPath": str(path), "corruptLineCount": corrupt}
+    return {
+        "ok": True,
+        "count": count,
+        "records": records,
+        "historySummary": _metrics_history_summary(records),
+        "metricsPath": str(path),
+        "corruptLineCount": corrupt,
+        "privacy": "sanitized recursively: no raw audio, transcript text, assistant text, or base64 PCM fields",
+    }
 
 
 def recent_hardware_sweep_summaries(limit: int = 20) -> dict[str, Any]:
@@ -2191,6 +2209,7 @@ def recent_hardware_sweep_summaries(limit: int = 20) -> dict[str, Any]:
         "ok": recent.get("ok", True),
         "count": recent.get("count", 0),
         "summaries": summaries,
+        "historySummary": _hardware_sweep_history_summary(summaries),
         "realtimeVadComparison": _realtime_vad_sweep_comparison(summaries),
         "metricsPath": recent.get("metricsPath"),
         "corruptLineCount": recent.get("corruptLineCount", 0),
@@ -2392,9 +2411,26 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+SENSITIVE_METRICS_KEYS = {
+    "transcript",
+    "assistantText",
+    "rawTranscript",
+    "rawAssistantText",
+    "transcriptText",
+    "assistantResponseText",
+    "pcm16Mono16kBase64",
+    "audioBase64",
+    "rawAudio",
+    "rawAudioBase64",
+    "audioPcmBase64",
+    "ttsPcm16Mono16kBase64",
+}
+
+
 def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    # Do not persist raw spoken transcript/assistant text even if a future client accidentally sends it.
-    data = json.loads(json.dumps(payload))
+    # Do not persist raw spoken transcript/assistant text or raw/base64 audio even if a future client
+    # accidentally sends it nested inside transport, debug, sweep, or vendor evidence objects.
+    data = _recursive_sanitize_metrics_value(json.loads(json.dumps(payload)))
     contract = data.get("timingContract")
     if not isinstance(contract, dict):
         data["timingContract"] = _default_timing_contract()
@@ -2408,12 +2444,6 @@ def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         else:
             for key, value in TIMING_CONTRACT_TARGETS.items():
                 targets.setdefault(key, value)
-    for forbidden in ("transcript", "assistantText", "rawTranscript", "rawAssistantText"):
-        data.pop(forbidden, None)
-    verdict = data.get("verdict")
-    if isinstance(verdict, dict):
-        for forbidden in ("transcript", "assistantText", "rawTranscript", "rawAssistantText"):
-            verdict.pop(forbidden, None)
     perceived_latency = data.get("perceivedLatency")
     if isinstance(perceived_latency, dict) and perceived_latency.get("postCaptureAckDelayMs") is None:
         breakdown = perceived_latency.get("breakdown")
@@ -2422,12 +2452,112 @@ def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _recursive_sanitize_metrics_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _recursive_sanitize_metrics_value(nested)
+            for key, nested in value.items()
+            if str(key) not in SENSITIVE_METRICS_KEYS
+        }
+    if isinstance(value, list):
+        return [_recursive_sanitize_metrics_value(item) for item in value]
+    return value
+
+
 def _default_timing_contract() -> dict[str, Any]:
     return {
         "name": TIMING_CONTRACT_NAME,
         "version": TIMING_CONTRACT_VERSION,
         "clock": TIMING_CONTRACT_CLOCK,
         "targets": dict(TIMING_CONTRACT_TARGETS),
+    }
+
+
+def _attach_metrics_record_summary(record: dict[str, Any]) -> None:
+    if isinstance(record.get("summary"), dict):
+        return
+    payload = record.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
+    turn = _mapping(payload.get("turn"))
+    route = _mapping(payload.get("route"))
+    backend = _mapping(payload.get("backend"))
+    verdict = _mapping(payload.get("verdict"))
+    timing_summary = _mapping(record.get("timingSummary"))
+    record["summary"] = {
+        "turnId": _nested_get(turn, "turnId") or record.get("recordId") or "unknown",
+        "stage": _nested_get(turn, "stage"),
+        "success": _nested_get(turn, "success"),
+        "routeName": _nested_get(route, "inputName"),
+        "provider": _nested_get(verdict, "provider"),
+        "pass1Status": _nested_get(verdict, "pass1Status"),
+        "pass1Ready": _nested_get(verdict, "pass1Ready"),
+        "transcriptSource": _nested_get(verdict, "transcriptSource"),
+        "sttStatus": _nested_get(verdict, "sttStatus"),
+        "sttLatencyMs": _nested_get(backend, "sttLatencyMs"),
+        "ttfaMs": _nested_get(timing_summary, "ttfaMs"),
+        "postCaptureAckDelayMs": _nested_get(timing_summary, "postCaptureAckDelayMs"),
+        "backendRoundTripMs": _nested_get(timing_summary, "backendRoundTripMs"),
+        "turnTotalMs": _nested_get(timing_summary, "turnTotalMs"),
+        "timingTargetResult": _canonical_timing_target_result(
+            ttfa_ms=_nested_get(timing_summary, "ttfaMs"),
+            ack_ms=_nested_get(timing_summary, "postCaptureAckDelayMs"),
+            backend_ms=_nested_get(timing_summary, "backendRoundTripMs"),
+            total_ms=_nested_get(timing_summary, "turnTotalMs"),
+        ),
+        "privacy": "summary-only; raw audio and spoken text omitted",
+    }
+    record["summary"] = {key: value for key, value in record["summary"].items() if value is not None}
+
+
+def _metrics_history_summary(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    summaries = []
+    for record in records:
+        summary = _mapping(record.get("summary"))
+        if not summary:
+            mutable = dict(record)
+            _attach_metrics_record_summary(mutable)
+            summary = _mapping(mutable.get("summary"))
+        summaries.append(summary)
+    success_count = sum(1 for summary in summaries if summary.get("success") is True)
+    failure_count = sum(1 for summary in summaries if summary.get("success") is False)
+    timing_results: dict[str, int] = {}
+    pass1_statuses: dict[str, int] = {}
+    for summary in summaries:
+        timing_result = str(summary.get("timingTargetResult") or "unknown")
+        timing_results[timing_result] = timing_results.get(timing_result, 0) + 1
+        pass1_status = str(summary.get("pass1Status") or "unknown")
+        pass1_statuses[pass1_status] = pass1_statuses.get(pass1_status, 0) + 1
+    latest = summaries[0] if summaries else {}
+    return {
+        "recordsSummarized": len(summaries),
+        "latestTurnId": latest.get("turnId"),
+        "latestStage": latest.get("stage"),
+        "latestSuccess": latest.get("success"),
+        "successCount": success_count,
+        "failureCount": failure_count,
+        "unknownSuccessCount": len(summaries) - success_count - failure_count,
+        "timingTargetResults": timing_results,
+        "pass1Statuses": pass1_statuses,
+        "privacy": "aggregate counts and scalar timing only; no raw audio, transcript text, or assistant text",
+    }
+
+
+def _hardware_sweep_history_summary(summaries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    dispositions: dict[str, int] = {}
+    timing_results: dict[str, int] = {}
+    for summary in summaries:
+        disposition = str(summary.get("runDisposition") or "unknown")
+        dispositions[disposition] = dispositions.get(disposition, 0) + 1
+        timing = str(summary.get("canonicalTimingTargetResult") or "unknown")
+        timing_results[timing] = timing_results.get(timing, 0) + 1
+    latest = summaries[0] if summaries else {}
+    return {
+        "runsSummarized": len(summaries),
+        "latestRunId": latest.get("runId"),
+        "latestDisposition": latest.get("runDisposition"),
+        "dispositions": dispositions,
+        "timingTargetResults": timing_results,
+        "privacy": "run-sheet aggregate only; raw audio and spoken text omitted",
     }
 
 

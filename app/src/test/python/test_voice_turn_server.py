@@ -103,7 +103,57 @@ class VoiceTurnServerTest(unittest.TestCase):
             self.assertEqual(2, len(recent["records"]))
             self.assertEqual("turn-2", recent["records"][0]["payload"]["turn"]["turnId"])
             self.assertEqual("turn-1", recent["records"][1]["payload"]["turn"]["turnId"])
+            self.assertEqual("turn-2", recent["historySummary"]["latestTurnId"])
+            self.assertEqual(2, recent["historySummary"]["recordsSummarized"])
+            self.assertEqual(2, recent["historySummary"]["successCount"])
+            self.assertEqual("turn-2", recent["records"][0]["summary"]["turnId"])
             self.assertEqual("turn-2", voice_turn_server.latest_voice_turn_metrics()["latest"]["payload"]["turn"]["turnId"])
+        finally:
+            Path(metrics_path).unlink(missing_ok=True)
+
+    def test_metrics_payload_sanitizer_recursively_removes_raw_audio_and_spoken_text(self):
+        with tempfile.NamedTemporaryFile(delete=False) as fh:
+            metrics_path = fh.name
+        try:
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = metrics_path
+            packet = {
+                "type": "otoxan_mobile_voice_turn_metrics",
+                "schemaVersion": 1,
+                "transcript": "private top transcript",
+                "assistantText": "private top response",
+                "turn": {"turnId": "turn-private", "success": False, "stage": "failure"},
+                "debug": {
+                    "nested": [
+                        {
+                            "transcript": "private nested transcript",
+                            "assistantText": "private nested response",
+                            "pcm16Mono16kBase64": "AAAA",
+                            "rawAudioBase64": "BBBB",
+                            "transcriptLength": 25,
+                        }
+                    ]
+                },
+                "transport": {"events": [{"ttsPcm16Mono16kBase64": "CCCC", "assistantTextLength": 44}]},
+                "perceivedLatency": {"ttfaMs": 1400, "breakdown": {"postCaptureDispatchMs": 80}},
+                "totals": {"turnTotalMs": 7000},
+            }
+            voice_turn_server.handle_voice_turn_metrics(packet, remote_addr="phone")
+
+            recent = voice_turn_server.recent_voice_turn_metrics(limit=1)
+            serialized = json.dumps(recent)
+
+            self.assertNotIn("private top transcript", serialized)
+            self.assertNotIn("private top response", serialized)
+            self.assertNotIn("private nested transcript", serialized)
+            self.assertNotIn("private nested response", serialized)
+            self.assertNotIn("pcm16Mono16kBase64", serialized)
+            self.assertNotIn("rawAudioBase64", serialized)
+            self.assertNotIn("ttsPcm16Mono16kBase64", serialized)
+            self.assertIn("transcriptLength", serialized)
+            self.assertIn("assistantTextLength", serialized)
+            self.assertEqual(80, recent["records"][0]["payload"]["perceivedLatency"]["postCaptureAckDelayMs"])
+            self.assertEqual("turn-private", recent["historySummary"]["latestTurnId"])
+            self.assertEqual(1, recent["historySummary"]["failureCount"])
         finally:
             Path(metrics_path).unlink(missing_ok=True)
 
@@ -148,6 +198,10 @@ class VoiceTurnServerTest(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(1, result["count"])
+            self.assertEqual(1, result["historySummary"]["runsSummarized"])
+            self.assertEqual("turn-accept", result["historySummary"]["latestRunId"])
+            self.assertEqual("accept", result["historySummary"]["latestDisposition"])
+            self.assertEqual(1, result["historySummary"]["dispositions"]["accept"])
             self.assertIn("no pcm16Mono16kBase64", result["privacy"])
             summary = result["summaries"][0]
             self.assertEqual("turn-accept", summary["runId"])
