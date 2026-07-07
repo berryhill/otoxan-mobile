@@ -972,6 +972,8 @@ private fun extractCompletedVoiceTurnJson(ndjson: String): StreamVoiceTurnTeleme
             eventTypes.add(type)
             if (type == "stream.started" || type == "session.created") {
                 val protocol = event.optJSONObject("protocol")
+                    ?: event.optJSONObject("transport")?.optJSONObject("protocol")
+                    ?: event.optJSONObject("transport")
                 protocolName = protocol.optStringOrNull("name") ?: protocolName
                 protocolVersion = protocol.optIntOrNull("version") ?: protocolVersion
             }

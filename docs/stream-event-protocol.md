@@ -156,11 +156,75 @@ Closes the explicit realtime session. Server response: `session.closed`, state `
 
 `POST /voice-stream` is an experimental backend transport shim for the same explicit push-to-talk turn that `/voice-turn` serves. It is disabled by default and returns `404` unless `OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT` is truthy. When enabled, the server replies as `application/x-ndjson` with one JSON event per line:
 
-1. `stream.started` — includes protocol descriptor, fallback pointer, flag name, and privacy defaults.
-2. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
-3. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics.
+1. `stream.started` — includes protocol descriptor, fallback pointer, flag name, privacy defaults, STT event schema, and STT budget model.
+2. `stt.completed` — emits STT provider/status/latency/budget readback without raw audio or transcript text persistence.
+3. `response.completed` — wraps the existing `/voice-turn` response as `voiceTurn`.
+4. `stream.completed` — closes the stream and repeats the canonical `/voice-turn` fallback semantics and STT budget model.
 
 This endpoint does not add always-on capture, raw-audio persistence, or a new assistant authority surface. It is a backend transport experiment so the Android client can test stream-shaped parsing while retaining the proven `/voice-turn` contract and fallback.
+
+### STT stream event schema
+
+STT stream telemetry is a readback contract for the Sprint 4 latency budget. It is not a hardware pass/fail gate and must not persist raw audio or full transcript text as standalone stream metadata.
+
+Schema identity:
+
+```json
+{
+  "name": "otoxan-mobile-stt-stream-events",
+  "version": 1,
+  "audioFormat": "pcm_s16le_16khz_mono"
+}
+```
+
+Budget model published on `stream.started`, `stt.completed`, and `stream.completed`:
+
+```json
+{
+  "name": "sprint4-stt-budget",
+  "version": 1,
+  "targetField": "sttLatencyMs",
+  "targetMs": 1500,
+  "totalBudgetMs": 1500,
+  "primaryLocalBudgetMs": 750,
+  "fallbackReserveMs": 250,
+  "fallbackBudgetMs": 750,
+  "primaryProvider": "moonshine-stt",
+  "fallbackProvider": "hermes-stt",
+  "evidenceClass": "latency_budget_readback_not_hardware_proof",
+  "hardwareGate": "requires_fresh_phone_rayban_turn"
+}
+```
+
+`stt.completed` event shape:
+
+```json
+{
+  "type": "stt.completed",
+  "streamId": "vs_...",
+  "sequence": 2,
+  "schema": {
+    "name": "otoxan-mobile-stt-stream-events",
+    "version": 1
+  },
+  "stt": {
+    "provider": "moonshine-stt|hermes-stt|not-run",
+    "status": "success|empty|timeout|not-run|...",
+    "latencyMs": 123,
+    "primaryStatus": "success|empty|timeout|not-run|...",
+    "primaryLatencyMs": 80,
+    "primaryProvider": "moonshine-stt",
+    "fallbackStatus": "success|empty|timeout|not-run|...",
+    "fallbackLatencyMs": 43,
+    "fallbackProvider": "hermes-stt",
+    "budgetRemainingMs": 1377,
+    "transcriptSource": "moonshine-stt|hermes-stt|route-evidence-fallback|proof|debug",
+    "evidenceClass": "latency_budget_readback_not_hardware_proof"
+  }
+}
+```
+
+Budget environment overrides are allowed for evidence runs only: `OTOXAN_STT_TOTAL_BUDGET_SECONDS`, `OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS`, and `OTOXAN_STT_FALLBACK_MIN_SECONDS`. Overrides must be reported with the run evidence and do not replace the locked default target.
 
 ## HTTP fallback semantics
 

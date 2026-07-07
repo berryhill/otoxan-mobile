@@ -245,26 +245,55 @@ class VoiceTurnServerTest(unittest.TestCase):
         descriptor = voice_turn_server.stream_transport_descriptor()
 
         self.assertFalse(descriptor["enabled"])
+        self.assertEqual("otoxan-mobile-backend-stream", descriptor["protocol"]["name"])
         self.assertEqual("OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT", descriptor["experimentalFlag"])
         self.assertEqual("/voice-stream", descriptor["endpoint"])
         self.assertEqual("/voice-turn", descriptor["canonicalFallback"]["endpoint"])
         self.assertEqual("same_request_response_contract", descriptor["canonicalFallback"]["semantics"])
+        self.assertEqual("otoxan-mobile-stt-stream-events", descriptor["sttEventSchema"]["name"])
+        self.assertEqual(1500, descriptor["sttBudget"]["targetMs"])
+        self.assertEqual("latency_budget_readback_not_hardware_proof", descriptor["sttBudget"]["evidenceClass"])
+
+    def test_stt_budget_model_uses_sprint4_defaults_and_bounded_overrides(self):
+        budget = voice_turn_server.stt_budget_model()
+        self.assertEqual(1500, budget["targetMs"])
+        self.assertEqual(1500, budget["totalBudgetMs"])
+        self.assertEqual(750, budget["primaryLocalBudgetMs"])
+        self.assertEqual(250, budget["fallbackReserveMs"])
+        self.assertEqual(750, budget["fallbackBudgetMs"])
+        self.assertEqual("requires_fresh_phone_rayban_turn", budget["hardwareGate"])
+
+        os.environ["OTOXAN_STT_TOTAL_BUDGET_SECONDS"] = "2.25"
+        os.environ["OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS"] = "1.0"
+        os.environ["OTOXAN_STT_FALLBACK_MIN_SECONDS"] = "0.5"
+        override_budget = voice_turn_server.stt_budget_model()
+        self.assertEqual(2250, override_budget["totalBudgetMs"])
+        self.assertEqual(1000, override_budget["primaryLocalBudgetMs"])
+        self.assertEqual(500, override_budget["fallbackReserveMs"])
+        self.assertEqual(1250, override_budget["fallbackBudgetMs"])
 
     def test_handle_voice_stream_wraps_voice_turn_contract_without_persisting_audio(self):
         os.environ["OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"] = "1"
 
         events = voice_turn_server.handle_voice_stream(self._payload())
 
-        self.assertEqual(["stream.started", "response.completed", "stream.completed"], [event["type"] for event in events])
-        self.assertEqual([1, 2, 3], [event["sequence"] for event in events])
+        self.assertEqual(["stream.started", "stt.completed", "response.completed", "stream.completed"], [event["type"] for event in events])
+        self.assertEqual([1, 2, 3, 4], [event["sequence"] for event in events])
         self.assertTrue(events[0]["transport"]["enabled"])
+        self.assertEqual("otoxan-mobile-backend-stream", events[0]["protocol"]["name"])
+        self.assertEqual("otoxan-mobile-stt-stream-events", events[0]["sttEventSchema"]["name"])
+        self.assertEqual(1500, events[0]["sttBudget"]["targetMs"])
         self.assertTrue(events[0]["privacy"]["explicitSessionOnly"])
         self.assertFalse(events[0]["privacy"]["rawAudioPersisted"])
-        self.assertEqual("proof", events[1]["voiceTurn"]["provider"])
-        self.assertEqual(320, events[1]["voiceTurn"]["bytesReceived"])
-        self.assertEqual("/voice-turn", events[2]["fallback"]["endpoint"])
+        self.assertEqual("not-run", events[1]["stt"]["provider"])
+        self.assertEqual("not-run", events[1]["stt"]["status"])
+        self.assertEqual("latency_budget_readback_not_hardware_proof", events[1]["stt"]["evidenceClass"])
+        self.assertEqual("proof", events[2]["voiceTurn"]["provider"])
+        self.assertEqual(320, events[2]["voiceTurn"]["bytesReceived"])
+        self.assertEqual("/voice-turn", events[3]["fallback"]["endpoint"])
+        self.assertEqual(1500, events[3]["sttBudget"]["targetMs"])
         self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[0]))
-        self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[2]))
+        self.assertNotIn("pcm16Mono16kBase64", json.dumps(events[3]))
 
     def test_voice_stream_http_endpoint_is_404_until_experimental_flag_enabled(self):
         server = voice_turn_server.ThreadingHTTPServer(("127.0.0.1", 0), voice_turn_server.Handler)
@@ -302,9 +331,10 @@ class VoiceTurnServerTest(unittest.TestCase):
             with urllib.request.urlopen(request, timeout=5) as response:
                 self.assertEqual("application/x-ndjson", response.headers.get_content_type())
                 events = [json.loads(line) for line in response.read().decode("utf-8").splitlines()]
-            self.assertEqual(["stream.started", "response.completed", "stream.completed"], [event["type"] for event in events])
-            self.assertEqual("proof", events[1]["voiceTurn"]["provider"])
-            self.assertEqual("/voice-turn", events[2]["fallback"]["endpoint"])
+            self.assertEqual(["stream.started", "stt.completed", "response.completed", "stream.completed"], [event["type"] for event in events])
+            self.assertEqual("not-run", events[1]["stt"]["status"])
+            self.assertEqual("proof", events[2]["voiceTurn"]["provider"])
+            self.assertEqual("/voice-turn", events[3]["fallback"]["endpoint"])
         finally:
             server.shutdown()
             server.server_close()

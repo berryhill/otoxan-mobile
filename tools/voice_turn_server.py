@@ -102,6 +102,8 @@ EXPERIMENTAL_STREAM_TRANSPORT_ENV = "OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"
 EXPERIMENTAL_STREAM_ENDPOINT = "/voice-stream"
 STREAM_TRANSPORT_PROTOCOL_NAME = "otoxan-mobile-backend-stream"
 STREAM_TRANSPORT_PROTOCOL_VERSION = 1
+STT_STREAM_EVENT_SCHEMA_NAME = "otoxan-mobile-stt-stream-events"
+STT_STREAM_EVENT_SCHEMA_VERSION = 1
 REALTIME_VAD_DIAGNOSTIC_PROVIDER = "energy-vad-phase3"
 REALTIME_VAD_DIAGNOSTIC_PEAK_THRESHOLD = int(os.environ.get("OTOXAN_REALTIME_VAD_PEAK_THRESHOLD", "700"))
 REALTIME_VAD_DIAGNOSTIC_END_SILENCE_CHUNKS = int(os.environ.get("OTOXAN_REALTIME_VAD_END_SILENCE_CHUNKS", "3"))
@@ -117,6 +119,10 @@ def experimental_stream_transport_enabled() -> bool:
 
 def stream_transport_descriptor() -> dict[str, Any]:
     return {
+        "protocol": {
+            "name": STREAM_TRANSPORT_PROTOCOL_NAME,
+            "version": STREAM_TRANSPORT_PROTOCOL_VERSION,
+        },
         "name": STREAM_TRANSPORT_PROTOCOL_NAME,
         "version": STREAM_TRANSPORT_PROTOCOL_VERSION,
         "endpoint": EXPERIMENTAL_STREAM_ENDPOINT,
@@ -129,6 +135,125 @@ def stream_transport_descriptor() -> dict[str, Any]:
             "method": "POST",
             "semantics": "same_request_response_contract",
         },
+        "sttEventSchema": stt_stream_event_schema(),
+        "sttBudget": stt_budget_model(),
+    }
+
+
+def stt_budget_model() -> dict[str, Any]:
+    total_budget_seconds = _bounded_seconds(
+        "OTOXAN_STT_TOTAL_BUDGET_SECONDS",
+        SPRINT4_STT_TOTAL_BUDGET_SECONDS,
+        0.5,
+        10.0,
+    )
+    primary_budget_seconds = _bounded_seconds(
+        "OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS",
+        SPRINT4_MOONSHINE_PRIMARY_BUDGET_SECONDS,
+        0.2,
+        8.0,
+    )
+    fallback_reserve_seconds = _bounded_seconds(
+        "OTOXAN_STT_FALLBACK_MIN_SECONDS",
+        SPRINT4_STT_FALLBACK_MIN_SECONDS,
+        0.0,
+        5.0,
+    )
+    total_budget_ms = int(round(total_budget_seconds * 1000))
+    primary_budget_ms = int(round(primary_budget_seconds * 1000))
+    fallback_reserve_ms = int(round(fallback_reserve_seconds * 1000))
+    fallback_budget_ms = max(0, total_budget_ms - primary_budget_ms)
+    return {
+        "name": "sprint4-stt-budget",
+        "version": 1,
+        "targetField": "sttLatencyMs",
+        "targetMs": TIMING_CONTRACT_TARGETS["sttLatencyMs"],
+        "totalBudgetMs": total_budget_ms,
+        "primaryLocalBudgetMs": primary_budget_ms,
+        "fallbackReserveMs": fallback_reserve_ms,
+        "fallbackBudgetMs": fallback_budget_ms,
+        "primaryProvider": "moonshine-stt",
+        "fallbackProvider": "hermes-stt",
+        "environmentOverrides": {
+            "totalBudgetSeconds": "OTOXAN_STT_TOTAL_BUDGET_SECONDS",
+            "primaryLocalBudgetSeconds": "OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS",
+            "fallbackReserveSeconds": "OTOXAN_STT_FALLBACK_MIN_SECONDS",
+        },
+        "evidenceClass": "latency_budget_readback_not_hardware_proof",
+        "hardwareGate": "requires_fresh_phone_rayban_turn",
+    }
+
+
+def stt_stream_event_schema() -> dict[str, Any]:
+    return {
+        "name": STT_STREAM_EVENT_SCHEMA_NAME,
+        "version": STT_STREAM_EVENT_SCHEMA_VERSION,
+        "audioFormat": SUPPORTED_FORMAT,
+        "privacy": {
+            "rawAudioPersisted": False,
+            "transcriptTextPersistedBySchema": False,
+            "explicitSessionOnly": True,
+        },
+        "events": [
+            {
+                "type": "stt.budget",
+                "sequence": "monotonic stream sequence",
+                "payload": [
+                    "sttBudget.targetMs",
+                    "sttBudget.totalBudgetMs",
+                    "sttBudget.primaryLocalBudgetMs",
+                    "sttBudget.fallbackReserveMs",
+                    "sttBudget.fallbackBudgetMs",
+                    "sttBudget.evidenceClass",
+                ],
+                "emission": "stream.started discovery/readback",
+            },
+            {
+                "type": "stt.completed",
+                "sequence": "monotonic stream sequence",
+                "payload": [
+                    "stt.provider",
+                    "stt.status",
+                    "stt.latencyMs",
+                    "stt.primaryStatus",
+                    "stt.primaryLatencyMs",
+                    "stt.primaryProvider",
+                    "stt.fallbackStatus",
+                    "stt.fallbackLatencyMs",
+                    "stt.fallbackProvider",
+                    "stt.budgetRemainingMs",
+                    "stt.transcriptSource",
+                ],
+                "emission": "after /voice-turn STT work completes, before stream.completed",
+            },
+        ],
+    }
+
+
+def _stt_completed_event_from_voice_turn(result: Mapping[str, Any], stream_id: str, sequence: int) -> dict[str, Any]:
+    return {
+        "type": "stt.completed",
+        "streamId": stream_id,
+        "sequence": sequence,
+        "schema": {
+            "name": STT_STREAM_EVENT_SCHEMA_NAME,
+            "version": STT_STREAM_EVENT_SCHEMA_VERSION,
+        },
+        "stt": {
+            "provider": result.get("sttProvider"),
+            "status": result.get("sttStatus"),
+            "latencyMs": result.get("sttLatencyMs"),
+            "primaryStatus": result.get("primarySttStatus"),
+            "primaryLatencyMs": result.get("primarySttMs"),
+            "primaryProvider": result.get("primarySttProvider"),
+            "fallbackStatus": result.get("fallbackSttStatus"),
+            "fallbackLatencyMs": result.get("fallbackSttMs"),
+            "fallbackProvider": result.get("fallbackSttProvider"),
+            "budgetRemainingMs": result.get("sttBudgetRemainingMs"),
+            "transcriptSource": result.get("transcriptSource"),
+            "evidenceClass": "latency_budget_readback_not_hardware_proof",
+        },
+        "sttBudget": stt_budget_model(),
     }
 
 
@@ -298,7 +423,13 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             "type": "stream.started",
             "streamId": stream_id,
             "sequence": 1,
+            "protocol": {
+                "name": STREAM_TRANSPORT_PROTOCOL_NAME,
+                "version": STREAM_TRANSPORT_PROTOCOL_VERSION,
+            },
             "transport": stream_transport_descriptor(),
+            "sttEventSchema": stt_stream_event_schema(),
+            "sttBudget": stt_budget_model(),
             "privacy": {
                 "explicitSessionOnly": True,
                 "rawAudioPersisted": False,
@@ -307,11 +438,12 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         }
     ]
     result = handle_voice_turn(payload)
+    events.append(_stt_completed_event_from_voice_turn(result, stream_id, 2))
     events.append(
         {
             "type": "response.completed",
             "streamId": stream_id,
-            "sequence": 2,
+            "sequence": 3,
             "voiceTurn": result,
         }
     )
@@ -319,9 +451,10 @@ def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         {
             "type": "stream.completed",
             "streamId": stream_id,
-            "sequence": 3,
+            "sequence": 4,
             "elapsedMs": _elapsed_ms(started),
             "fallback": stream_transport_descriptor()["canonicalFallback"],
+            "sttBudget": stt_budget_model(),
         }
     )
     return events
