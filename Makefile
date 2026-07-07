@@ -8,6 +8,8 @@ VOICE_ENDPOINT ?= http://100.126.0.110:8787/voice-turn
 ADB ?= $(shell if [ -x /home/berry/sdk/platform-tools/adb ]; then echo sudo /home/berry/sdk/platform-tools/adb; else command -v adb 2>/dev/null || echo adb; fi)
 GRADLE ?= ./gradlew
 PYTHON ?= $(shell if [ -x /home/silas/.hermes/hermes-agent/venv/bin/python ]; then echo /home/silas/.hermes/hermes-agent/venv/bin/python; else echo python3; fi)
+MOONSHINE_PYTHON ?= $(shell if [ -x .venv-moonshine/bin/python ]; then echo .venv-moonshine/bin/python; else echo $(PYTHON); fi)
+MOONSHINE_BACKEND ?= auto
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 
 .PHONY: help all build clean install reinstall launch run logs devices adb-start backend backend-stream backend-xander backend-proof backend-moonshine backend-realtime smoke-backend test-backend test-realtime test-moonshine-wrapper test test-all endpoint doctor
@@ -56,7 +58,7 @@ backend-proof:
 	OTOXAN_VOICE_PROVIDER=proof $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
 
 backend-moonshine:
-	OTOXAN_VOICE_PROVIDER=mobile-fast OTOXAN_STT_PROVIDER=moonshine-command OTOXAN_MOONSHINE_STT_COMMAND='$(PYTHON) tools/moonshine_stt_command.py --backend auto --input {input} --output {output}' $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
+	OTOXAN_VOICE_PROVIDER=mobile-fast OTOXAN_STT_PROVIDER=moonshine-command OTOXAN_MOONSHINE_STT_COMMAND='$(MOONSHINE_PYTHON) tools/moonshine_stt_command.py --backend $(MOONSHINE_BACKEND) --input {input} --output {output}' $(PYTHON) tools/voice_turn_server.py --host $(VOICE_HOST) --port $(VOICE_PORT)
 
 backend-realtime:
 	$(PYTHON) tools/realtime_voice_server.py --host $(VOICE_HOST) --port $(REALTIME_PORT)

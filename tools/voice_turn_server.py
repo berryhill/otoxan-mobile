@@ -50,8 +50,8 @@ SUPPORTED_PROVIDER_MODES = {"proof", *XANDER_PROVIDER_ALIASES, *MOBILE_FAST_PROV
 HERMES_BIN_DEFAULT = "/home/silas/.local/bin/hermes"
 XANDER_PROFILE_DEFAULT = "xander"
 XANDER_PROMPT_TIMEOUT_SECONDS = 25
-XANDER_FAST_TIMEOUT_SECONDS = 12
-XANDER_FAST_HARD_TIMEOUT_SECONDS = 12.0
+XANDER_FAST_TIMEOUT_SECONDS = 4
+XANDER_FAST_HARD_TIMEOUT_SECONDS = 4.0
 XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
 XANDER_MOBILE_MAX_WORDS = 18
 XANDER_FAST_MAX_WORDS = 16
@@ -852,6 +852,10 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "xanderFastMs": timing.get("xanderFastMs"),
         "xanderFastStatus": timing.get("xanderFastStatus"),
         "xanderFastTimedOut": timing.get("xanderFastTimedOut"),
+        "mobileFastProvider": timing.get("mobileFastProvider"),
+        "mobileFastModel": timing.get("mobileFastModel"),
+        "mobileFastTimeoutSeconds": timing.get("mobileFastTimeoutSeconds"),
+        "mobileFastHardTimeoutSeconds": timing.get("mobileFastHardTimeoutSeconds"),
         "xanderFallbackSessionStatus": timing.get("xanderFallbackSessionStatus"),
         "xanderFallbackSkipped": timing.get("xanderFallbackSkipped"),
         "ttsProvider": timing.get("ttsProvider"),
@@ -1037,7 +1041,7 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
 
 
 def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
-    timing: dict[str, Any] = {}
+    timing: dict[str, Any] = _mobile_fast_runtime_descriptor()
     transcript_started = time.monotonic()
     transcript = _xander_transcript(pcm, route)
     timing["transcriptTotalMs"] = _elapsed_ms(transcript_started)
@@ -1274,14 +1278,14 @@ def _transcribe_with_moonshine_command(pcm: bytes) -> SttResult:
         except subprocess.TimeoutExpired:
             return SttResult("", "timeout", _elapsed_ms(started), "moonshine-stt")
         latency_ms = _elapsed_ms(started)
-        if result.returncode != 0:
-            return SttResult("", "command-error", latency_ms, "moonshine-stt")
         output = Path(output_path)
         text = ""
         if output.exists() and output.stat().st_size > 0:
             text = _parse_stt_command_output(output.read_text(errors="replace"))
         if not text:
             text = _parse_stt_command_output((result.stdout or b"").decode("utf-8", errors="replace"))
+        if result.returncode != 0 and not text:
+            return SttResult("", "command-error", latency_ms, "moonshine-stt")
         return SttResult(text, "success" if text else "empty", latency_ms, "moonshine-stt")
     except Exception:
         return SttResult("", "error", _elapsed_ms(started), "moonshine-stt")
@@ -1590,12 +1594,7 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
 
 
 def _ask_xander_mobile_fast_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool]:
-    hard_timeout = _bounded_seconds(
-        "OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS",
-        XANDER_FAST_HARD_TIMEOUT_SECONDS,
-        0.5,
-        20.0,
-    )
+    hard_timeout = _mobile_fast_hard_timeout_seconds()
 
     result_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
 
@@ -1643,20 +1642,51 @@ def _mobile_fast_session_fallback_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _mobile_fast_provider_name() -> str:
+    return os.environ.get("OTOXAN_MOBILE_FAST_PROVIDER", XANDER_MOBILE_FAST_PROVIDER_DEFAULT).strip() or XANDER_MOBILE_FAST_PROVIDER_DEFAULT
+
+
+def _mobile_fast_model_name(config: Mapping[str, Any] | None = None, provider_name: str | None = None) -> str:
+    env_model = os.environ.get("OTOXAN_MOBILE_FAST_MODEL", "").strip()
+    if env_model:
+        return env_model
+    provider_name = provider_name or _mobile_fast_provider_name()
+    try:
+        provider = _configured_provider(config or _load_xander_config(), provider_name)
+    except Exception:
+        return ""
+    return str(provider.get("model", "")).strip()
+
+
+def _mobile_fast_request_timeout_seconds() -> float:
+    return _bounded_seconds("OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS", XANDER_FAST_TIMEOUT_SECONDS, 0.5, 30.0)
+
+
+def _mobile_fast_hard_timeout_seconds() -> float:
+    return _bounded_seconds("OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS", XANDER_FAST_HARD_TIMEOUT_SECONDS, 0.5, 20.0)
+
+
+def _mobile_fast_runtime_descriptor() -> dict[str, Any]:
+    provider_name = _mobile_fast_provider_name()
+    return {
+        "mobileFastProvider": provider_name,
+        "mobileFastModel": _mobile_fast_model_name(provider_name=provider_name),
+        "mobileFastTimeoutSeconds": _mobile_fast_request_timeout_seconds(),
+        "mobileFastHardTimeoutSeconds": _mobile_fast_hard_timeout_seconds(),
+    }
+
+
 def _ask_xander_mobile_fast(transcript: str, route: RouteSummary) -> str:
-    # api-z-ai has been the lowest-latency configured provider in live probes;
-    # other OpenAI-compatible providers can emit long <think> blocks, so the
-    # deadline wrapper still guards against reasoning-only or slow output.
-    provider_name = os.environ.get("OTOXAN_MOBILE_FAST_PROVIDER", XANDER_MOBILE_FAST_PROVIDER_DEFAULT).strip()
+    provider_name = _mobile_fast_provider_name()
     config = _load_xander_config()
     provider = _configured_provider(config, provider_name)
     base_url = str(provider.get("base_url", "")).rstrip("/")
     api_key = str(provider.get("api_key", "")).strip()
-    model = os.environ.get("OTOXAN_MOBILE_FAST_MODEL", "").strip() or str(provider.get("model", "")).strip()
+    model = _mobile_fast_model_name(config=config, provider_name=provider_name)
     if not base_url or not api_key or not model:
         raise VoiceTurnError(f"mobile-fast provider {provider_name!r} is missing base_url/api_key/model", 502)
 
-    timeout = _bounded_seconds("OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS", XANDER_FAST_TIMEOUT_SECONDS, 0.5, 30.0)
+    timeout = _mobile_fast_request_timeout_seconds()
 
     body = {
         "model": model,

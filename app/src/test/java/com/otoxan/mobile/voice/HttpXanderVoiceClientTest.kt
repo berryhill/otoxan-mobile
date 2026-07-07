@@ -256,6 +256,10 @@ class HttpXanderVoiceClientTest {
                       "xanderFastMs": 6,
                       "xanderFastStatus": 1,
                       "xanderFastTimedOut": 0,
+                      "mobileFastProvider": "minimax",
+                      "mobileFastModel": "MiniMax-M3",
+                      "mobileFastTimeoutSeconds": 4.0,
+                      "mobileFastHardTimeoutSeconds": 4.0,
                       "xanderFallbackSessionStatus": 0,
                       "xanderFallbackSkipped": 0,
                       "responseBuildMs": 1
@@ -314,6 +318,10 @@ class HttpXanderVoiceClientTest {
         assertEquals(6, result.xanderFastMs)
         assertEquals(1, result.xanderFastStatus)
         assertEquals(0, result.xanderFastTimedOut)
+        assertEquals("minimax", result.mobileFastProvider)
+        assertEquals("MiniMax-M3", result.mobileFastModel)
+        assertEquals(4.0, result.mobileFastTimeoutSeconds!!, 0.01)
+        assertEquals(4.0, result.mobileFastHardTimeoutSeconds!!, 0.01)
         assertEquals(0, result.xanderFallbackSessionStatus)
         assertEquals(0, result.xanderFallbackSkipped)
         assertEquals(1, result.responseBuildMs)
@@ -464,6 +472,10 @@ class HttpXanderVoiceClientTest {
                     xanderFastMs = 2500,
                     xanderFastStatus = 0,
                     xanderFastTimedOut = 1,
+                    mobileFastProvider = "minimax",
+                    mobileFastModel = "MiniMax-M3",
+                    mobileFastTimeoutSeconds = 4.0,
+                    mobileFastHardTimeoutSeconds = 4.0,
                     xanderFallbackSessionStatus = 0,
                     xanderFallbackSkipped = 1,
                     provider = "xander-session",
@@ -520,6 +532,9 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"transcriptLength\":32"))
         assertTrue(requestBody.contains("\"assistantTextLength\":44"))
         assertTrue(requestBody.contains("\"xanderFastTimedOut\":1"))
+        assertTrue(requestBody.contains("\"mobileFastProvider\":\"minimax\""))
+        assertTrue(requestBody.contains("\"mobileFastModel\":\"MiniMax-M3\""))
+        assertTrue(requestBody.contains("\"mobileFastTimeoutSeconds\":4.0"))
         assertTrue(requestBody.contains("\"xanderFallbackSkipped\":1"))
         assertTrue(requestBody.contains("\"perceivedLatency\""))
         assertTrue(requestBody.contains("\"ttfaMs\":2400"))
@@ -604,6 +619,8 @@ class HttpXanderVoiceClientTest {
                     sttLatencyMs = 600,
                     xanderFastMs = 1400,
                     xanderFastStatus = 1,
+                    mobileFastProvider = "minimax",
+                    mobileFastModel = "MiniMax-M3",
                     provider = "mobile-fast",
                     transcriptSource = "moonshine-stt",
                     sttProvider = "moonshine-stt",

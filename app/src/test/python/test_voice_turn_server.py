@@ -32,6 +32,8 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_XANDER_TIMEOUT_SECONDS",
                 "OTOXAN_VOICE_METRICS_JSONL",
                 "OTOXAN_MOBILE_FAST_PROVIDER",
+                "OTOXAN_MOBILE_FAST_MODEL",
+                "OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS",
                 "OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS",
                 "OTOXAN_MOBILE_FAST_SESSION_FALLBACK",
                 "OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS",
@@ -990,6 +992,44 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertTrue(recent["ok"])
         self.assertEqual(5, recent["count"])
         self.assertEqual([4, 3, 2], [record["n"] for record in recent["records"]])
+
+    def test_moonshine_nonzero_with_parseable_transcript_still_counts_as_success(self):
+        os.environ["OTOXAN_MOONSHINE_STT_COMMAND"] = "moonshine-test --input {input} --output {output}"
+        completed = mock.Mock(returncode=2, stdout=b'{"success": true, "transcript": "late useful words"}')
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed):
+            stt = voice_turn_server._transcribe_with_moonshine_command(b"\x01\x02" * 160)
+
+        self.assertEqual("late useful words", stt.transcript)
+        self.assertEqual("success", stt.status)
+        self.assertEqual("moonshine-stt", stt.provider)
+
+    def test_mobile_fast_response_exposes_underlying_provider_model_and_budget(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
+        os.environ["OTOXAN_MOBILE_FAST_PROVIDER"] = "minimax"
+        os.environ["OTOXAN_MOBILE_FAST_MODEL"] = "MiniMax-M3"
+        os.environ["OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS"] = "4"
+        os.environ["OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS"] = "4"
+        payload = self._payload()
+        stt = voice_turn_server.SttResult("real words decoded", "success", 33)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
+            with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", return_value="Telemetry is tagged."):
+                result = voice_turn_server.handle_voice_turn(payload)
+
+        self.assertEqual("minimax", result["mobileFastProvider"])
+        self.assertEqual("MiniMax-M3", result["mobileFastModel"])
+        self.assertEqual(4.0, result["mobileFastTimeoutSeconds"])
+        self.assertEqual(4.0, result["mobileFastHardTimeoutSeconds"])
+        self.assertEqual("minimax", result["timing"]["mobileFastProvider"])
+        self.assertEqual("MiniMax-M3", result["timing"]["mobileFastModel"])
+
+    def test_mobile_fast_default_deadline_is_wearable_bounded(self):
+        os.environ.pop("OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS", None)
+        hard_timeout = voice_turn_server._mobile_fast_hard_timeout_seconds()
+        request_timeout = voice_turn_server._mobile_fast_request_timeout_seconds()
+
+        self.assertLessEqual(hard_timeout, 4.0)
+        self.assertLessEqual(request_timeout, 4.0)
 
     def test_mobile_fast_direct_provider_shapes_response_without_leaking_reasoning(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
