@@ -1,0 +1,189 @@
+# Otoxan Mobile stream event protocol and HTTP fallback semantics
+
+## Control obligation
+
+Otoxan Mobile remains an explicit-session, audio-first Ray-Ban Meta phone bridge. The stream protocol is a transport upgrade for the same push-to-talk turn contract; it is not an always-on recorder, not an AR/display protocol, and not a replacement for the canonical `/voice-turn` fallback until the stream path is hardware-proven.
+
+## Protocol identity
+
+- Protocol name: `otoxan-mobile-realtime-stream`
+- Protocol version: `1`
+- Primary realtime endpoint: `GET /realtime` WebSocket upgrade
+- HTTP fallback endpoint: `POST /voice-turn`
+- Audio format: `pcm_s16le_16khz_mono`
+- Session model: one explicit user session per WebSocket connection
+- Ordering: server events carry monotonically increasing `sequence` values scoped to `sessionId`
+
+Every server JSON event has this envelope:
+
+```json
+{
+  "type": "session.created",
+  "sessionId": "rt_...",
+  "sequence": 1,
+  "state": "created"
+}
+```
+
+`session.created` is the protocol discovery event. It MUST include:
+
+```json
+{
+  "protocol": {
+    "name": "otoxan-mobile-realtime-stream",
+    "version": 1
+  },
+  "audioFormat": "pcm_s16le_16khz_mono",
+  "transport": "websocket",
+  "httpFallback": {
+    "endpoint": "/voice-turn",
+    "method": "POST",
+    "requestAudioField": "pcm16Mono16kBase64",
+    "responseShape": "existing voice-turn response",
+    "useWhen": [
+      "websocket_unavailable",
+      "handshake_failed",
+      "stream_error_before_commit",
+      "client_policy_prefers_http_for_turn"
+    ]
+  }
+}
+```
+
+## Client-to-server events
+
+### `session.update`
+
+Configures route evidence for the explicit session. Route evidence is required before a real hardware proof can be claimed, but the dev server accepts missing route evidence as `unknown` for local diagnostics.
+
+```json
+{
+  "type": "session.update",
+  "audioFormat": "pcm_s16le_16khz_mono",
+  "routeEvidence": {
+    "inputName": "Ray-Ban Meta",
+    "inputType": "TYPE_BLUETOOTH_SCO",
+    "outputName": "Ray-Ban Meta",
+    "outputType": "TYPE_BLUETOOTH_SCO",
+    "wearableActive": true,
+    "message": "setCommunicationDevice=true"
+  }
+}
+```
+
+Server response: `session.updated`, state `configured`.
+
+### `input_audio.append`
+
+Appends a base64 PCM chunk over a JSON frame. Binary WebSocket frames are equivalent and are preferred for real streaming.
+
+```json
+{
+  "type": "input_audio.append",
+  "pcm16Mono16kBase64": "..."
+}
+```
+
+Server response: one or more events. VAD boundary events may precede `input_audio.appended`:
+
+- `user.speech.started`
+- `user.speech.ended`
+- `input_audio.appended`
+
+VAD events are diagnostics only. They do not call Xander, do not commit a turn, and do not prove real speech by themselves.
+
+### Binary PCM frame
+
+A binary WebSocket frame is raw PCM in the protocol audio format. The server treats it as `input_audio.append` and returns the same event sequence.
+
+### `input_audio.commit`
+
+Commits the buffered explicit-session audio as one assistant turn. This is the only realtime event that invokes the existing voice-turn handler.
+
+```json
+{"type": "input_audio.commit"}
+```
+
+Server response: `response.completed`, state `responding`, with:
+
+```json
+{
+  "turnIndex": 1,
+  "audioFormat": "pcm_s16le_16khz_mono",
+  "bytesCommitted": 320,
+  "fallback": {
+    "source": "websocket_commit",
+    "canonicalHttpEndpoint": "/voice-turn",
+    "semantics": "same_request_response_contract"
+  },
+  "voiceTurn": {
+    "ok": true,
+    "transcript": "...",
+    "assistantText": "..."
+  }
+}
+```
+
+### `input_audio.clear`
+
+Clears buffered audio without invoking the assistant. Server response: `input_audio.cleared`, state `configured`.
+
+### `control.ping`
+
+Liveness check. Server response: `control.pong`.
+
+### `session.close`
+
+Closes the explicit realtime session. Server response: `session.closed`, state `closed`.
+
+## Server-to-client event registry
+
+| Event | State | Meaning |
+| --- | --- | --- |
+| `session.created` | `created` | WebSocket accepted and protocol/fallback discovery is available. |
+| `session.updated` | `configured` | Route/session settings accepted. |
+| `user.speech.started` | `buffering` | Energy VAD crossed speech threshold. Diagnostic only. |
+| `user.speech.ended` | `buffering` | Energy VAD saw configured quiet chunks. Diagnostic only. |
+| `input_audio.appended` | `buffering` | PCM bytes accepted into the explicit-session buffer. |
+| `input_audio.cleared` | `configured` | Buffered PCM discarded. |
+| `response.completed` | `responding` | Buffered PCM was committed through the voice-turn contract. |
+| `control.pong` | current open state | Liveness reply. |
+| `session.closed` | `closed` | Session closed by client. |
+| `error` | `error` | Protocol or server error; client should stop using that stream. |
+
+## HTTP fallback semantics
+
+The fallback is not a weaker assistant mode. It is the canonical single-turn contract:
+
+```http
+POST /voice-turn
+Content-Type: application/json
+Accept: application/json
+```
+
+```json
+{
+  "format": "pcm_s16le_16khz_mono",
+  "pcm16Mono16kBase64": "...",
+  "routeEvidence": {"...": "..."}
+}
+```
+
+Use HTTP fallback when:
+
+1. the WebSocket endpoint is unreachable or the upgrade fails;
+2. the stream errors before `input_audio.commit` returns `response.completed`;
+3. the client is in a conservative/debug build that intentionally uses one-shot HTTP;
+4. an operator needs a comparable baseline for hardware validation.
+
+Do not double-submit after a successful `response.completed`. If the stream fails after commit but before the client receives the response, the current protocol has no idempotency key; retrying may create a second assistant turn. The safe MVP behavior is to surface an explicit error and let the user press-to-talk again.
+
+HTTP fallback responses must preserve the existing voice-turn evidence fields (`provider`, `transcriptSource`, `sttStatus`, `pass1Status`, timing fields, route evidence). A successful HTTP response does not prove Ray-Ban hardware use unless the hardware-gate fields also pass.
+
+## Privacy and safety boundaries
+
+- No always-on recording.
+- No hidden background capture.
+- No camera/DAT permissions in this protocol.
+- Buffered audio is explicit-session memory only; it is cleared after commit or clear.
+- VAD boundaries are transport UX hints, not authority to auto-capture or auto-send.

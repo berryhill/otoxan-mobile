@@ -73,6 +73,14 @@ class RealtimeVoiceServerUnitTest(unittest.TestCase):
 
     def test_session_update_append_commit_uses_existing_voice_turn_contract(self):
         session = realtime_voice_server.RealtimeSession(session_id="rt_test")
+        created = session.created_event()
+        self.assertEqual({"name": "otoxan-mobile-realtime-stream", "version": 1}, created["protocol"])
+        self.assertEqual("/realtime", created["realtimeEndpoint"])
+        self.assertEqual("/voice-turn", created["httpFallback"]["endpoint"])
+        self.assertEqual("POST", created["httpFallback"]["method"])
+        self.assertEqual("pcm16Mono16kBase64", created["httpFallback"]["requestAudioField"])
+        self.assertIn("stream_error_before_commit", created["httpFallback"]["useWhen"])
+
         updated = session.update({
             "type": "session.update",
             "audioFormat": "pcm_s16le_16khz_mono",
@@ -87,23 +95,26 @@ class RealtimeVoiceServerUnitTest(unittest.TestCase):
         })
         self.assertEqual("session.updated", updated["type"])
         self.assertEqual("configured", updated["state"])
-        self.assertEqual(1, updated["sequence"])
+        self.assertEqual(2, updated["sequence"])
 
         appended = session.append_audio(b"\x01\x02" * 160)
         self.assertEqual("input_audio.appended", appended["type"])
         self.assertEqual("buffering", appended["state"])
-        self.assertEqual(2, appended["sequence"])
+        self.assertEqual(3, appended["sequence"])
         self.assertEqual(320, appended["bufferedBytes"])
 
         completed = session.commit_audio()
         self.assertEqual("response.completed", completed["type"])
         self.assertEqual("responding", completed["state"])
-        self.assertEqual(3, completed["sequence"])
+        self.assertEqual(4, completed["sequence"])
         self.assertEqual(320, completed["bytesCommitted"])
+        self.assertEqual("websocket_commit", completed["fallback"]["source"])
+        self.assertEqual("/voice-turn", completed["fallback"]["canonicalHttpEndpoint"])
+        self.assertEqual("same_request_response_contract", completed["fallback"]["semantics"])
         self.assertEqual("proof", completed["voiceTurn"]["provider"])
         self.assertEqual("pcm_s16le_16khz_mono", completed["voiceTurn"]["audioFormat"])
         self.assertEqual(0, len(session.buffered_pcm))
-        self.assertEqual(["session.updated", "input_audio.appended", "response.completed"], [event.type for event in session.bus.events])
+        self.assertEqual(["session.created", "session.updated", "input_audio.appended", "response.completed"], [event.type for event in session.bus.events])
 
     def test_json_audio_append_accepts_base64_payload(self):
         session = realtime_voice_server.RealtimeSession(session_id="rt_test")
@@ -167,6 +178,8 @@ class RealtimeVoiceServerProtocolTest(unittest.IsolatedAsyncioTestCase):
 
         created = await _read_json_event(reader)
         self.assertEqual("session.created", created["type"])
+        self.assertEqual({"name": "otoxan-mobile-realtime-stream", "version": 1}, created["protocol"])
+        self.assertEqual("/voice-turn", created["httpFallback"]["endpoint"])
         self.assertEqual("phase2-eventbus-state-machine", created["phase"])
         self.assertEqual("created", created["state"])
         self.assertEqual(1, created["sequence"])
@@ -200,6 +213,7 @@ class RealtimeVoiceServerProtocolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("responding", completed["state"])
         self.assertEqual(4, completed["sequence"])
         self.assertEqual(320, completed["bytesCommitted"])
+        self.assertEqual("same_request_response_contract", completed["fallback"]["semantics"])
         self.assertEqual("proof", completed["voiceTurn"]["provider"])
         self.assertEqual("TYPE_BLUETOOTH_SCO", completed["voiceTurn"]["routeEvidence"]["inputType"])
 

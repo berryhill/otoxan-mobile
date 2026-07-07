@@ -31,6 +31,42 @@ SUPPORTED_FORMAT = voice_turn_server.SUPPORTED_FORMAT
 MAX_BUFFERED_PCM_BYTES = int(os.environ.get("OTOXAN_REALTIME_MAX_PCM_BYTES", str(voice_turn_server.MAX_PCM_BYTES)))
 VAD_SPEECH_PEAK_THRESHOLD = int(os.environ.get("OTOXAN_REALTIME_VAD_PEAK_THRESHOLD", "700"))
 VAD_SPEECH_END_SILENCE_CHUNKS = int(os.environ.get("OTOXAN_REALTIME_VAD_END_SILENCE_CHUNKS", "3"))
+REALTIME_PROTOCOL_NAME = "otoxan-mobile-realtime-stream"
+REALTIME_PROTOCOL_VERSION = 1
+REALTIME_WS_ENDPOINT = "/realtime"
+HTTP_FALLBACK_ENDPOINT = "/voice-turn"
+HTTP_FALLBACK_METHOD = "POST"
+HTTP_FALLBACK_USE_WHEN = (
+    "websocket_unavailable",
+    "handshake_failed",
+    "stream_error_before_commit",
+    "client_policy_prefers_http_for_turn",
+)
+
+
+def realtime_protocol_descriptor() -> dict[str, Any]:
+    return {
+        "name": REALTIME_PROTOCOL_NAME,
+        "version": REALTIME_PROTOCOL_VERSION,
+    }
+
+
+def http_fallback_descriptor() -> dict[str, Any]:
+    return {
+        "endpoint": HTTP_FALLBACK_ENDPOINT,
+        "method": HTTP_FALLBACK_METHOD,
+        "requestAudioField": "pcm16Mono16kBase64",
+        "responseShape": "existing voice-turn response",
+        "useWhen": list(HTTP_FALLBACK_USE_WHEN),
+    }
+
+
+def commit_fallback_semantics() -> dict[str, str]:
+    return {
+        "source": "websocket_commit",
+        "canonicalHttpEndpoint": HTTP_FALLBACK_ENDPOINT,
+        "semantics": "same_request_response_contract",
+    }
 
 
 class WebSocketProtocolError(Exception):
@@ -166,8 +202,11 @@ class RealtimeSession:
         self._transition(RealtimeState.CREATED)
         return self._emit(
             "session.created",
+            protocol=realtime_protocol_descriptor(),
             audioFormat=self.audio_format,
             transport="websocket",
+            realtimeEndpoint=REALTIME_WS_ENDPOINT,
+            httpFallback=http_fallback_descriptor(),
             phase="phase2-eventbus-state-machine",
             supportedEvents=[
                 "session.update",
@@ -259,6 +298,7 @@ class RealtimeSession:
             turnIndex=self.committed_turns,
             audioFormat=self.audio_format,
             bytesCommitted=len(pcm),
+            fallback=commit_fallback_semantics(),
             voiceTurn=result,
         )
 

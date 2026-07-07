@@ -185,6 +185,19 @@ invalid frame/event -> error/state=error
 
 This creates the control surface for Phase 3 VAD without changing the mobile `/voice-turn` HTTP fallback.
 
+## Stream event protocol and HTTP fallback
+
+The durable realtime contract is defined in `docs/stream-event-protocol.md`. The protocol identity is:
+
+```text
+name=otoxan-mobile-realtime-stream
+version=1
+websocket=/realtime
+httpFallback=/voice-turn
+```
+
+`session.created` advertises the protocol descriptor and fallback semantics so the Android/client loop can discover the safe downgrade path without inventing a second assistant contract. `/voice-turn` remains the canonical HTTP fallback and evidence baseline; realtime `input_audio.commit` uses the same request/response semantics and must not be double-submitted after `response.completed`.
+
 ## Phase 3 VAD boundary events
 
 The realtime server now runs a local energy-VAD boundary detector on every appended PCM chunk. This is a dependency-free Phase 3 seam for the later Silero ONNX provider; it gives the Android/client loop the same event contract before model integration.
