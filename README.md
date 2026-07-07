@@ -121,6 +121,8 @@ The helper validates the PCM payload and route evidence, returns visible transcr
 
 ## Phone telemetry evidence classes
 
+Sprint 3 source/build/backend decision evidence is recorded in `docs/sprint3-gate-decision-packet.md`. Treat that packet as candidate readiness evidence for the next physical gate, not as a replacement for a fresh phone + Ray-Ban Meta turn.
+
 The phone telemetry UI now separates reliability, latency, and build/source proof so operators do not over-claim a run:
 
 | Evidence class | What it can prove | What it must not claim |
