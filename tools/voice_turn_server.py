@@ -56,6 +56,8 @@ XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
 XANDER_MOBILE_MAX_WORDS = 18
 XANDER_FAST_MAX_WORDS = 16
 XANDER_SPOKEN_MAX_CHARS = 140
+NO_TRANSCRIPT_DEGRADED_RESPONSE = "Audio arrived, but speech did not decode. Try again after Listening appears."
+MODEL_DEGRADED_RESPONSE = "I heard the words, but response degraded."
 MOBILE_FAST_RUNTIME_CONTRACT_NAME = "otoxan-mobile-minimax-runtime"
 MOBILE_FAST_RUNTIME_CONTRACT_VERSION = 1
 MINIMAX_M3_ADAPTER_NAME = "minimax-m3-chat-completions-parser"
@@ -1019,7 +1021,7 @@ def _xander_session_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         timing["xanderSessionMs"] = None
         return AssistantTurn(
             transcript=transcript.transcript,
-            assistant_text="Audio arrived, but words did not decode.",
+            assistant_text=NO_TRANSCRIPT_DEGRADED_RESPONSE,
             tts_pcm=b"",
             provider=XANDER_PROVIDER,
             transcript_source=transcript.source,
@@ -1064,7 +1066,7 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
         timing["xanderFastMs"] = None
         return AssistantTurn(
             transcript=transcript.transcript,
-            assistant_text="Audio arrived, but words did not decode.",
+            assistant_text=NO_TRANSCRIPT_DEGRADED_RESPONSE,
             tts_pcm=b"",
             provider=MOBILE_FAST_PROVIDER,
             transcript_source=transcript.source,
@@ -1107,7 +1109,7 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
 
 
 def _is_stt_fallback(transcript: str) -> bool:
-    return "Hermes STT lane did not return a transcript for this turn." in transcript
+    return not transcript.strip() or "Hermes STT lane did not return a transcript for this turn." in transcript
 
 
 def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
@@ -1141,11 +1143,7 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
         )
 
     return TranscriptResult(
-        transcript=(
-            f"Voice audio received from {route.input_name} ({route.input_type}); "
-            f"{len(pcm)} bytes of PCM reached the Xander session adapter. "
-            "Hermes STT lane did not return a transcript for this turn."
-        ),
+        transcript="",
         source="route-evidence-fallback",
         stt_status=stt.status,
         stt_latency_ms=stt.latency_ms,
@@ -1716,8 +1714,8 @@ def mobile_fast_runtime_contract() -> dict[str, Any]:
         "fallbackPolicy": {
             "sessionFallbackEnv": "OTOXAN_MOBILE_FAST_SESSION_FALLBACK",
             "defaultSessionFallbackEnabled": False,
-            "providerFailureSpokenResponse": "Say that again.",
-            "emptySttSpokenResponse": "Audio arrived, but words did not decode.",
+            "providerFailureSpokenResponse": MODEL_DEGRADED_RESPONSE,
+            "emptySttSpokenResponse": NO_TRANSCRIPT_DEGRADED_RESPONSE,
         },
         "readbackFields": [
             "provider",
@@ -1898,7 +1896,7 @@ def _minimax_m3_reasoning_evidence(message: Mapping[str, Any], raw_content: str)
 
 def _mobile_fast_degraded_spoken_response(transcript: str) -> str:
     return _shape_mobile_spoken_response(
-        "Say that again.",
+        MODEL_DEGRADED_RESPONSE if transcript.strip() else NO_TRANSCRIPT_DEGRADED_RESPONSE,
         max_words=XANDER_FAST_MAX_WORDS,
     )
 

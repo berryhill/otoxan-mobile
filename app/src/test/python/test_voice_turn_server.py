@@ -626,13 +626,13 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("success", transcript.stt_status)
         self.assertEqual(17, transcript.stt_latency_ms)
 
-    def test_xander_transcript_falls_back_to_route_evidence_when_stt_lane_empty(self):
+    def test_xander_transcript_preserves_empty_text_when_stt_lane_empty(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         route = voice_turn_server.RouteSummary("Ray-Ban", "TYPE_BLE_HEADSET", "Ray-Ban", "TYPE_BLE_HEADSET", True, "")
         stt = voice_turn_server.SttResult("", "empty", 23)
         with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
             transcript = voice_turn_server._xander_transcript(b"\x01\x02" * 160, route)
-        self.assertIn("Hermes STT lane did not return", transcript.transcript)
+        self.assertEqual("", transcript.transcript)
         self.assertEqual("route-evidence-fallback", transcript.source)
         self.assertEqual("empty", transcript.stt_status)
         self.assertEqual(23, transcript.stt_latency_ms)
@@ -776,9 +776,9 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertIsNone(result["xanderSessionMs"])
         self.assertEqual("stt-empty", result["pass1Status"])
         self.assertFalse(result["pass1Ready"])
-        self.assertEqual("Audio arrived, but words did not decode.", result["assistantText"])
+        self.assertEqual(voice_turn_server.NO_TRANSCRIPT_DEGRADED_RESPONSE, result["assistantText"])
         self.assertLessEqual(len(result["assistantText"]), voice_turn_server.XANDER_SPOKEN_MAX_CHARS)
-        self.assertIn("Hermes STT lane did not return", result["transcript"])
+        self.assertEqual("", result["transcript"])
 
     def test_xander_turn_does_not_fake_response_when_bounded_stt_fallback_is_skipped(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
@@ -799,8 +799,8 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("primary-empty-fallback-budget-exhausted", result["sttStatus"])
         self.assertEqual("skipped-budget-exhausted", result["fallbackSttStatus"])
         self.assertEqual("stt-primary-empty-fallback-budget-exhausted", result["pass1Status"])
-        self.assertEqual("Audio arrived, but words did not decode.", result["assistantText"])
-        self.assertIn("Hermes STT lane did not return", result["transcript"])
+        self.assertEqual(voice_turn_server.NO_TRANSCRIPT_DEGRADED_RESPONSE, result["assistantText"])
+        self.assertEqual("", result["transcript"])
 
     def test_xander_provider_failure_is_session_framed(self):
         os.environ["OTOXAN_VOICE_PROVIDER"] = "xander-session"
@@ -871,7 +871,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("mobile-fast", result["provider"])
         self.assertEqual("real-speech-proven", result["pass1Status"])
         self.assertTrue(result["pass1Ready"])
-        self.assertEqual("Say that again.", result["assistantText"])
+        self.assertEqual(voice_turn_server.MODEL_DEGRADED_RESPONSE, result["assistantText"])
         self.assertNotIn("provider", result["assistantText"].lower())
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
         self.assertEqual(0, result["timing"]["xanderFastTimedOut"])
@@ -914,7 +914,7 @@ class VoiceTurnServerTest(unittest.TestCase):
 
         fallback.assert_not_called()
         self.assertTrue(result["ok"])
-        self.assertEqual("Say that again.", result["assistantText"])
+        self.assertEqual(voice_turn_server.MODEL_DEGRADED_RESPONSE, result["assistantText"])
         self.assertEqual(0, result["xanderFastStatus"])
         self.assertEqual(1, result["xanderFastTimedOut"])
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
@@ -936,7 +936,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("mobile-fast", result["provider"])
         self.assertEqual("real-speech-proven", result["pass1Status"])
         self.assertTrue(result["pass1Ready"])
-        self.assertEqual("Say that again.", result["assistantText"])
+        self.assertEqual(voice_turn_server.MODEL_DEGRADED_RESPONSE, result["assistantText"])
         self.assertNotIn("Fast lane", result["assistantText"])
         self.assertNotIn("provider", result["assistantText"].lower())
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
@@ -962,7 +962,7 @@ class VoiceTurnServerTest(unittest.TestCase):
                     result = voice_turn_server.handle_voice_turn(payload)
 
         self.assertTrue(result["ok"])
-        self.assertEqual("Say that again.", result["assistantText"])
+        self.assertEqual(voice_turn_server.MODEL_DEGRADED_RESPONSE, result["assistantText"])
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
         self.assertEqual(0, result["timing"]["xanderFallbackSessionStatus"])
         self.assertEqual(1, result["timing"]["xanderFallbackTimedOut"])

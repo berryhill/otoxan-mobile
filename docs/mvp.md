@@ -61,8 +61,8 @@ Response:
 {
   "ok": true,
   "provider": "xander-session",
-  "transcript": "Voice audio received from Ray-Ban Meta (TYPE_BLE_HEADSET); 320 bytes of PCM reached the Xander session adapter.",
-  "assistantText": "Xander here; Ray-Ban route is active, and I’m hearing you through Otoxan Mobile.",
+  "transcript": "actual decoded wearer speech, or empty when STT returns no words",
+  "assistantText": "short Xander response, or an honest degraded prompt when STT/model lanes degrade",
   "ttsPcm16Mono16kBase64": "",
   "audioFormat": "pcm_s16le_16khz_mono",
   "bytesReceived": 320
