@@ -89,7 +89,7 @@ No fresh physical phone + Ray-Ban Meta run was executed in this dispatch. The cu
 
 ## Remediation
 
-Decision: proceed to the Sprint 3 physical gate with this APK/backend as the candidate, but keep hardware status at `requires fresh phone + Ray-Ban run` until a real route turn is recorded.
+Decision: proceed to the Sprint 3 physical gate with this APK/backend as the candidate, but keep hardware status at `requires fresh phone + Ray-Ban run` until a real route turn is recorded. Sprint 3 execution scope is locked in `docs/sprint3-gate-scope.md`: harden the explicit-session audio loop, preserve the `/voice-turn` edge, measure latency separately, and defer DAT/camera, always-on capture, AR UI, and broad backend reorganization unless explicitly re-approved.
 
 Gate operator checklist:
 
