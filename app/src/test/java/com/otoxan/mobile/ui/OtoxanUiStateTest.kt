@@ -60,4 +60,43 @@ class OtoxanUiStateTest {
         assertEquals(LatencyCardMetric("Ack gap", "unknown", "target 250ms · none"), metrics[1])
         assertEquals(LatencyCardMetric("TTFA", "unknown", "target 1500ms · first audio unknown"), metrics[2])
     }
+
+    @Test
+    fun captureSplitMetrics_separateCaptureFromEndpointWait() {
+        val state = OtoxanUiState(
+            routeSelectMs = 80,
+            captureReadMs = 1230,
+            captureExpectedMs = 1500,
+            postCaptureAckDelayMs = 45,
+            endpointDispatchMs = 1320,
+            endpointResponseReadyMs = 2800,
+            backendRoundTripMs = 1480
+        )
+
+        val metrics = state.captureSplitMetrics
+
+        assertEquals(4, metrics.size)
+        assertEquals(CaptureSplitMetric("Route select", "80ms", "communication route setup before capture"), metrics[0])
+        assertEquals(CaptureSplitMetric("Capture read", "1230ms", "actual mic read · target 1500ms"), metrics[1])
+        assertEquals(CaptureSplitMetric("Post-capture ack", "45ms", "capture end to local feedback · target 250ms"), metrics[2])
+        assertEquals(CaptureSplitMetric("Endpoint wait", "1480ms", "dispatch 1320ms → response 2800ms"), metrics[3])
+    }
+
+    @Test
+    fun endpointEvidenceText_showsEndpointHttpAndPayloadEvidence() {
+        val evidence = OtoxanUiState(
+            voiceEndpoint = "https://voice.example/voice-turn",
+            httpStatusCode = 200,
+            endpointDispatchMs = 1320,
+            endpointResponseReadyMs = 2800,
+            backendRoundTripMs = 1480,
+            requestBytes = 44000,
+            responseBytes = 900
+        ).endpointEvidenceText
+
+        assertEquals(
+            "endpoint=https://voice.example/voice-turn; http=200; dispatch=1320ms; responseReady=2800ms; clientRoundTrip=1480ms; request=44000 bytes; response=900 bytes",
+            evidence
+        )
+    }
 }

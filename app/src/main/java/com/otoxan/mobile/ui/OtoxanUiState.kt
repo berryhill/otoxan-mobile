@@ -28,6 +28,12 @@ data class LatencyCardMetric(
     val detail: String
 )
 
+data class CaptureSplitMetric(
+    val label: String,
+    val value: String,
+    val detail: String
+)
+
 data class OtoxanUiState(
     val voiceEndpoint: String = "",
     val permissionState: PermissionState = PermissionState.Unknown,
@@ -76,6 +82,8 @@ data class OtoxanUiState(
     val routeReleaseMs: Long? = null,
     val playbackTotalMs: Long? = null,
     val playbackKind: String = "unknown",
+    val endpointDispatchMs: Long? = null,
+    val endpointResponseReadyMs: Long? = null,
     val localAckKind: String = "none",
     val localAckStartMs: Long? = null,
     val localAckTotalMs: Long? = null,
@@ -122,6 +130,40 @@ val OtoxanUiState.latencyCardMetrics: List<LatencyCardMetric>
             detail = "target ${VOICE_TURN_TTFA_TARGET_MS}ms · $firstAudioLatencyDetail"
         )
     )
+
+val OtoxanUiState.captureSplitMetrics: List<CaptureSplitMetric>
+    get() = listOf(
+        CaptureSplitMetric(
+            label = "Route select",
+            value = routeSelectMs.toLatencyMsText(),
+            detail = "communication route setup before capture"
+        ),
+        CaptureSplitMetric(
+            label = "Capture read",
+            value = captureReadMs.toLatencyMsText(),
+            detail = "actual mic read · target ${captureExpectedMs.toLatencyMsText()}"
+        ),
+        CaptureSplitMetric(
+            label = "Post-capture ack",
+            value = postCaptureAckDelayMs.toLatencyMsText(),
+            detail = "capture end to local feedback · target ${VOICE_TURN_ACK_GAP_TARGET_MS}ms"
+        ),
+        CaptureSplitMetric(
+            label = "Endpoint wait",
+            value = endpointWaitMs.toLatencyMsText(),
+            detail = "dispatch ${endpointDispatchMs.toLatencyMsText()} → response ${endpointResponseReadyMs.toLatencyMsText()}"
+        )
+    )
+
+val OtoxanUiState.endpointEvidenceText: String
+    get() = "endpoint=${voiceEndpoint.ifBlank { "unknown" }}; http=${httpStatusCode?.toString() ?: "unknown"}; dispatch=${endpointDispatchMs.toLatencyMsText()}; responseReady=${endpointResponseReadyMs.toLatencyMsText()}; clientRoundTrip=${backendRoundTripMs.toLatencyMsText()}; request=${requestBytes?.toString() ?: "unknown"} bytes; response=${responseBytes?.toString() ?: "unknown"} bytes"
+
+private val OtoxanUiState.endpointWaitMs: Long?
+    get() = if (endpointDispatchMs != null && endpointResponseReadyMs != null) {
+        (endpointResponseReadyMs - endpointDispatchMs).coerceAtLeast(0L)
+    } else {
+        backendRoundTripMs
+    }
 
 private val OtoxanUiState.firstAudioLatencyDetail: String
     get() = when {

@@ -329,6 +329,11 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
             TelemetryBar("STT", state.sttLatencyMs?.toLong(), targetMs = 1_500L)
             TelemetryBar("Xander", state.xanderSessionMs?.toLong(), targetMs = 2_500L)
             TelemetryBar("Playback", state.playbackTotalMs, targetMs = 1_500L)
+            Text("Capture split + endpoint evidence", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            state.captureSplitMetrics.forEach { metric ->
+                CaptureSplitRow(metric)
+            }
+            Text(state.endpointEvidenceText, style = MaterialTheme.typography.bodySmall)
             Text(
                 "Route=${state.selectedInputName}; pass1=${state.pass1Status ?: "unknown"}; capture=${state.capturedBytes}/${state.expectedCaptureBytes} bytes; peak=${state.capturePeakAmplitude}; source=${state.transcriptSource ?: "unknown"}; replyChars=${state.assistantResponse.length}",
                 style = MaterialTheme.typography.bodySmall
@@ -379,6 +384,17 @@ private fun TelemetryBar(label: String, valueMs: Long?, targetMs: Long) {
                     .background(color, RoundedCornerShape(20.dp))
             )
         }
+    }
+}
+
+@Composable
+private fun CaptureSplitRow(metric: CaptureSplitMetric) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(metric.label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+            Text(metric.detail, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(metric.value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
     }
 }
 

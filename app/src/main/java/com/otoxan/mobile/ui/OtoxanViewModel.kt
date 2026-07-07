@@ -555,6 +555,8 @@ class OtoxanViewModel(
                 routeReleaseMs = proof.routeReleaseMs,
                 playbackTotalMs = proof.playbackTotalMs,
                 playbackKind = proof.playbackKind,
+                endpointDispatchMs = proof.endpointDispatchMs,
+                endpointResponseReadyMs = proof.endpointResponseReadyMs,
                 localAckKind = proof.localAckKind,
                 localAckStartMs = proof.localAckStartMs,
                 localAckTotalMs = proof.localAckTotalMs,
