@@ -8,6 +8,12 @@ val defaultXanderVoiceEndpoint = "http://100.126.0.110:8787/voice-turn"
 val defaultXanderVoiceConnectTimeoutMillis = 10_000
 val defaultXanderVoiceReadTimeoutMillis = 60_000
 val defaultXanderVoiceMetricsTimeoutMillis = 5_000
+val defaultConversationCaptureTuningEvidenceGate = false
+val defaultConversationCaptureMaxMillis = 12_000
+val defaultConversationCaptureMinMillis = 700
+val defaultConversationCaptureSilenceAfterSpeechMillis = 450
+val defaultConversationCaptureSpeechPeakAmplitude = 900
+val defaultConversationCaptureChunkMillis = 100
 
 val xanderVoiceEndpoint: String = providers.gradleProperty("XANDER_VOICE_ENDPOINT")
     .orElse(providers.environmentVariable("XANDER_VOICE_ENDPOINT"))
@@ -19,6 +25,18 @@ fun endpointPolicyInt(name: String, defaultValue: Int): Int = providers.gradlePr
     .map { value -> value.toInt() }
     .orElse(defaultValue)
     .get()
+
+fun policyBoolean(name: String, defaultValue: Boolean): Boolean = providers.gradleProperty(name)
+    .orElse(providers.environmentVariable(name))
+    .map { value -> value.toBooleanStrict() }
+    .orElse(defaultValue)
+    .get()
+
+fun boundedPolicyInt(name: String, defaultValue: Int, range: IntRange): Int {
+    val value = endpointPolicyInt(name, defaultValue)
+    require(value in range) { "$name must be in ${range.first}..${range.last}; got $value" }
+    return value
+}
 
 val xanderVoiceConnectTimeoutMillis = endpointPolicyInt(
     "XANDER_VOICE_CONNECT_TIMEOUT_MILLIS",
@@ -32,6 +50,38 @@ val xanderVoiceMetricsTimeoutMillis = endpointPolicyInt(
     "XANDER_VOICE_METRICS_TIMEOUT_MILLIS",
     defaultXanderVoiceMetricsTimeoutMillis
 )
+val conversationCaptureTuningEvidenceGate = policyBoolean(
+    "OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE",
+    defaultConversationCaptureTuningEvidenceGate
+)
+val conversationCaptureMaxMillis = boundedPolicyInt(
+    "OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS",
+    defaultConversationCaptureMaxMillis,
+    5_000..20_000
+)
+val conversationCaptureMinMillis = boundedPolicyInt(
+    "OTOXAN_CONVERSATION_CAPTURE_MIN_MILLIS",
+    defaultConversationCaptureMinMillis,
+    300..2_000
+)
+val conversationCaptureSilenceAfterSpeechMillis = boundedPolicyInt(
+    "OTOXAN_CONVERSATION_CAPTURE_SILENCE_AFTER_SPEECH_MILLIS",
+    defaultConversationCaptureSilenceAfterSpeechMillis,
+    250..2_000
+)
+val conversationCaptureSpeechPeakAmplitude = boundedPolicyInt(
+    "OTOXAN_CONVERSATION_CAPTURE_SPEECH_PEAK_AMPLITUDE",
+    defaultConversationCaptureSpeechPeakAmplitude,
+    256..5_000
+)
+val conversationCaptureChunkMillis = boundedPolicyInt(
+    "OTOXAN_CONVERSATION_CAPTURE_CHUNK_MILLIS",
+    defaultConversationCaptureChunkMillis,
+    50..200
+)
+require(conversationCaptureMaxMillis >= conversationCaptureMinMillis) {
+    "OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS must be >= OTOXAN_CONVERSATION_CAPTURE_MIN_MILLIS"
+}
 
 android {
     namespace = "com.otoxan.mobile"
@@ -47,6 +97,12 @@ android {
         buildConfigField("int", "XANDER_VOICE_CONNECT_TIMEOUT_MILLIS", xanderVoiceConnectTimeoutMillis.toString())
         buildConfigField("int", "XANDER_VOICE_READ_TIMEOUT_MILLIS", xanderVoiceReadTimeoutMillis.toString())
         buildConfigField("int", "XANDER_VOICE_METRICS_TIMEOUT_MILLIS", xanderVoiceMetricsTimeoutMillis.toString())
+        buildConfigField("boolean", "OTOXAN_CONVERSATION_CAPTURE_TUNING_EVIDENCE_GATE", conversationCaptureTuningEvidenceGate.toString())
+        buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_MAX_MILLIS", conversationCaptureMaxMillis.toString())
+        buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_MIN_MILLIS", conversationCaptureMinMillis.toString())
+        buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_SILENCE_AFTER_SPEECH_MILLIS", conversationCaptureSilenceAfterSpeechMillis.toString())
+        buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_SPEECH_PEAK_AMPLITUDE", conversationCaptureSpeechPeakAmplitude.toString())
+        buildConfigField("int", "OTOXAN_CONVERSATION_CAPTURE_CHUNK_MILLIS", conversationCaptureChunkMillis.toString())
     }
 
     compileOptions {

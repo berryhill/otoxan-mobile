@@ -70,6 +70,46 @@ class PcmCaptureStatsTest {
     }
 
     @Test
+    fun conversationVoiceCaptureConfig_ignoresTuningUntilEvidenceGateIsEnabled() {
+        val config = conversationVoiceCaptureConfig(
+            ConversationCaptureTuning(
+                evidenceGateEnabled = false,
+                maxMillis = 20_000,
+                minMillis = 1_500,
+                silenceAfterSpeechMillis = 1_200,
+                speechPeakAmplitude = 2_500,
+                chunkMillis = 200
+            )
+        )
+
+        assertEquals(12_000, config.maxMillis)
+        assertEquals(700, config.minMillis)
+        assertEquals(450, config.silenceAfterSpeechMillis)
+        assertEquals(900, config.speechPeakAmplitude)
+        assertEquals(100, config.chunkMillis)
+    }
+
+    @Test
+    fun conversationVoiceCaptureConfig_appliesBoundedTuningBehindEvidenceGate() {
+        val config = conversationVoiceCaptureConfig(
+            ConversationCaptureTuning(
+                evidenceGateEnabled = true,
+                maxMillis = 15_000,
+                minMillis = 900,
+                silenceAfterSpeechMillis = 650,
+                speechPeakAmplitude = 1_100,
+                chunkMillis = 50
+            )
+        )
+
+        assertEquals(15_000, config.maxMillis)
+        assertEquals(900, config.minMillis)
+        assertEquals(650, config.silenceAfterSpeechMillis)
+        assertEquals(1_100, config.speechPeakAmplitude)
+        assertEquals(50, config.chunkMillis)
+    }
+
+    @Test
     fun pcmMillisConversion_usesMono16kPcmContract() {
         assertEquals(160_000, expectedPcmBytes(5_000))
         assertEquals(1_200, pcmBytesToMillis(expectedPcmBytes(1_200)))
