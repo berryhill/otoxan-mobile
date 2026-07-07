@@ -255,6 +255,8 @@ private fun VoiceLoopEvidenceCard(state: OtoxanUiState) {
             Text("Provider: ${state.provider ?: "not contacted"}")
             Text("Transcript source: ${state.transcriptSource ?: "unknown"}")
             Text("STT: ${state.sttProvider ?: "unknown"} / ${state.sttStatus ?: "unknown"}${state.sttLatencyMs?.let { " in ${it}ms" } ?: ""}")
+            Text("STT provider fallback: ${state.sttProviderFallbackSummary.statusText}")
+            Text("STT evidence class: ${state.sttProviderFallbackSummary.evidenceClass}", style = MaterialTheme.typography.bodySmall)
             Text("Captured: ${state.capturedBytes}/${state.expectedCaptureBytes} bytes")
             Text("Capture usable: ${state.captureUsable?.toString() ?: "unknown"}; peak=${state.capturePeakAmplitude}")
             Text("Backend received: ${state.backendBytesReceived?.toString() ?: "unknown"} bytes")
@@ -343,6 +345,7 @@ private fun TelemetryDashboardCard(state: OtoxanUiState) {
             Text("Stream telemetry (diagnostic only — not hardware proof): ${state.streamTelemetrySummary.statusText}; ${state.streamTelemetrySummary.protocolText}", style = MaterialTheme.typography.bodySmall)
             Text("Stream events: ${state.streamTelemetrySummary.eventsText}", style = MaterialTheme.typography.bodySmall)
             Text("Stream transcript state: ${state.streamTelemetrySummary.transcriptStateText}", style = MaterialTheme.typography.bodySmall)
+            Text("STT provider/fallback (${state.sttProviderFallbackSummary.evidenceClass}): ${state.sttProviderFallbackSummary.statusText}", style = MaterialTheme.typography.bodySmall)
             Text(
                 "Route=${state.selectedInputName}; pass1=${state.pass1Status ?: "unknown"}; capture=${state.capturedBytes}/${state.expectedCaptureBytes} bytes; peak=${state.capturePeakAmplitude}; source=${state.transcriptSource ?: "unknown"}; replyChars=${state.assistantResponse.length}",
                 style = MaterialTheme.typography.bodySmall

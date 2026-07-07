@@ -96,6 +96,18 @@ data class StreamTelemetrySummary(
     val transcriptStateText: String = "partial=${partialTranscriptCount?.toString() ?: "unknown"} latestChars=${latestPartialTranscriptLength?.toString() ?: "unknown"}; final=${finalTranscriptObserved?.toString() ?: "unknown"} finalChars=${finalTranscriptLength?.toString() ?: "unknown"}"
 }
 
+data class SttProviderFallbackSummary(
+    val selectedProvider: String,
+    val selectedStatus: String,
+    val selectedLatencyText: String,
+    val primaryText: String,
+    val fallbackText: String,
+    val budgetText: String,
+    val evidenceClass: String = "backend STT diagnostic only — not hardware proof"
+) {
+    val statusText: String = "selected=$selectedProvider/$selectedStatus in $selectedLatencyText; primary=$primaryText; fallback=$fallbackText; budget=$budgetText"
+}
+
 data class OtoxanUiState(
     val voiceEndpoint: String = "",
     val permissionState: PermissionState = PermissionState.Unknown,
@@ -116,6 +128,13 @@ data class OtoxanUiState(
     val sttProvider: String? = null,
     val sttStatus: String? = null,
     val sttLatencyMs: Int? = null,
+    val primarySttStatus: String? = null,
+    val primarySttMs: Int? = null,
+    val primarySttProvider: String? = null,
+    val fallbackSttStatus: String? = null,
+    val fallbackSttMs: Int? = null,
+    val fallbackSttProvider: String? = null,
+    val sttBudgetRemainingMs: Int? = null,
     val pass1Status: String? = null,
     val pass1Ready: Boolean? = null,
     val audioFormat: String? = null,
@@ -268,6 +287,16 @@ val OtoxanUiState.streamTelemetrySummary: StreamTelemetrySummary
         finalTranscriptLength = streamFinalTranscriptLength
     )
 
+val OtoxanUiState.sttProviderFallbackSummary: SttProviderFallbackSummary
+    get() = SttProviderFallbackSummary(
+        selectedProvider = sttProvider ?: "unknown",
+        selectedStatus = sttStatus ?: "unknown",
+        selectedLatencyText = sttLatencyMs.toNullableMsText(),
+        primaryText = sttAttemptText(primarySttProvider, primarySttStatus, primarySttMs),
+        fallbackText = sttAttemptText(fallbackSttProvider, fallbackSttStatus, fallbackSttMs),
+        budgetText = sttBudgetRemainingMs?.let { "${it}ms remaining" } ?: "unknown"
+    )
+
 val OtoxanUiState.phoneTelemetryEvidenceClasses: List<PhoneTelemetryEvidenceClass>
     get() = listOf(
         hardwareGateEvidenceClass,
@@ -350,6 +379,15 @@ private val OtoxanUiState.firstAudioLatencyDetail: String
     }
 
 private fun Long?.toLatencyMsText(): String = this?.let { "${it}ms" } ?: "unknown"
+
+private fun Int?.toNullableMsText(): String = this?.let { "${it}ms" } ?: "unknown"
+
+private fun sttAttemptText(provider: String?, status: String?, ms: Int?): String {
+    val providerText = provider ?: "unknown"
+    val statusText = status ?: "unknown"
+    val latencyText = ms.toNullableMsText()
+    return "$providerText/$statusText in $latencyText"
+}
 
 private fun timingAcceptanceSummaryOf(
     totalMs: Long?,

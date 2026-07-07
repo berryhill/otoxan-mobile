@@ -208,6 +208,36 @@ class OtoxanUiStateTest {
     }
 
     @Test
+    fun sttProviderFallbackSummary_surfacesSelectedPrimaryFallbackAndBudgetAsDiagnosticOnly() {
+        val state = OtoxanUiState(
+            sttProvider = "moonshine-local",
+            sttStatus = "success",
+            sttLatencyMs = 820,
+            primarySttProvider = "moonshine-local",
+            primarySttStatus = "timeout",
+            primarySttMs = 1501,
+            fallbackSttProvider = "whisper-api",
+            fallbackSttStatus = "success",
+            fallbackSttMs = 640,
+            sttBudgetRemainingMs = 220,
+            pass1Ready = false,
+            pass1Status = "proof-mode-not-real-speech"
+        )
+
+        val summary = state.sttProviderFallbackSummary
+
+        assertEquals("moonshine-local", summary.selectedProvider)
+        assertEquals("success", summary.selectedStatus)
+        assertEquals("820ms", summary.selectedLatencyText)
+        assertEquals("moonshine-local/timeout in 1501ms", summary.primaryText)
+        assertEquals("whisper-api/success in 640ms", summary.fallbackText)
+        assertEquals("220ms remaining", summary.budgetText)
+        assertEquals("backend STT diagnostic only — not hardware proof", summary.evidenceClass)
+        assertEquals("selected=moonshine-local/success in 820ms; primary=moonshine-local/timeout in 1501ms; fallback=whisper-api/success in 640ms; budget=220ms remaining", summary.statusText)
+        assertEquals(EvidenceClassState.NeedsEvidence, state.phoneTelemetryEvidenceClasses[0].state)
+    }
+
+    @Test
     fun phoneTelemetryEvidenceClasses_markRealHardwareAndLatencyPassWithoutMergingEvidenceClasses() {
         val classes = OtoxanUiState(
             pass1Ready = true,

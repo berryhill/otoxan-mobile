@@ -547,6 +547,13 @@ class OtoxanViewModel(
                 sttProvider = result.sttProvider,
                 sttStatus = result.sttStatus,
                 sttLatencyMs = result.sttLatencyMs,
+                primarySttStatus = result.primarySttStatus,
+                primarySttMs = result.primarySttMs,
+                primarySttProvider = result.primarySttProvider,
+                fallbackSttStatus = result.fallbackSttStatus,
+                fallbackSttMs = result.fallbackSttMs,
+                fallbackSttProvider = result.fallbackSttProvider,
+                sttBudgetRemainingMs = result.sttBudgetRemainingMs,
                 pass1Status = result.pass1Status,
                 pass1Ready = result.pass1Ready,
                 audioFormat = result.audioFormat,
@@ -612,7 +619,7 @@ class OtoxanViewModel(
                 lastEvidence = if (result.provider == "stub") {
                     "Stub mode: captured=${proof.capturedBytes} bytes locally; no backend endpoint is configured."
                 } else {
-                    "Voice loop ok: transport=${result.transportKind}; pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; streamEvents=${result.streamEventTypes.joinToString("|").ifBlank { "none" }} (diagnostic only, not hardware proof); tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
+                    "Voice loop ok: transport=${result.transportKind}; pass1=${result.pass1Status ?: "unknown"}; total=${proof.turnTotalMs}ms; backend=${proof.backendRoundTripMs}ms/server=${result.backendTotalMs ?: "unknown"}ms; captured=${proof.capturedBytes}/${proof.expectedCaptureBytes} bytes actual=${proof.captureReadMs}ms stop=${proof.captureStopReason} peak=${proof.capturePeakAmplitude}; backendReceived=${result.bytesReceived ?: "unknown"}; provider=${result.provider ?: "unknown"}; transcriptSource=${result.transcriptSource ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; primaryStt=${result.primarySttProvider ?: "unknown"}/${result.primarySttStatus ?: "unknown"}/${result.primarySttMs ?: "unknown"}ms; fallbackStt=${result.fallbackSttProvider ?: "unknown"}/${result.fallbackSttStatus ?: "unknown"}/${result.fallbackSttMs ?: "unknown"}ms; sttBudgetRemaining=${result.sttBudgetRemainingMs ?: "unknown"}ms (backend STT diagnostic only, not hardware proof); streamEvents=${result.streamEventTypes.joinToString("|").ifBlank { "none" }} (diagnostic only, not hardware proof); tts=$ttsBytes bytes; routeUsed=[${proof.routeEvidence.message}]; release=[${proof.releaseEvidence.message}]"
                 }
             )
         }
@@ -878,7 +885,7 @@ class OtoxanViewModel(
                     pcm,
                     RouteEvidence.default("Backend self-test: no wearable route selected")
                 )
-                "OK provider=${result.provider ?: "unknown"}; backendReceived=${result.bytesReceived ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; pass1=${result.pass1Status ?: "unknown"}; endpoint=${BuildConfig.XANDER_VOICE_ENDPOINT.ifBlank { "stub" }}"
+                "OK provider=${result.provider ?: "unknown"}; backendReceived=${result.bytesReceived ?: "unknown"}; stt=${result.sttProvider ?: "unknown"}/${result.sttStatus ?: "unknown"}; primaryStt=${result.primarySttProvider ?: "unknown"}/${result.primarySttStatus ?: "unknown"}/${result.primarySttMs ?: "unknown"}ms; fallbackStt=${result.fallbackSttProvider ?: "unknown"}/${result.fallbackSttStatus ?: "unknown"}/${result.fallbackSttMs ?: "unknown"}ms; sttBudgetRemaining=${result.sttBudgetRemainingMs ?: "unknown"}ms; pass1=${result.pass1Status ?: "unknown"}; endpoint=${BuildConfig.XANDER_VOICE_ENDPOINT.ifBlank { "stub" }}; backend STT diagnostic only, not hardware proof"
             }.onSuccess { status ->
                 _uiState.update {
                     it.copy(
