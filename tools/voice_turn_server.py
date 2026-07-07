@@ -864,6 +864,8 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "mobileFastModel": timing.get("mobileFastModel"),
         "mobileFastTimeoutSeconds": timing.get("mobileFastTimeoutSeconds"),
         "mobileFastHardTimeoutSeconds": timing.get("mobileFastHardTimeoutSeconds"),
+        "mobileFastSessionFallbackEnabled": timing.get("mobileFastSessionFallbackEnabled"),
+        "mobileFastSessionFallbackHardTimeoutSeconds": timing.get("mobileFastSessionFallbackHardTimeoutSeconds"),
         "mobileFastFailureReason": timing.get("mobileFastFailureReason"),
         "xanderFallbackSessionStatus": timing.get("xanderFallbackSessionStatus"),
         "xanderFallbackSkipped": timing.get("xanderFallbackSkipped"),
@@ -1667,12 +1669,7 @@ def _ask_xander_mobile_fast_with_deadline(transcript: str, route: RouteSummary) 
 
 
 def _ask_xander_session_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool, str | None]:
-    hard_timeout = _bounded_seconds(
-        "OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS",
-        2.5,
-        0.5,
-        15.0,
-    )
+    hard_timeout = _mobile_fast_session_fallback_timeout_seconds()
     result_queue: queue.Queue[tuple[str, str, str | None]] = queue.Queue(maxsize=1)
 
     def worker() -> None:
@@ -1700,8 +1697,17 @@ def _safe_failure_reason(exc: BaseException) -> str:
 
 
 def _mobile_fast_session_fallback_enabled() -> bool:
-    raw = os.environ.get("OTOXAN_MOBILE_FAST_SESSION_FALLBACK", "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    raw = os.environ.get("OTOXAN_MOBILE_FAST_SESSION_FALLBACK", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off", "disabled"}
+
+
+def _mobile_fast_session_fallback_timeout_seconds() -> float:
+    return _bounded_seconds(
+        "OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS",
+        2.5,
+        0.5,
+        15.0,
+    )
 
 
 def _mobile_fast_provider_name() -> str:
@@ -1735,6 +1741,8 @@ def _mobile_fast_runtime_descriptor() -> dict[str, Any]:
         "mobileFastModel": _mobile_fast_model_name(provider_name=provider_name),
         "mobileFastTimeoutSeconds": _mobile_fast_request_timeout_seconds(),
         "mobileFastHardTimeoutSeconds": _mobile_fast_hard_timeout_seconds(),
+        "mobileFastSessionFallbackEnabled": _mobile_fast_session_fallback_enabled(),
+        "mobileFastSessionFallbackHardTimeoutSeconds": _mobile_fast_session_fallback_timeout_seconds(),
     }
 
 
@@ -1772,7 +1780,11 @@ def mobile_fast_runtime_contract() -> dict[str, Any]:
         "callGate": "only_after_stt_success_or_debug_transcript_not_route_evidence_fallback",
         "fallbackPolicy": {
             "sessionFallbackEnv": "OTOXAN_MOBILE_FAST_SESSION_FALLBACK",
-            "defaultSessionFallbackEnabled": False,
+            "defaultSessionFallbackEnabled": True,
+            "sessionFallbackHardTimeoutEnv": "OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS",
+            "defaultSessionFallbackHardTimeoutSeconds": 2.5,
+            "sessionFallbackDisableValues": ["0", "false", "no", "off", "disabled"],
+            "recoveryOrder": ["mobile-fast", "bounded-xander-session", "degraded-spoken-response"],
             "providerFailureSpokenResponse": MODEL_DEGRADED_RESPONSE,
             "emptySttSpokenResponse": NO_TRANSCRIPT_DEGRADED_RESPONSE,
         },
@@ -1782,6 +1794,8 @@ def mobile_fast_runtime_contract() -> dict[str, Any]:
             "mobileFastModel",
             "mobileFastTimeoutSeconds",
             "mobileFastHardTimeoutSeconds",
+            "mobileFastSessionFallbackEnabled",
+            "mobileFastSessionFallbackHardTimeoutSeconds",
             "xanderFastMs",
             "xanderFastStatus",
             "xanderFastTimedOut",
