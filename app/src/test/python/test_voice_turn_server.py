@@ -119,8 +119,6 @@ class VoiceTurnServerTest(unittest.TestCase):
             packet = {
                 "type": "otoxan_mobile_voice_turn_metrics",
                 "schemaVersion": 1,
-                "transcript": "private top transcript",
-                "assistantText": "private top response",
                 "turn": {"turnId": "turn-private", "success": False, "stage": "failure"},
                 "debug": {
                     "nested": [
@@ -134,6 +132,10 @@ class VoiceTurnServerTest(unittest.TestCase):
                     ]
                 },
                 "transport": {"events": [{"ttsPcm16Mono16kBase64": "CCCC", "assistantTextLength": 44}]},
+                "backend": {
+                    "mobileFastFailureReason": "minimax-m3-chat-completions-parser returned no spoken content",
+                    "xanderFallbackFailureReason": "deadline-timeout-after-0.5s",
+                },
                 "perceivedLatency": {"ttfaMs": 1400, "breakdown": {"postCaptureDispatchMs": 80}},
                 "totals": {"turnTotalMs": 7000},
             }
@@ -152,6 +154,11 @@ class VoiceTurnServerTest(unittest.TestCase):
             self.assertIn("transcriptLength", serialized)
             self.assertIn("assistantTextLength", serialized)
             self.assertEqual(80, recent["records"][0]["payload"]["perceivedLatency"]["postCaptureAckDelayMs"])
+            self.assertEqual(
+                "minimax-m3-chat-completions-parser returned no spoken content",
+                recent["records"][0]["payload"]["backend"]["mobileFastFailureReason"],
+            )
+            self.assertEqual("deadline-timeout-after-0.5s", recent["records"][0]["summary"]["xanderFallbackFailureReason"])
             self.assertEqual("turn-private", recent["historySummary"]["latestTurnId"])
             self.assertEqual(1, recent["historySummary"]["failureCount"])
         finally:
@@ -933,6 +940,9 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertNotIn("provider", result["assistantText"].lower())
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
         self.assertEqual(0, result["timing"]["xanderFastTimedOut"])
+        self.assertIn("provider exploded", result["timing"]["mobileFastFailureReason"])
+        self.assertEqual(result["timing"]["mobileFastFailureReason"], result["mobileFastFailureReason"])
+        self.assertEqual(result["timing"]["mobileFastFailureReason"], result["turnOutcome"]["failureReason"])
         self.assertEqual(0, result["timing"]["xanderFallbackSessionStatus"])
         self.assertEqual(1, result["timing"]["xanderFallbackSkipped"])
         self.assertIsInstance(result["xanderSessionMs"], int)
@@ -951,6 +961,7 @@ class VoiceTurnServerTest(unittest.TestCase):
         fallback.assert_called_once()
         self.assertEqual("Fallback session answered clearly.", result["assistantText"])
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
+        self.assertIn("provider exploded", result["timing"]["mobileFastFailureReason"])
         self.assertEqual(1, result["timing"]["xanderFallbackSessionStatus"])
         self.assertNotIn("xanderFallbackSkipped", result["timing"])
 
@@ -977,12 +988,14 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(1, result["xanderFastTimedOut"])
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
         self.assertEqual(1, result["timing"]["xanderFastTimedOut"])
+        self.assertEqual("deadline-timeout-after-0.5s", result["mobileFastFailureReason"])
         self.assertEqual(1, result["timing"]["xanderFallbackSkipped"])
         self.assertLess(result["xanderSessionMs"], 1200)
 
     def test_mobile_fast_provider_returns_non_internal_degraded_response_if_all_model_lanes_fail(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
+        os.environ["OTOXAN_MOBILE_FAST_SESSION_FALLBACK"] = "1"
         payload = self._payload()
         stt = voice_turn_server.SttResult("real words decoded", "success", 33)
         with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
@@ -998,7 +1011,9 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertNotIn("Fast lane", result["assistantText"])
         self.assertNotIn("provider", result["assistantText"].lower())
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
+        self.assertIn("provider exploded", result["timing"]["mobileFastFailureReason"])
         self.assertEqual(0, result["timing"]["xanderFallbackSessionStatus"])
+        self.assertIn("fallback exploded", result["timing"]["xanderFallbackFailureReason"])
         self.assertIsInstance(result["xanderSessionMs"], int)
 
 
@@ -1022,8 +1037,10 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(voice_turn_server.MODEL_DEGRADED_RESPONSE, result["assistantText"])
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
+        self.assertIn("provider exploded", result["timing"]["mobileFastFailureReason"])
         self.assertEqual(0, result["timing"]["xanderFallbackSessionStatus"])
         self.assertEqual(1, result["timing"]["xanderFallbackTimedOut"])
+        self.assertEqual("deadline-timeout-after-0.5s", result["timing"]["xanderFallbackFailureReason"])
         self.assertLess(result["xanderFastMs"], 1200)
 
     def test_latest_metrics_skips_corrupt_jsonl_lines(self):

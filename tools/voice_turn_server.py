@@ -864,9 +864,11 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "mobileFastModel": timing.get("mobileFastModel"),
         "mobileFastTimeoutSeconds": timing.get("mobileFastTimeoutSeconds"),
         "mobileFastHardTimeoutSeconds": timing.get("mobileFastHardTimeoutSeconds"),
+        "mobileFastFailureReason": timing.get("mobileFastFailureReason"),
         "xanderFallbackSessionStatus": timing.get("xanderFallbackSessionStatus"),
         "xanderFallbackSkipped": timing.get("xanderFallbackSkipped"),
         "xanderFallbackTimedOut": timing.get("xanderFallbackTimedOut"),
+        "xanderFallbackFailureReason": timing.get("xanderFallbackFailureReason"),
         "ttsProvider": timing.get("ttsProvider"),
         "ttsStatus": timing.get("ttsStatus"),
         "ttsLatencyMs": timing.get("ttsLatencyMs"),
@@ -901,7 +903,7 @@ def _turn_outcome(turn: AssistantTurn, stats: Mapping[str, Any]) -> dict[str, An
     else:
         status = "degraded"
         assistant_source = "degraded-response"
-    return {
+    outcome = {
         "status": status,
         "assistantResponseSource": assistant_source,
         "degraded": status.startswith("degraded"),
@@ -913,6 +915,10 @@ def _turn_outcome(turn: AssistantTurn, stats: Mapping[str, Any]) -> dict[str, An
         "capturePeak": stats.get("peak"),
         "evidenceClass": "backend_turn_outcome_not_hardware_proof",
     }
+    failure_reason = _first_present(timing.get("mobileFastFailureReason"), timing.get("xanderFallbackFailureReason"))
+    if failure_reason and outcome["degraded"]:
+        outcome["failureReason"] = failure_reason
+    return outcome
 
 
 def handle_voice_stream(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -1116,15 +1122,19 @@ def _xander_mobile_fast_turn(pcm: bytes, route: RouteSummary) -> AssistantTurn:
             timing=timing,
         )
     fast_started = time.monotonic()
-    assistant_text, fast_status, fast_timed_out = _ask_xander_mobile_fast_with_deadline(transcript.transcript, route)
+    assistant_text, fast_status, fast_timed_out, fast_failure_reason = _ask_xander_mobile_fast_with_deadline(transcript.transcript, route)
     timing["xanderFastStatus"] = 1 if fast_status == "success" else 0
     timing["xanderFastTimedOut"] = 1 if fast_timed_out else 0
     timing["xanderFallbackSessionStatus"] = 0
+    if fast_failure_reason:
+        timing["mobileFastFailureReason"] = fast_failure_reason
     if fast_status != "success":
         if _mobile_fast_session_fallback_enabled():
-            assistant_text, fallback_status, fallback_timed_out = _ask_xander_session_with_deadline(transcript.transcript, route)
+            assistant_text, fallback_status, fallback_timed_out, fallback_failure_reason = _ask_xander_session_with_deadline(transcript.transcript, route)
             timing["xanderFallbackSessionStatus"] = 1 if fallback_status == "success" else 0
             timing["xanderFallbackTimedOut"] = 1 if fallback_timed_out else 0
+            if fallback_failure_reason:
+                timing["xanderFallbackFailureReason"] = fallback_failure_reason
             if fallback_status != "success":
                 assistant_text = _mobile_fast_degraded_spoken_response(transcript.transcript)
         else:
@@ -1636,48 +1646,57 @@ def _ask_xander_session(transcript: str, route: RouteSummary) -> str:
     return _shape_mobile_spoken_response(text)
 
 
-def _ask_xander_mobile_fast_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool]:
+def _ask_xander_mobile_fast_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool, str | None]:
     hard_timeout = _mobile_fast_hard_timeout_seconds()
 
-    result_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
+    result_queue: queue.Queue[tuple[str, str, str | None]] = queue.Queue(maxsize=1)
 
     def worker() -> None:
         try:
-            result_queue.put(("success", _ask_xander_mobile_fast(transcript, route)))
-        except Exception:
-            result_queue.put(("error", ""))
+            result_queue.put(("success", _ask_xander_mobile_fast(transcript, route), None))
+        except Exception as exc:
+            result_queue.put(("error", "", _safe_failure_reason(exc)))
 
     thread = threading.Thread(target=worker, name="otoxan-mobile-fast-provider", daemon=True)
     thread.start()
     try:
-        status, text = result_queue.get(timeout=hard_timeout)
+        status, text, failure_reason = result_queue.get(timeout=hard_timeout)
     except queue.Empty:
-        return "", "timeout", True
-    return text, status, False
+        return "", "timeout", True, f"deadline-timeout-after-{hard_timeout:g}s"
+    return text, status, False, failure_reason
 
 
-def _ask_xander_session_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool]:
+def _ask_xander_session_with_deadline(transcript: str, route: RouteSummary) -> tuple[str, str, bool, str | None]:
     hard_timeout = _bounded_seconds(
         "OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS",
         2.5,
         0.5,
         15.0,
     )
-    result_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
+    result_queue: queue.Queue[tuple[str, str, str | None]] = queue.Queue(maxsize=1)
 
     def worker() -> None:
         try:
-            result_queue.put(("success", _ask_xander_session(transcript, route)))
-        except Exception:
-            result_queue.put(("error", ""))
+            result_queue.put(("success", _ask_xander_session(transcript, route), None))
+        except Exception as exc:
+            result_queue.put(("error", "", _safe_failure_reason(exc)))
 
     thread = threading.Thread(target=worker, name="otoxan-session-fallback-provider", daemon=True)
     thread.start()
     try:
-        status, text = result_queue.get(timeout=hard_timeout)
+        status, text, failure_reason = result_queue.get(timeout=hard_timeout)
     except queue.Empty:
-        return "", "timeout", True
-    return text, status, False
+        return "", "timeout", True, f"deadline-timeout-after-{hard_timeout:g}s"
+    return text, status, False, failure_reason
+
+
+def _safe_failure_reason(exc: BaseException) -> str:
+    """Return bounded, secret-free failure evidence for backend response/metrics."""
+    reason = str(exc).replace("\x00", " ").strip() or exc.__class__.__name__
+    redacted_tokens = ("api_key", "authorization", "bearer ", "token", "secret", "password")
+    if any(token in reason.lower() for token in redacted_tokens):
+        return f"{exc.__class__.__name__}: redacted-sensitive-detail"
+    return reason[:240]
 
 
 def _mobile_fast_session_fallback_enabled() -> bool:
@@ -1766,8 +1785,10 @@ def mobile_fast_runtime_contract() -> dict[str, Any]:
             "xanderFastMs",
             "xanderFastStatus",
             "xanderFastTimedOut",
+            "mobileFastFailureReason",
             "xanderFallbackSessionStatus",
             "xanderFallbackSkipped",
+            "xanderFallbackFailureReason",
         ],
         "privacy": {
             "secretMaterialInTelemetry": False,
@@ -2266,10 +2287,12 @@ def _hardware_sweep_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "sttProvider": _nested_get(verdict, "sttProvider"),
         "sttStatus": _nested_get(verdict, "sttStatus"),
         "sttLatencyMs": _nested_get(backend, "sttLatencyMs"),
+        "mobileFastFailureReason": _nested_get(backend, "mobileFastFailureReason"),
         "xanderFastTimedOut": _nested_get(backend, "xanderFastTimedOut"),
         "xanderFallbackSessionStatus": _nested_get(backend, "xanderFallbackSessionStatus"),
         "xanderFallbackSkipped": _nested_get(backend, "xanderFallbackSkipped"),
         "xanderFallbackTimedOut": _nested_get(backend, "xanderFallbackTimedOut"),
+        "xanderFallbackFailureReason": _nested_get(backend, "xanderFallbackFailureReason"),
         "pass1Ready": pass1_ready,
         "pass1Status": pass1_status,
         "ttfaMs": ttfa_ms,
@@ -2494,6 +2517,8 @@ def _attach_metrics_record_summary(record: dict[str, Any]) -> None:
         "transcriptSource": _nested_get(verdict, "transcriptSource"),
         "sttStatus": _nested_get(verdict, "sttStatus"),
         "sttLatencyMs": _nested_get(backend, "sttLatencyMs"),
+        "mobileFastFailureReason": _nested_get(backend, "mobileFastFailureReason"),
+        "xanderFallbackFailureReason": _nested_get(backend, "xanderFallbackFailureReason"),
         "ttfaMs": _nested_get(timing_summary, "ttfaMs"),
         "postCaptureAckDelayMs": _nested_get(timing_summary, "postCaptureAckDelayMs"),
         "backendRoundTripMs": _nested_get(timing_summary, "backendRoundTripMs"),

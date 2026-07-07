@@ -261,8 +261,11 @@ class HttpXanderVoiceClientTest {
                       "mobileFastModel": "MiniMax-M3",
                       "mobileFastTimeoutSeconds": 4.0,
                       "mobileFastHardTimeoutSeconds": 4.0,
+                      "mobileFastFailureReason": "minimax-m3-chat-completions-parser returned no spoken content",
                       "xanderFallbackSessionStatus": 0,
                       "xanderFallbackSkipped": 0,
+                      "xanderFallbackTimedOut": 0,
+                      "xanderFallbackFailureReason": "deadline-timeout-after-0.5s",
                       "responseBuildMs": 1
                     }
                     """.trimIndent()
@@ -327,8 +330,11 @@ class HttpXanderVoiceClientTest {
         assertEquals("MiniMax-M3", result.mobileFastModel)
         assertEquals(4.0, result.mobileFastTimeoutSeconds!!, 0.01)
         assertEquals(4.0, result.mobileFastHardTimeoutSeconds!!, 0.01)
+        assertEquals("minimax-m3-chat-completions-parser returned no spoken content", result.mobileFastFailureReason)
         assertEquals(0, result.xanderFallbackSessionStatus)
         assertEquals(0, result.xanderFallbackSkipped)
+        assertEquals(0, result.xanderFallbackTimedOut)
+        assertEquals("deadline-timeout-after-0.5s", result.xanderFallbackFailureReason)
         assertEquals(1, result.responseBuildMs)
         assertEquals(200, result.httpStatusCode)
         assertTrue(result.requestBytes!! > 0)
