@@ -1,5 +1,6 @@
 import base64
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -741,6 +742,10 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertNotIn("transcript", stored["payload"]["verdict"])
         self.assertNotIn("assistantText", stored["payload"]["verdict"])
         self.assertEqual(17, stored["payload"]["perceivedLatency"]["postCaptureAckDelayMs"])
+        self.assertEqual(1234, stored["timingSummary"]["turnTotalMs"])
+        self.assertEqual(456, stored["timingSummary"]["backendRoundTripMs"])
+        self.assertEqual(900, stored["timingSummary"]["ttfaMs"])
+        self.assertEqual(17, stored["timingSummary"]["postCaptureAckDelayMs"])
         self.assertEqual("otoxan-mobile-canonical-timing", stored["payload"]["timingContract"]["name"])
         self.assertEqual(1, stored["payload"]["timingContract"]["version"])
         self.assertEqual("turn_elapsed_ms_from_android_monotonic_start", stored["payload"]["timingContract"]["clock"])
@@ -749,6 +754,70 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(8000, stored["payload"]["timingContract"]["targets"]["turnTotalMs"])
         self.assertEqual(4000, stored["payload"]["timingContract"]["targets"]["backendRoundTripMs"])
         self.assertEqual(12, stored["payload"]["verdict"]["transcriptLength"])
+
+    def test_recent_metrics_exposes_timing_summary_for_new_and_legacy_records(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "metrics.jsonl"
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = str(path)
+            payload = {
+                "type": "otoxan_mobile_voice_turn_metrics",
+                "schemaVersion": 1,
+                "turn": {"turnId": "turn-new", "success": True, "stage": "complete"},
+                "totals": {"turnTotalMs": 8123},
+                "backend": {"roundTripMs": 3456},
+                "perceivedLatency": {
+                    "ttfaMs": 789,
+                    "localAckKind": "earcon",
+                    "postCaptureAckDelayMs": 33,
+                    "localAckStartMs": 640,
+                    "localAckTotalMs": 120,
+                    "assistantPlaybackStartMs": 4010,
+                    "backendResponseReadyMs": 3560,
+                    "breakdown": {
+                        "routeSelectMs": 11,
+                        "captureReadMs": 5002,
+                        "postCaptureDispatchMs": 33,
+                        "backendWaitAfterReleaseMs": 222,
+                    },
+                },
+            }
+            voice_turn_server.handle_voice_turn_metrics(payload, remote_addr="phone")
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({
+                    "recordId": "legacy-record",
+                    "payload": {
+                        "turn": {"turnId": "turn-legacy", "success": True, "stage": "complete"},
+                        "totals": {"turnTotalMs": 9000},
+                        "backend": {"roundTripMs": 4000},
+                        "perceivedLatency": {
+                            "ttfaMs": 1000,
+                            "breakdown": {"postCaptureDispatchMs": 44},
+                        },
+                    },
+                }) + "\n")
+
+            recent = voice_turn_server.recent_voice_turn_metrics(limit=2)
+
+        legacy, newest = recent["records"]
+        self.assertEqual("turn-legacy", legacy["payload"]["turn"]["turnId"])
+        self.assertEqual(9000, legacy["timingSummary"]["turnTotalMs"])
+        self.assertEqual(4000, legacy["timingSummary"]["backendRoundTripMs"])
+        self.assertEqual(1000, legacy["timingSummary"]["ttfaMs"])
+        self.assertEqual(44, legacy["timingSummary"]["postCaptureAckDelayMs"])
+        self.assertEqual("turn-new", newest["payload"]["turn"]["turnId"])
+        self.assertEqual(8123, newest["timingSummary"]["turnTotalMs"])
+        self.assertEqual(3456, newest["timingSummary"]["backendRoundTripMs"])
+        self.assertEqual(789, newest["timingSummary"]["ttfaMs"])
+        self.assertEqual(33, newest["timingSummary"]["postCaptureAckDelayMs"])
+        self.assertEqual("earcon", newest["timingSummary"]["localAckKind"])
+        self.assertEqual(640, newest["timingSummary"]["localAckStartMs"])
+        self.assertEqual(120, newest["timingSummary"]["localAckTotalMs"])
+        self.assertEqual(4010, newest["timingSummary"]["assistantPlaybackStartMs"])
+        self.assertEqual(3560, newest["timingSummary"]["backendResponseReadyMs"])
+        self.assertEqual(11, newest["timingSummary"]["routeSelectMs"])
+        self.assertEqual(5002, newest["timingSummary"]["captureReadMs"])
+        self.assertEqual(33, newest["timingSummary"]["postCaptureDispatchMs"])
+        self.assertEqual(222, newest["timingSummary"]["backendWaitAfterReleaseMs"])
 
 
 if __name__ == "__main__":
