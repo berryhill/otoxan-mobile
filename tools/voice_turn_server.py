@@ -1239,6 +1239,130 @@ def recent_voice_turn_metrics(limit: int = 20) -> dict[str, Any]:
     return {"ok": True, "count": count, "records": records, "metricsPath": str(path), "corruptLineCount": corrupt}
 
 
+def recent_hardware_sweep_summaries(limit: int = 20) -> dict[str, Any]:
+    """Return run-sheet-shaped recent hardware evidence without raw audio or transcript text."""
+    recent = recent_voice_turn_metrics(limit=limit)
+    summaries = [_hardware_sweep_summary(record) for record in recent.get("records", [])]
+    return {
+        "ok": recent.get("ok", True),
+        "count": recent.get("count", 0),
+        "summaries": summaries,
+        "metricsPath": recent.get("metricsPath"),
+        "corruptLineCount": recent.get("corruptLineCount", 0),
+        "privacy": "summary-only: no pcm16Mono16kBase64, transcript text, assistant text, or raw audio is persisted or returned",
+    }
+
+
+def _hardware_sweep_summary(record: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _mapping(record.get("payload"))
+    turn = _mapping(payload.get("turn"))
+    route = _mapping(payload.get("route"))
+    capture = _mapping(payload.get("capture"))
+    backend = _mapping(payload.get("backend"))
+    playback = _mapping(payload.get("playback"))
+    perceived_latency = _mapping(payload.get("perceivedLatency"))
+    verdict = _mapping(payload.get("verdict"))
+    totals = _mapping(payload.get("totals"))
+    timing_summary = _mapping(record.get("timingSummary"))
+    scenario = _nested_get(payload, "sweep", "scenario") or _nested_get(payload, "hardwareSweep", "scenario") or "unknown"
+    ttfa_ms = _first_present(_nested_get(perceived_latency, "ttfaMs"), _nested_get(timing_summary, "ttfaMs"))
+    ack_ms = _first_present(_nested_get(perceived_latency, "postCaptureAckDelayMs"), _nested_get(timing_summary, "postCaptureAckDelayMs"))
+    backend_ms = _first_present(_nested_get(backend, "roundTripMs"), _nested_get(timing_summary, "backendRoundTripMs"))
+    total_ms = _first_present(_nested_get(totals, "turnTotalMs"), _nested_get(timing_summary, "turnTotalMs"))
+    provider = _nested_get(verdict, "provider")
+    pass1_ready = _nested_get(verdict, "pass1Ready")
+    pass1_status = _nested_get(verdict, "pass1Status")
+    summary = {
+        "recordId": record.get("recordId"),
+        "receivedAtMs": record.get("receivedAtMs"),
+        "runId": _nested_get(turn, "turnId") or record.get("recordId") or "unknown",
+        "scenario": scenario,
+        "backendProviderObserved": provider,
+        "inputName": _nested_get(route, "inputName"),
+        "inputType": _nested_get(route, "inputType"),
+        "outputName": _nested_get(route, "outputName"),
+        "outputType": _nested_get(route, "outputType"),
+        "wearableRouteActive": _nested_get(route, "wearableActiveAtCapture"),
+        "captureDurationMs": _nested_get(capture, "actualMs"),
+        "capturedBytes": _nested_get(capture, "capturedBytes"),
+        "expectedBytesForDuration": _nested_get(capture, "expectedBytes"),
+        "clientStopReason": _nested_get(capture, "stopReason"),
+        "transcriptSource": _nested_get(verdict, "transcriptSource"),
+        "sttProvider": _nested_get(verdict, "sttProvider"),
+        "sttStatus": _nested_get(verdict, "sttStatus"),
+        "sttLatencyMs": _nested_get(backend, "sttLatencyMs"),
+        "pass1Ready": pass1_ready,
+        "pass1Status": pass1_status,
+        "ttfaMs": ttfa_ms,
+        "postCaptureAckDelayMs": ack_ms,
+        "backendRoundTripMs": backend_ms,
+        "turnTotalMs": total_ms,
+        "canonicalTimingTargetResult": _canonical_timing_target_result(ttfa_ms=ttfa_ms, ack_ms=ack_ms, backend_ms=backend_ms, total_ms=total_ms),
+        "playbackKind": _nested_get(playback, "kind"),
+        "assistantTextLength": _nested_get(verdict, "assistantTextLength"),
+        "transcriptLength": _nested_get(verdict, "transcriptLength"),
+        "runDisposition": _hardware_sweep_disposition(payload, scenario=scenario, provider=provider, pass1_ready=pass1_ready, pass1_status=pass1_status),
+        "privacy": "summary-only; raw audio and spoken text omitted",
+    }
+    return {key: value for key, value in summary.items() if value is not None}
+
+
+def _hardware_sweep_disposition(payload: Mapping[str, Any], *, scenario: str, provider: Any, pass1_ready: Any, pass1_status: Any) -> str:
+    route = _mapping(payload.get("route"))
+    verdict = _mapping(payload.get("verdict"))
+    input_type = str(route.get("inputType") or "")
+    output_type = str(route.get("outputType") or "")
+    wearable = route.get("wearableActiveAtCapture")
+    transcript_source = str(verdict.get("transcriptSource") or "")
+    stt_status = str(verdict.get("sttStatus") or "")
+    scenario_text = str(scenario or "").lower()
+    real_route = bool(wearable) and ("TYPE_BLE_HEADSET" in {input_type, output_type} or "TYPE_BLUETOOTH_SCO" in {input_type, output_type})
+    if not real_route:
+        return "invalid-route"
+    if provider not in {XANDER_PROVIDER, MOBILE_FAST_PROVIDER}:
+        return "invalid-provider"
+    if pass1_ready is True and pass1_status == "real-speech-proven":
+        return "accept"
+    if scenario_text in {"silence", "clipped", "clipped/too-short", "too-short"} and pass1_status != "real-speech-proven":
+        return "expected-reject"
+    if transcript_source in {"debug", "route-evidence-fallback", "proof"} or stt_status in {"", "empty", "not-run"}:
+        return "invalid-debug"
+    return "unexpected-fail"
+
+
+def _canonical_timing_target_result(*, ttfa_ms: Any, ack_ms: Any, backend_ms: Any, total_ms: Any) -> str:
+    checks = [
+        _target_check(ttfa_ms, TIMING_CONTRACT_TARGETS["ttfaMs"]),
+        _target_check(ack_ms, TIMING_CONTRACT_TARGETS["postCaptureAckDelayMs"]),
+        _target_check(backend_ms, TIMING_CONTRACT_TARGETS["backendRoundTripMs"]),
+        _target_check(total_ms, TIMING_CONTRACT_TARGETS["turnTotalMs"]),
+    ]
+    known = [check for check in checks if check != "unknown"]
+    if not known:
+        return "unknown"
+    if "miss" in known and len(known) < len(checks):
+        return "mixed"
+    if "miss" in known:
+        return "miss"
+    if len(known) < len(checks):
+        return "mixed"
+    return "pass"
+
+
+def _target_check(value: Any, target: int) -> str:
+    try:
+        return "pass" if int(value) <= target else "miss"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _sanitize_metrics_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     # Do not persist raw spoken transcript/assistant text even if a future client accidentally sends it.
     data = json.loads(json.dumps(payload))
@@ -1316,6 +1440,10 @@ def _mapping_get(value: Any, key: str) -> Mapping[str, Any]:
     return {}
 
 
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
 def _nested_get(value: Mapping[str, Any], *keys: str) -> Any:
     current: Any = value
     for key in keys:
@@ -1342,6 +1470,15 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 20
             self._send_json(200, recent_voice_turn_metrics(limit=limit))
+            return
+        if parsed.path == "/hardware-sweep/recent":
+            query = urllib.parse.parse_qs(parsed.query)
+            raw_limit = query.get("limit", ["20"])[0]
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                limit = 20
+            self._send_json(200, recent_hardware_sweep_summaries(limit=limit))
             return
         self._send_json(404, {"ok": False, "error": "not found"})
 

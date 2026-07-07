@@ -95,6 +95,64 @@ class VoiceTurnServerTest(unittest.TestCase):
         finally:
             Path(metrics_path).unlink(missing_ok=True)
 
+    def test_recent_hardware_sweep_summaries_are_text_only_and_run_sheet_shaped(self):
+        with tempfile.NamedTemporaryFile(delete=False) as fh:
+            metrics_path = fh.name
+        try:
+            os.environ["OTOXAN_VOICE_METRICS_JSONL"] = metrics_path
+            packet = {
+                "type": "otoxan_mobile_voice_turn_metrics",
+                "schemaVersion": 1,
+                "transcript": "do not persist these words",
+                "assistantText": "do not persist this answer",
+                "sweep": {"scenario": "normal"},
+                "turn": {"turnId": "turn-accept", "success": True, "stage": "complete"},
+                "route": {
+                    "inputName": "Ray-Ban Meta",
+                    "inputType": "TYPE_BLE_HEADSET",
+                    "outputName": "Ray-Ban Meta",
+                    "outputType": "TYPE_BLE_HEADSET",
+                    "wearableActiveAtCapture": True,
+                },
+                "capture": {"capturedBytes": 32000, "expectedBytes": 32000, "actualMs": 1000, "stopReason": "duration_elapsed"},
+                "backend": {"roundTripMs": 1200, "sttLatencyMs": 200},
+                "perceivedLatency": {"ttfaMs": 1000, "postCaptureAckDelayMs": 80},
+                "playback": {"kind": "android-tts", "totalMs": 400},
+                "verdict": {
+                    "provider": "mobile-fast",
+                    "transcriptSource": "hermes-stt",
+                    "sttProvider": "hermes-stt",
+                    "sttStatus": "success",
+                    "pass1Ready": True,
+                    "pass1Status": "real-speech-proven",
+                    "transcriptLength": 18,
+                    "assistantTextLength": 22,
+                },
+                "totals": {"turnTotalMs": 2600},
+            }
+            voice_turn_server.handle_voice_turn_metrics(packet, remote_addr="phone")
+
+            result = voice_turn_server.recent_hardware_sweep_summaries(limit=5)
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(1, result["count"])
+            self.assertIn("no pcm16Mono16kBase64", result["privacy"])
+            summary = result["summaries"][0]
+            self.assertEqual("turn-accept", summary["runId"])
+            self.assertEqual("normal", summary["scenario"])
+            self.assertEqual("mobile-fast", summary["backendProviderObserved"])
+            self.assertEqual("Ray-Ban Meta", summary["inputName"])
+            self.assertEqual(32000, summary["capturedBytes"])
+            self.assertEqual("pass", summary["canonicalTimingTargetResult"])
+            self.assertEqual("accept", summary["runDisposition"])
+            self.assertNotIn("transcript", summary)
+            self.assertNotIn("assistantText", summary)
+            serialized = json.dumps(result)
+            self.assertNotIn("do not persist", serialized)
+            self.assertNotIn("\"pcm16Mono16kBase64\"", serialized)
+        finally:
+            Path(metrics_path).unlink(missing_ok=True)
+
     def test_mobile_voice_contract_includes_xander_stanza(self):
         self.assertIn("Otoxan controller builder", voice_turn_server.XANDER_MOBILE_VOICE_CONTRACT)
         self.assertIn("Silas owns the live Frankenstein", voice_turn_server.XANDER_MOBILE_VOICE_CONTRACT)
