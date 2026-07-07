@@ -35,6 +35,7 @@ class MicCapture {
         var stopReason = "max_duration"
         var speechStarted = false
         var lastSpeechMs = 0L
+        var firstSpeechMs: Long? = null
         try {
             recorder.startRecording()
             require(recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AudioRecord did not enter recording state" }
@@ -49,6 +50,7 @@ class MicCapture {
                 val capturedMs = pcmBytesToMillis(output.size())
                 val chunkPeak = chunk.peakPcm16Amplitude(read)
                 if (chunkPeak >= config.speechPeakAmplitude) {
+                    if (firstSpeechMs == null) firstSpeechMs = capturedMs
                     speechStarted = true
                     lastSpeechMs = capturedMs
                 }
@@ -69,7 +71,9 @@ class MicCapture {
                 minCaptureMillis = config.minMillis,
                 actualCapturedMillis = pcmBytesToMillis(pcm.size),
                 stopReason = stopReason,
-                speechDetected = speechStarted
+                speechDetected = speechStarted,
+                firstSpeechDetectedMillis = firstSpeechMs,
+                lastSpeechDetectedMillis = if (speechStarted) lastSpeechMs else null
             )
         } finally {
             runCatching { recorder.stop() }
@@ -137,6 +141,7 @@ class PersistentConversationRecorder internal constructor(
         var stopReason = "max_duration"
         var speechStarted = false
         var lastSpeechMs = 0L
+        var firstSpeechMs: Long? = null
         var listenedMs = 0L
         var utteranceMs = 0L
 
@@ -150,6 +155,7 @@ class PersistentConversationRecorder internal constructor(
             listenedMs += chunkMs
             val chunkPeak = chunk.peakPcm16Amplitude(read)
             if (chunkPeak >= config.speechPeakAmplitude) {
+                if (firstSpeechMs == null) firstSpeechMs = listenedMs
                 speechStarted = true
                 lastSpeechMs = utteranceMs + chunkMs
             }
@@ -181,7 +187,9 @@ class PersistentConversationRecorder internal constructor(
             minCaptureMillis = config.minMillis,
             actualCapturedMillis = if (speechStarted) pcmBytesToMillis(pcm.size) else listenedMs,
             stopReason = stopReason,
-            speechDetected = speechStarted
+            speechDetected = speechStarted,
+            firstSpeechDetectedMillis = firstSpeechMs,
+            lastSpeechDetectedMillis = if (speechStarted) lastSpeechMs else null
         )
     }
 
@@ -226,7 +234,9 @@ data class VoiceCaptureResult(
     val minCaptureMillis: Long,
     val actualCapturedMillis: Long,
     val stopReason: String,
-    val speechDetected: Boolean
+    val speechDetected: Boolean,
+    val firstSpeechDetectedMillis: Long? = null,
+    val lastSpeechDetectedMillis: Long? = null
 )
 
 private const val SAMPLE_RATE = 16_000

@@ -279,6 +279,16 @@ class HttpXanderVoiceClientTest {
                     assistantPlaybackStartMs = 5100,
                     backendResponseReadyMs = 4800,
                     ttfaMs = 2400,
+                    routeSelectStartMs = 0,
+                    routeSelectEndMs = 12,
+                    captureStartMs = 12,
+                    captureEndMs = 5022,
+                    speechFirstDetectedMs = 240,
+                    speechLastDetectedMs = 4570,
+                    endpointDispatchMs = 5023,
+                    endpointResponseReadyMs = 4800,
+                    routeReleaseStartMs = 2516,
+                    routeReleaseEndMs = 3226,
                     ttfaRouteSelectMs = 12,
                     ttfaCaptureReadMs = 5010,
                     ttfaPostCaptureDispatchMs = 7,
@@ -320,6 +330,17 @@ class HttpXanderVoiceClientTest {
         assertTrue(requestBody.contains("\"backendWaitAfterReleaseMs\":650"))
         assertTrue(requestBody.contains("\"sttProvider\":\"moonshine-stt\""))
         assertTrue(requestBody.contains("\"stopReason\":\"speech_silence\""))
+        assertTrue(requestBody.contains("\"timestamps\""))
+        assertTrue(requestBody.contains("\"routeSelectStartMs\":0"))
+        assertTrue(requestBody.contains("\"routeSelectEndMs\":12"))
+        assertTrue(requestBody.contains("\"captureStartMs\":12"))
+        assertTrue(requestBody.contains("\"captureEndMs\":5022"))
+        assertTrue(requestBody.contains("\"firstSpeechDetectedMs\":240"))
+        assertTrue(requestBody.contains("\"lastSpeechDetectedMs\":4570"))
+        assertTrue(requestBody.contains("\"endpointDispatchMs\":5023"))
+        assertTrue(requestBody.contains("\"endpointResponseReadyMs\":4800"))
+        assertTrue(requestBody.contains("\"routeReleaseStartMs\":2516"))
+        assertTrue(requestBody.contains("\"routeReleaseEndMs\":3226"))
         assertTrue(!requestBody.contains("rawTranscript"))
         assertTrue(!requestBody.contains("assistantText\""))
     }

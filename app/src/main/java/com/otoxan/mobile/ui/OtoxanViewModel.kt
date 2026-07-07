@@ -287,6 +287,7 @@ class OtoxanViewModel(
         var releaseEvidence = RouteEvidence.default("Communication route release not reached")
         try {
             val turnStarted = System.nanoTime()
+            val routeSelectStartMs = 0L
             val routeStarted = System.nanoTime()
             var routeEvidence = audioRouter.inspectAndSelectWearable()
             if (!routeEvidence.wearableActive) {
@@ -299,9 +300,11 @@ class OtoxanViewModel(
                 }
             }
             val routeSelectMs = elapsedMs(routeStarted)
+            val routeSelectEndMs = elapsedMs(turnStarted)
             _uiState.update { it.copy(turnStage = "Listening — speak now") }
             val conversationMode = _uiState.value.conversationActive
             val captureConfig = conversationVoiceCaptureConfig()
+            val captureStartMs = elapsedMs(turnStarted)
             val captureStarted = System.nanoTime()
             val capture = micCapture.recordPcmUntilSpeechSilence(captureConfig) { chunkPeak, capturedMillis, speechDetected ->
                 val level = (chunkPeak / 8_000f).coerceIn(0f, 1f)
@@ -318,12 +321,15 @@ class OtoxanViewModel(
                     )
                 }
             }
+            val captureReadMs = elapsedMs(captureStarted)
             val proof = processCapturedVoiceTurn(
                 turnId = turnId,
                 capture = capture,
                 routeEvidence = routeEvidence,
-                routeSelectMs = routeSelectMs,
-                captureReadMs = elapsedMs(captureStarted),
+                routeSelectStartMs = routeSelectStartMs,
+                routeSelectEndMs = routeSelectEndMs,
+                captureStartMs = captureStartMs,
+                captureReadMs = captureReadMs,
                 turnStarted = turnStarted,
                 conversationMode = conversationMode,
                 requireSpeechDetected = true
@@ -341,12 +347,18 @@ class OtoxanViewModel(
         turnId: String,
         capture: com.otoxan.mobile.voice.VoiceCaptureResult,
         routeEvidence: RouteEvidence,
-        routeSelectMs: Long,
+        routeSelectStartMs: Long,
+        routeSelectEndMs: Long,
+        captureStartMs: Long,
         captureReadMs: Long,
         turnStarted: Long,
         conversationMode: Boolean,
         requireSpeechDetected: Boolean
     ): VoiceTurnUiResult {
+        val routeSelectMs = routeSelectEndMs - routeSelectStartMs
+        val captureEndMs = captureStartMs + captureReadMs
+        val speechFirstDetectedMs = capture.firstSpeechDetectedMillis?.let { captureStartMs + it }
+        val speechLastDetectedMs = capture.lastSpeechDetectedMillis?.let { captureStartMs + it }
         val pcm = capture.pcm16Mono16k
         val expectedBytes = expectedPcmBytes(capture.maxCaptureMillis)
         val minimumUsableBytes = expectedPcmBytes(capture.minCaptureMillis)
@@ -360,6 +372,7 @@ class OtoxanViewModel(
         }
         _uiState.update { it.copy(turnStage = "Thinking — ${pcm.size} bytes to Xander after ${capture.stopReason}") }
         return coroutineScope {
+            val endpointDispatchMs = elapsedMs(turnStarted)
             val backendStarted = System.nanoTime()
             val backendDeferred = async(Dispatchers.IO) { xanderVoiceClient.sendVoiceTurn(pcm, routeEvidence) }
             val playbackMode = _uiState.value.playbackMode
@@ -379,6 +392,7 @@ class OtoxanViewModel(
             } else {
                 localAckKind = "silent_mode"
             }
+            val routeReleaseStartMs = elapsedMs(turnStarted)
             val releaseStarted = System.nanoTime()
             val routeReleaseMs: Long
             val releaseEvidence: RouteEvidence
@@ -391,6 +405,7 @@ class OtoxanViewModel(
                 }
             )
             routeReleaseMs = elapsedMs(releaseStarted)
+            val routeReleaseEndMs = elapsedMs(turnStarted)
 
             _uiState.update { it.copy(turnStage = "Waiting on Xander response") }
             val result = backendDeferred.await()
@@ -448,11 +463,21 @@ class OtoxanViewModel(
                 result = result,
                 turnTotalMs = elapsedMs(turnStarted),
                 routeSelectMs = routeSelectMs,
+                routeSelectStartMs = routeSelectStartMs,
+                routeSelectEndMs = routeSelectEndMs,
+                captureStartMs = captureStartMs,
+                captureEndMs = captureEndMs,
+                speechFirstDetectedMs = speechFirstDetectedMs,
+                speechLastDetectedMs = speechLastDetectedMs,
+                endpointDispatchMs = endpointDispatchMs,
+                endpointResponseReadyMs = backendResponseReadyMs,
                 captureReadMs = captureReadMs,
                 captureExpectedMs = capture.maxCaptureMillis,
                 captureStopReason = capture.stopReason,
                 backendRoundTripMs = backendRoundTripMs,
                 routeReleaseMs = routeReleaseMs,
+                routeReleaseStartMs = routeReleaseStartMs,
+                routeReleaseEndMs = routeReleaseEndMs,
                 playbackTotalMs = playbackTotalMs,
                 playbackKind = playbackKind,
                 localAckKind = localAckKind,
@@ -629,6 +654,16 @@ class OtoxanViewModel(
             captureExpectedMs = proof.captureExpectedMs,
             captureReadMs = proof.captureReadMs,
             captureStopReason = proof.captureStopReason,
+            routeSelectStartMs = proof.routeSelectStartMs,
+            routeSelectEndMs = proof.routeSelectEndMs,
+            captureStartMs = proof.captureStartMs,
+            captureEndMs = proof.captureEndMs,
+            speechFirstDetectedMs = proof.speechFirstDetectedMs,
+            speechLastDetectedMs = proof.speechLastDetectedMs,
+            endpointDispatchMs = proof.endpointDispatchMs,
+            endpointResponseReadyMs = proof.endpointResponseReadyMs,
+            routeReleaseStartMs = proof.routeReleaseStartMs,
+            routeReleaseEndMs = proof.routeReleaseEndMs,
             routeSelectMs = proof.routeSelectMs,
             routeReleaseMs = proof.routeReleaseMs,
             turnTotalMs = proof.turnTotalMs,
@@ -695,11 +730,21 @@ class OtoxanViewModel(
         val result: com.otoxan.mobile.voice.VoiceTurnResult,
         val turnTotalMs: Long,
         val routeSelectMs: Long,
+        val routeSelectStartMs: Long,
+        val routeSelectEndMs: Long,
+        val captureStartMs: Long,
+        val captureEndMs: Long,
+        val speechFirstDetectedMs: Long?,
+        val speechLastDetectedMs: Long?,
+        val endpointDispatchMs: Long,
+        val endpointResponseReadyMs: Long,
         val captureReadMs: Long,
         val captureExpectedMs: Long,
         val captureStopReason: String,
         val backendRoundTripMs: Long,
         val routeReleaseMs: Long,
+        val routeReleaseStartMs: Long,
+        val routeReleaseEndMs: Long,
         val playbackTotalMs: Long,
         val playbackKind: String,
         val localAckKind: String,
