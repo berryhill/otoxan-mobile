@@ -134,7 +134,7 @@ Operator checklist for the physical gate:
    - Ray-Ban route evidence via `TYPE_BLUETOOTH_SCO` or `TYPE_BLE_HEADSET`
    - non-silent backend audio stats
    - assistant response answers the semantic phrase
-7. Record latency separately from hardware proof: `ttfaMs`, `postCaptureAckDelayMs`, `backendRoundTripMs`, and `turnTotalMs`.
+7. Record latency separately from hardware proof: `ttfaMs`, `postCaptureAckDelayMs`, `sttLatencyMs`, `backendRoundTripMs`, and `turnTotalMs`. Sprint 4 STT budget is locked separately in `docs/sprint4-stt-budget-lock.md` and must not be treated as hardware proof.
 8. Keep stream/VAD diagnostics non-authoritative until they are compared against the same real hardware run.
 
 ## Verification

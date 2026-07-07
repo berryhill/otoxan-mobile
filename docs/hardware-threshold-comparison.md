@@ -42,6 +42,7 @@ Current threshold/readback values:
 | canonical post-capture ack target | <= `250` ms | `250` | Local feedback after capture | tuning baseline, not gate proof |
 | canonical backend round-trip target | <= `4000` ms | `4000` | HTTP/backend wait baseline | tuning baseline, not gate proof |
 | canonical total turn target | <= `8000` ms | `8000` | End-to-end turn baseline | tuning baseline, not gate proof |
+| Sprint 4 STT budget target | <= `1500` ms | `1500` | STT lane budget/readback target derived from Sprint 3 closeout discipline | tuning baseline, not gate proof |
 
 Observed Pass 1 peak margin against current speech thresholds:
 
@@ -110,7 +111,7 @@ Concrete sprint backlog:
 
 5. Latency work ordering
    - First reduce perceived latency with local ack and shorter spoken responses.
-   - Then tune STT/Xander backend time.
+   - Then tune STT/Xander backend time. Sprint 4 STT tuning starts from `docs/sprint4-stt-budget-lock.md`: `sttLatencyMs <= 1500ms`, repo-local total STT budget `1.5s`, Moonshine/local primary budget `0.75s`, and fallback reserve `0.25s`.
    - Only after repeated turns hit the scorecard should the sprint consider backend service extraction.
 
 Do not start DAT/camera in the next sprint unless the repeated audio-loop telemetry stays stable. DAT is still version 2; the MVP remains explicit-session audio.

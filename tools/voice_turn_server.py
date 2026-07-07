@@ -93,7 +93,11 @@ TIMING_CONTRACT_TARGETS = {
     "postCaptureAckDelayMs": 250,
     "turnTotalMs": 8000,
     "backendRoundTripMs": 4000,
+    "sttLatencyMs": 1500,
 }
+SPRINT4_STT_TOTAL_BUDGET_SECONDS = TIMING_CONTRACT_TARGETS["sttLatencyMs"] / 1000.0
+SPRINT4_MOONSHINE_PRIMARY_BUDGET_SECONDS = 0.75
+SPRINT4_STT_FALLBACK_MIN_SECONDS = 0.25
 EXPERIMENTAL_STREAM_TRANSPORT_ENV = "OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"
 EXPERIMENTAL_STREAM_ENDPOINT = "/voice-stream"
 STREAM_TRANSPORT_PROTOCOL_NAME = "otoxan-mobile-backend-stream"
@@ -525,7 +529,7 @@ def _xander_transcript(pcm: bytes, route: RouteSummary) -> TranscriptResult:
 def _transcribe_with_hermes_stt(pcm: bytes) -> SttResult:
     provider = os.environ.get("OTOXAN_STT_PROVIDER", STT_PROVIDER_DEFAULT).strip().lower() or STT_PROVIDER_DEFAULT
     total_started = time.monotonic()
-    total_budget = _bounded_seconds("OTOXAN_STT_TOTAL_BUDGET_SECONDS", 4.5, 0.5, 20.0)
+    total_budget = _bounded_seconds("OTOXAN_STT_TOTAL_BUDGET_SECONDS", SPRINT4_STT_TOTAL_BUDGET_SECONDS, 0.5, 20.0)
     if provider not in STT_PROVIDER_ALIASES:
         return SttResult("", "unsupported-provider", 0, provider, budget_remaining_ms=int(total_budget * 1000))
 
@@ -544,7 +548,7 @@ def _transcribe_with_hermes_stt(pcm: bytes) -> SttResult:
                 primary_provider=moonshine.provider,
                 budget_remaining_ms=int(remaining * 1000),
             )
-        fallback_min = _bounded_seconds("OTOXAN_STT_FALLBACK_MIN_SECONDS", 0.75, 0.0, 5.0)
+        fallback_min = _bounded_seconds("OTOXAN_STT_FALLBACK_MIN_SECONDS", SPRINT4_STT_FALLBACK_MIN_SECONDS, 0.0, 5.0)
         if remaining < fallback_min:
             return SttResult(
                 "",
@@ -598,7 +602,7 @@ def _transcribe_with_moonshine_command(pcm: bytes) -> SttResult:
     command_template = os.environ.get("OTOXAN_MOONSHINE_STT_COMMAND", "").strip()
     if not command_template:
         return SttResult("", "not-configured", _elapsed_ms(started), "moonshine-stt")
-    timeout = _bounded_seconds("OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS", 1.2, 0.2, 8.0)
+    timeout = _bounded_seconds("OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS", SPRINT4_MOONSHINE_PRIMARY_BUDGET_SECONDS, 0.2, 8.0)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
         input_path = wav_file.name
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:

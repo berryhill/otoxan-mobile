@@ -2,6 +2,7 @@ package com.otoxan.mobile.ui
 
 import com.otoxan.mobile.voice.VOICE_TURN_ACK_GAP_TARGET_MS
 import com.otoxan.mobile.voice.VOICE_TURN_BACKEND_TARGET_MS
+import com.otoxan.mobile.voice.VOICE_TURN_STT_TARGET_MS
 import com.otoxan.mobile.voice.VOICE_TURN_TOTAL_TARGET_MS
 import com.otoxan.mobile.voice.VOICE_TURN_TTFA_TARGET_MS
 
@@ -351,7 +352,7 @@ private fun timingAcceptanceSummaryOf(
         TimingAcceptanceMetric("Ack delay", postCaptureAckDelayMs, VOICE_TURN_ACK_GAP_TARGET_MS, postCaptureAckDelayMs.acceptanceState(VOICE_TURN_ACK_GAP_TARGET_MS)),
         TimingAcceptanceMetric("Total", totalMs, VOICE_TURN_TOTAL_TARGET_MS, totalMs.acceptanceState(VOICE_TURN_TOTAL_TARGET_MS)),
         TimingAcceptanceMetric("Backend", backendMs, VOICE_TURN_BACKEND_TARGET_MS, backendMs.acceptanceState(VOICE_TURN_BACKEND_TARGET_MS)),
-        TimingAcceptanceMetric("STT", sttMs?.toLong(), STT_ACCEPTANCE_TARGET_MS, sttMs?.toLong().acceptanceState(STT_ACCEPTANCE_TARGET_MS)),
+        TimingAcceptanceMetric("STT", sttMs?.toLong(), VOICE_TURN_STT_TARGET_MS, sttMs?.toLong().acceptanceState(VOICE_TURN_STT_TARGET_MS)),
         TimingAcceptanceMetric("Xander", xanderMs?.toLong(), XANDER_ACCEPTANCE_TARGET_MS, xanderMs?.toLong().acceptanceState(XANDER_ACCEPTANCE_TARGET_MS)),
         TimingAcceptanceMetric("Playback", playbackMs, PLAYBACK_ACCEPTANCE_TARGET_MS, playbackMs.acceptanceState(PLAYBACK_ACCEPTANCE_TARGET_MS))
     )
@@ -378,7 +379,6 @@ private fun Long?.acceptanceState(targetMs: Long): TimingAcceptanceState = when 
     else -> TimingAcceptanceState.Miss
 }
 
-private const val STT_ACCEPTANCE_TARGET_MS = 1_500L
 private const val XANDER_ACCEPTANCE_TARGET_MS = 2_500L
 private const val PLAYBACK_ACCEPTANCE_TARGET_MS = 1_500L
 

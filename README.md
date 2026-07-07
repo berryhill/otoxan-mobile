@@ -121,7 +121,7 @@ The helper validates the PCM payload and route evidence, returns visible transcr
 
 ## Phone telemetry evidence classes
 
-Sprint 3 source/build/backend decision evidence is recorded in `docs/sprint3-gate-decision-packet.md`. Sprint 3 streaming closeout evidence is recorded in `docs/sprint3-streaming-closeout-packet.md`. Treat those packets as candidate readiness evidence for the next physical gate, not as replacements for a fresh phone + Ray-Ban Meta turn. Sprint 3 execution scope is locked in `docs/sprint3-gate-scope.md`: harden the explicit-session audio loop, keep source/build proof separate from physical proof, and defer DAT/camera, always-on capture, AR UI, and broad backend reorganization unless explicitly re-approved.
+Sprint 3 source/build/backend decision evidence is recorded in `docs/sprint3-gate-decision-packet.md`. Sprint 3 streaming closeout evidence is recorded in `docs/sprint3-streaming-closeout-packet.md`. Treat those packets as candidate readiness evidence for the next physical gate, not as replacements for a fresh phone + Ray-Ban Meta turn. Sprint 3 execution scope is locked in `docs/sprint3-gate-scope.md`: harden the explicit-session audio loop, keep source/build proof separate from physical proof, and defer DAT/camera, always-on capture, AR UI, and broad backend reorganization unless explicitly re-approved. Sprint 4 STT budget discipline is locked in `docs/sprint4-stt-budget-lock.md`: default STT budget/readback target is `sttLatencyMs <= 1500ms`, with a `1.5s` repo-local total STT budget, `0.75s` Moonshine/local primary command default, and `0.25s` fallback reserve unless an evidence run explicitly overrides them.
 
 The phone telemetry UI now separates reliability, latency, and build/source proof so operators do not over-claim a run:
 
@@ -257,6 +257,7 @@ TTS failure is non-fatal: empty PCM preserves the Android playback fallback so v
 ## Phase 5 local STT seam
 
 The voice-turn helper now has an optional Moonshine-compatible command STT adapter ahead of the existing Hermes/faster-whisper STT fallback. Default behavior is unchanged: `OTOXAN_STT_PROVIDER=hermes` uses the configured Hermes STT lane.
+Sprint 4 default budget is intentionally tight: `OTOXAN_STT_TOTAL_BUDGET_SECONDS` defaults to `1.5`, `OTOXAN_MOONSHINE_STT_TIMEOUT_SECONDS` defaults to `0.75`, and `OTOXAN_STT_FALLBACK_MIN_SECONDS` defaults to `0.25`. Override those only for measured evidence runs, and keep hardware proof separate from budget tuning.
 
 Moonshine-compatible command mode:
 

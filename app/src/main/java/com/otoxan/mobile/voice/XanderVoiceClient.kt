@@ -21,6 +21,7 @@ const val VOICE_TURN_TTFA_TARGET_MS = 1_500L
 const val VOICE_TURN_ACK_GAP_TARGET_MS = 250L
 const val VOICE_TURN_TOTAL_TARGET_MS = 8_000L
 const val VOICE_TURN_BACKEND_TARGET_MS = 4_000L
+const val VOICE_TURN_STT_TARGET_MS = 1_500L
 
 interface XanderVoiceClient {
     suspend fun sendVoiceTurn(pcm16Mono16k: ByteArray, routeEvidence: RouteEvidence): VoiceTurnResult
@@ -433,7 +434,8 @@ class HttpXanderVoiceClient(
                   "ttfaMs":$VOICE_TURN_TTFA_TARGET_MS,
                   "postCaptureAckDelayMs":$VOICE_TURN_ACK_GAP_TARGET_MS,
                   "turnTotalMs":$VOICE_TURN_TOTAL_TARGET_MS,
-                  "backendRoundTripMs":$VOICE_TURN_BACKEND_TARGET_MS
+                  "backendRoundTripMs":$VOICE_TURN_BACKEND_TARGET_MS,
+                  "sttLatencyMs":$VOICE_TURN_STT_TARGET_MS
                 }
               },
               "turn":{

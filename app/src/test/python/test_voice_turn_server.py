@@ -472,6 +472,24 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertIn("timeout_seconds", fallback.call_args.kwargs)
         self.assertLessEqual(fallback.call_args.kwargs["timeout_seconds"], 4.5)
 
+    def test_sprint4_stt_budget_defaults_are_locked_to_closeout_target(self):
+        self.assertEqual(1500, voice_turn_server.TIMING_CONTRACT_TARGETS["sttLatencyMs"])
+        self.assertEqual(1.5, voice_turn_server.SPRINT4_STT_TOTAL_BUDGET_SECONDS)
+        self.assertEqual(0.75, voice_turn_server.SPRINT4_MOONSHINE_PRIMARY_BUDGET_SECONDS)
+        self.assertEqual(0.25, voice_turn_server.SPRINT4_STT_FALLBACK_MIN_SECONDS)
+
+        os.environ["OTOXAN_STT_PROVIDER"] = "moonshine-command"
+        os.environ["OTOXAN_MOONSHINE_STT_COMMAND"] = "moonshine-test --input {input}"
+        completed = mock.Mock(returncode=0, stdout=b'{"success": true, "transcript": ""}')
+        with mock.patch.object(voice_turn_server.subprocess, "run", return_value=completed) as run:
+            with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt_fallback", return_value=voice_turn_server.SttResult("fallback words", "success", 55)) as fallback:
+                stt = voice_turn_server._transcribe_with_hermes_stt(b"\x01\x02" * 160)
+
+        self.assertEqual("fallback words", stt.transcript)
+        self.assertLessEqual(run.call_args.kwargs["timeout"], voice_turn_server.SPRINT4_MOONSHINE_PRIMARY_BUDGET_SECONDS)
+        self.assertLessEqual(fallback.call_args.kwargs["timeout_seconds"], voice_turn_server.SPRINT4_STT_TOTAL_BUDGET_SECONDS)
+        self.assertLessEqual(stt.latency_ms or 0, voice_turn_server.TIMING_CONTRACT_TARGETS["sttLatencyMs"])
+
     def test_xander_transcript_reports_moonshine_source_when_local_stt_succeeds(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         route = voice_turn_server.RouteSummary("Ray-Ban", "TYPE_BLE_HEADSET", "Ray-Ban", "TYPE_BLE_HEADSET", True, "")
