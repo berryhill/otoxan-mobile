@@ -56,6 +56,8 @@ XANDER_MOBILE_FAST_PROVIDER_DEFAULT = "api-z-ai"
 XANDER_MOBILE_MAX_WORDS = 18
 XANDER_FAST_MAX_WORDS = 16
 XANDER_SPOKEN_MAX_CHARS = 140
+MOBILE_FAST_RUNTIME_CONTRACT_NAME = "otoxan-mobile-minimax-runtime"
+MOBILE_FAST_RUNTIME_CONTRACT_VERSION = 1
 TTS_PROVIDER_DEFAULT = "android"
 TTS_PROVIDER_ALIASES = {"android", "none", "off", "kokoro", "kokoro-command"}
 STT_PROVIDER_DEFAULT = "hermes"
@@ -826,6 +828,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "sttLatencyMs": turn.stt_latency_ms,
         "sttProvider": turn.stt_provider,
         "assistantPrepContract": assistant_prep_contract(),
+        "mobileFastRuntimeContract": mobile_fast_runtime_contract(),
         "primarySttStatus": timing.get("primarySttStatus"),
         "primarySttMs": timing.get("primarySttMs"),
         "primarySttProvider": timing.get("primarySttProvider"),
@@ -1673,6 +1676,64 @@ def _mobile_fast_runtime_descriptor() -> dict[str, Any]:
         "mobileFastModel": _mobile_fast_model_name(provider_name=provider_name),
         "mobileFastTimeoutSeconds": _mobile_fast_request_timeout_seconds(),
         "mobileFastHardTimeoutSeconds": _mobile_fast_hard_timeout_seconds(),
+    }
+
+
+def mobile_fast_runtime_contract() -> dict[str, Any]:
+    """Describe the bounded MiniMax/OpenAI-compatible runtime lane.
+
+    The descriptor is intentionally secret-free and suitable for response/readback
+    telemetry. It locks the wearable contract: STT must produce real speech before
+    the mobile-fast model is called, the provider call has a hard deadline, MiniMax
+    reasoning is split out of spoken content, and fallback output must stay short.
+    """
+    return {
+        "name": MOBILE_FAST_RUNTIME_CONTRACT_NAME,
+        "version": MOBILE_FAST_RUNTIME_CONTRACT_VERSION,
+        "providerMode": MOBILE_FAST_PROVIDER,
+        "providerEnv": "OTOXAN_MOBILE_FAST_PROVIDER",
+        "providerDefault": XANDER_MOBILE_FAST_PROVIDER_DEFAULT,
+        "modelEnv": "OTOXAN_MOBILE_FAST_MODEL",
+        "requestTimeoutEnv": "OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS",
+        "hardTimeoutEnv": "OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS",
+        "defaultRequestTimeoutSeconds": XANDER_FAST_TIMEOUT_SECONDS,
+        "defaultHardTimeoutSeconds": XANDER_FAST_HARD_TIMEOUT_SECONDS,
+        "maxSpokenWords": XANDER_FAST_MAX_WORDS,
+        "maxSpokenChars": XANDER_SPOKEN_MAX_CHARS,
+        "requestShape": {
+            "endpointSuffix": "/chat/completions",
+            "apiCompatibility": "openai_chat_completions",
+            "maxTokensEnv": "OTOXAN_MOBILE_FAST_MAX_TOKENS",
+            "defaultMaxTokens": 96,
+            "temperatureEnv": "OTOXAN_MOBILE_FAST_TEMPERATURE",
+            "defaultTemperature": 0.2,
+            "reasoningSplit": True,
+        },
+        "callGate": "only_after_stt_success_or_debug_transcript_not_route_evidence_fallback",
+        "fallbackPolicy": {
+            "sessionFallbackEnv": "OTOXAN_MOBILE_FAST_SESSION_FALLBACK",
+            "defaultSessionFallbackEnabled": False,
+            "providerFailureSpokenResponse": "Say that again.",
+            "emptySttSpokenResponse": "Audio arrived, but words did not decode.",
+        },
+        "readbackFields": [
+            "provider",
+            "mobileFastProvider",
+            "mobileFastModel",
+            "mobileFastTimeoutSeconds",
+            "mobileFastHardTimeoutSeconds",
+            "xanderFastMs",
+            "xanderFastStatus",
+            "xanderFastTimedOut",
+            "xanderFallbackSessionStatus",
+            "xanderFallbackSkipped",
+        ],
+        "privacy": {
+            "secretMaterialInTelemetry": False,
+            "rawAudioPersisted": False,
+            "explicitSessionOnly": True,
+        },
+        "evidenceClass": "runtime_contract_readback_not_hardware_proof",
     }
 
 

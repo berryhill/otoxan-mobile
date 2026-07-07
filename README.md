@@ -121,7 +121,7 @@ The helper validates the PCM payload and route evidence, returns visible transcr
 
 ## Phone telemetry evidence classes
 
-Sprint 3 source/build/backend decision evidence is recorded in `docs/sprint3-gate-decision-packet.md`. Sprint 3 streaming closeout evidence is recorded in `docs/sprint3-streaming-closeout-packet.md`. Treat those packets as candidate readiness evidence for the next physical gate, not as replacements for a fresh phone + Ray-Ban Meta turn. Sprint 3 execution scope is locked in `docs/sprint3-gate-scope.md`: harden the explicit-session audio loop, keep source/build proof separate from physical proof, and defer DAT/camera, always-on capture, AR UI, and broad backend reorganization unless explicitly re-approved. Sprint 4 STT budget discipline is locked in `docs/sprint4-stt-budget-lock.md`: default STT budget/readback target is `sttLatencyMs <= 1500ms`, with a `1.5s` repo-local total STT budget, `0.75s` Moonshine/local primary command default, and `0.25s` fallback reserve unless an evidence run explicitly overrides them. Sprint 5 speculative readiness policy is locked in `docs/sprint5-speculative-readiness-policy.md`: Sprint 4 source/build/backend-smoke evidence can support candidate readiness only, while hardware gate proof still requires a fresh physical phone + Ray-Ban Meta run with real wearer speech, route/playback readback, successful STT, semantic response, and evidence-class labels. Sprint 5 source/build/backend-smoke closeout evidence is recorded in `docs/sprint5-closeout-packet.md`: it proves tests, APK assembly, repo-local smoke, no-fake-transcript behavior, and candidate readiness only; it does not prove hardware gate closure.
+Sprint 3 source/build/backend decision evidence is recorded in `docs/sprint3-gate-decision-packet.md`. Sprint 3 streaming closeout evidence is recorded in `docs/sprint3-streaming-closeout-packet.md`. Treat those packets as candidate readiness evidence for the next physical gate, not as replacements for a fresh phone + Ray-Ban Meta turn. Sprint 3 execution scope is locked in `docs/sprint3-gate-scope.md`: harden the explicit-session audio loop, keep source/build proof separate from physical proof, and defer DAT/camera, always-on capture, AR UI, and broad backend reorganization unless explicitly re-approved. Sprint 4 STT budget discipline is locked in `docs/sprint4-stt-budget-lock.md`: default STT budget/readback target is `sttLatencyMs <= 1500ms`, with a `1.5s` repo-local total STT budget, `0.75s` Moonshine/local primary command default, and `0.25s` fallback reserve unless an evidence run explicitly overrides them. Sprint 5 speculative readiness policy is locked in `docs/sprint5-speculative-readiness-policy.md`: Sprint 4 source/build/backend-smoke evidence can support candidate readiness only, while hardware gate proof still requires a fresh physical phone + Ray-Ban Meta run with real wearer speech, route/playback readback, successful STT, semantic response, and evidence-class labels. Sprint 5 source/build/backend-smoke closeout evidence is recorded in `docs/sprint5-closeout-packet.md`: it proves tests, APK assembly, repo-local smoke, no-fake-transcript behavior, and candidate readiness only; it does not prove hardware gate closure. Sprint 6 evidence is locked in `docs/sprint6-evidence-ledger.md` and the MiniMax/mobile-fast runtime contract is locked in `docs/mobile-fast-minimax-runtime-contract.md`: they prove secret-free runtime contract readback, underlying provider/model labels, bounded deadlines, reasoning-split request shape, and no-fake-transcript gating; they do not prove hardware-gate closure.
 
 The phone telemetry UI now separates reliability, latency, and build/source proof so operators do not over-claim a run:
 
@@ -334,6 +334,19 @@ OTOXAN_HERMES_PYTHON=/home/silas/.hermes/hermes-agent/venv/bin/python
 OTOXAN_XANDER_PROFILE=xander
 OTOXAN_XANDER_TIMEOUT_SECONDS=25
 ```
+
+Mobile-fast/MiniMax-compatible runtime knobs:
+
+```bash
+OTOXAN_VOICE_PROVIDER=mobile-fast
+OTOXAN_MOBILE_FAST_PROVIDER=minimax
+OTOXAN_MOBILE_FAST_MODEL=MiniMax-M3
+OTOXAN_MOBILE_FAST_TIMEOUT_SECONDS=4
+OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS=4
+OTOXAN_MOBILE_FAST_MAX_TOKENS=96
+```
+
+The `/voice-turn` response emits `mobileFastRuntimeContract` so reports can distinguish the repo-local `provider=mobile-fast` lane from the underlying configured provider/model. The contract is secret-free, OpenAI chat-completions compatible, uses `reasoning_split=true`, and is evidence class `runtime_contract_readback_not_hardware_proof`.
 
 Xander profile STT lane used by this helper:
 

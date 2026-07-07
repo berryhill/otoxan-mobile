@@ -1031,6 +1031,28 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertLessEqual(hard_timeout, 4.0)
         self.assertLessEqual(request_timeout, 4.0)
 
+    def test_mobile_fast_runtime_contract_is_secret_free_and_minimax_compatible(self):
+        contract = voice_turn_server.mobile_fast_runtime_contract()
+
+        self.assertEqual("otoxan-mobile-minimax-runtime", contract["name"])
+        self.assertEqual(1, contract["version"])
+        self.assertEqual("mobile-fast", contract["providerMode"])
+        self.assertEqual("openai_chat_completions", contract["requestShape"]["apiCompatibility"])
+        self.assertEqual("/chat/completions", contract["requestShape"]["endpointSuffix"])
+        self.assertTrue(contract["requestShape"]["reasoningSplit"])
+        self.assertEqual(4, contract["defaultRequestTimeoutSeconds"])
+        self.assertEqual(4.0, contract["defaultHardTimeoutSeconds"])
+        self.assertFalse(contract["privacy"]["secretMaterialInTelemetry"])
+        self.assertIn("mobileFastModel", contract["readbackFields"])
+
+    def test_voice_turn_response_includes_mobile_fast_runtime_contract(self):
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
+        result = voice_turn_server.handle_voice_turn(self._payload())
+
+        contract = result["mobileFastRuntimeContract"]
+        self.assertEqual("otoxan-mobile-minimax-runtime", contract["name"])
+        self.assertEqual("runtime_contract_readback_not_hardware_proof", contract["evidenceClass"])
+
     def test_mobile_fast_direct_provider_shapes_response_without_leaking_reasoning(self):
         route = voice_turn_server.RouteSummary("RB Meta", "TYPE_BLUETOOTH_SCO", "RB Meta", "TYPE_BLUETOOTH_SCO", True, "")
         fake_config = {
