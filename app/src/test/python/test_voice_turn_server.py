@@ -921,9 +921,35 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertTrue(result["pass1Ready"])
         self.assertIn("Fast lane", result["assistantText"])
 
-    def test_mobile_fast_provider_degrades_instead_of_slow_session_fallback_by_default(self):
+    def test_mobile_fast_provider_tries_bounded_session_recovery_before_degraded_response_by_default(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
+        payload = self._payload()
+        stt = voice_turn_server.SttResult("real words decoded", "success", 33)
+        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
+            with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", side_effect=RuntimeError("provider exploded")):
+                with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="Recovered before degraded speech.") as fallback:
+                    result = voice_turn_server.handle_voice_turn(payload)
+
+        fallback.assert_called_once()
+        self.assertTrue(result["ok"])
+        self.assertEqual("mobile-fast", result["provider"])
+        self.assertEqual("real-speech-proven", result["pass1Status"])
+        self.assertTrue(result["pass1Ready"])
+        self.assertEqual("Recovered before degraded speech.", result["assistantText"])
+        self.assertEqual(0, result["timing"]["xanderFastStatus"])
+        self.assertEqual(0, result["timing"]["xanderFastTimedOut"])
+        self.assertIn("provider exploded", result["timing"]["mobileFastFailureReason"])
+        self.assertEqual(result["timing"]["mobileFastFailureReason"], result["mobileFastFailureReason"])
+        self.assertNotIn("failureReason", result["turnOutcome"])
+        self.assertEqual(1, result["timing"]["xanderFallbackSessionStatus"])
+        self.assertNotIn("xanderFallbackSkipped", result["timing"])
+        self.assertIsInstance(result["xanderSessionMs"], int)
+
+    def test_mobile_fast_provider_can_disable_session_recovery_for_immediate_degraded_response(self):
+        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
+        os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
+        os.environ["OTOXAN_MOBILE_FAST_SESSION_FALLBACK"] = "0"
         payload = self._payload()
         stt = voice_turn_server.SttResult("real words decoded", "success", 33)
         with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
@@ -932,43 +958,19 @@ class VoiceTurnServerTest(unittest.TestCase):
                     result = voice_turn_server.handle_voice_turn(payload)
 
         fallback.assert_not_called()
-        self.assertTrue(result["ok"])
-        self.assertEqual("mobile-fast", result["provider"])
-        self.assertEqual("real-speech-proven", result["pass1Status"])
-        self.assertTrue(result["pass1Ready"])
         self.assertEqual(voice_turn_server.MODEL_DEGRADED_RESPONSE, result["assistantText"])
         self.assertNotIn("provider", result["assistantText"].lower())
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
-        self.assertEqual(0, result["timing"]["xanderFastTimedOut"])
         self.assertIn("provider exploded", result["timing"]["mobileFastFailureReason"])
-        self.assertEqual(result["timing"]["mobileFastFailureReason"], result["mobileFastFailureReason"])
         self.assertEqual(result["timing"]["mobileFastFailureReason"], result["turnOutcome"]["failureReason"])
         self.assertEqual(0, result["timing"]["xanderFallbackSessionStatus"])
         self.assertEqual(1, result["timing"]["xanderFallbackSkipped"])
-        self.assertIsInstance(result["xanderSessionMs"], int)
-
-    def test_mobile_fast_provider_can_opt_into_session_fallback(self):
-        os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
-        os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
-        os.environ["OTOXAN_MOBILE_FAST_SESSION_FALLBACK"] = "1"
-        payload = self._payload()
-        stt = voice_turn_server.SttResult("real words decoded", "success", 33)
-        with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
-            with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", side_effect=RuntimeError("provider exploded")):
-                with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="Fallback session answered clearly.") as fallback:
-                    result = voice_turn_server.handle_voice_turn(payload)
-
-        fallback.assert_called_once()
-        self.assertEqual("Fallback session answered clearly.", result["assistantText"])
-        self.assertEqual(0, result["timing"]["xanderFastStatus"])
-        self.assertIn("provider exploded", result["timing"]["mobileFastFailureReason"])
-        self.assertEqual(1, result["timing"]["xanderFallbackSessionStatus"])
-        self.assertNotIn("xanderFallbackSkipped", result["timing"])
 
     def test_mobile_fast_provider_hard_timeout_returns_telemetry_safe_degraded_response(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
         os.environ["OTOXAN_MOBILE_FAST_HARD_TIMEOUT_SECONDS"] = "0.5"
+        os.environ["OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS"] = "0.5"
         payload = self._payload()
         stt = voice_turn_server.SttResult("real words decoded", "success", 33)
 
@@ -978,24 +980,24 @@ class VoiceTurnServerTest(unittest.TestCase):
 
         with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
             with mock.patch.object(voice_turn_server, "_ask_xander_mobile_fast", side_effect=slow_fast):
-                with mock.patch.object(voice_turn_server, "_ask_xander_session") as fallback:
+                with mock.patch.object(voice_turn_server, "_ask_xander_session", return_value="Recovered after fast timeout.") as fallback:
                     result = voice_turn_server.handle_voice_turn(payload)
 
-        fallback.assert_not_called()
+        fallback.assert_called_once()
         self.assertTrue(result["ok"])
-        self.assertEqual(voice_turn_server.MODEL_DEGRADED_RESPONSE, result["assistantText"])
+        self.assertEqual("Recovered after fast timeout.", result["assistantText"])
         self.assertEqual(0, result["xanderFastStatus"])
         self.assertEqual(1, result["xanderFastTimedOut"])
         self.assertEqual(0, result["timing"]["xanderFastStatus"])
         self.assertEqual(1, result["timing"]["xanderFastTimedOut"])
         self.assertEqual("deadline-timeout-after-0.5s", result["mobileFastFailureReason"])
-        self.assertEqual(1, result["timing"]["xanderFallbackSkipped"])
+        self.assertEqual(1, result["timing"]["xanderFallbackSessionStatus"])
+        self.assertNotIn("xanderFallbackSkipped", result["timing"])
         self.assertLess(result["xanderSessionMs"], 1200)
 
     def test_mobile_fast_provider_returns_non_internal_degraded_response_if_all_model_lanes_fail(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
-        os.environ["OTOXAN_MOBILE_FAST_SESSION_FALLBACK"] = "1"
         payload = self._payload()
         stt = voice_turn_server.SttResult("real words decoded", "success", 33)
         with mock.patch.object(voice_turn_server, "_transcribe_with_hermes_stt", return_value=stt):
@@ -1017,10 +1019,9 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertIsInstance(result["xanderSessionMs"], int)
 
 
-    def test_mobile_fast_opt_in_session_fallback_is_bounded_by_deadline(self):
+    def test_mobile_fast_default_session_recovery_is_bounded_by_deadline(self):
         os.environ.pop("OTOXAN_DEBUG_TRANSCRIPT", None)
         os.environ["OTOXAN_VOICE_PROVIDER"] = "mobile-fast"
-        os.environ["OTOXAN_MOBILE_FAST_SESSION_FALLBACK"] = "1"
         os.environ["OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS"] = "0.5"
         payload = self._payload()
         stt = voice_turn_server.SttResult("real words decoded", "success", 33)
@@ -1042,6 +1043,20 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual(1, result["timing"]["xanderFallbackTimedOut"])
         self.assertEqual("deadline-timeout-after-0.5s", result["timing"]["xanderFallbackFailureReason"])
         self.assertLess(result["xanderFastMs"], 1200)
+
+    def test_mobile_fast_runtime_descriptor_reports_default_bounded_session_recovery(self):
+        os.environ.pop("OTOXAN_MOBILE_FAST_SESSION_FALLBACK", None)
+        os.environ["OTOXAN_MOBILE_FALLBACK_HARD_TIMEOUT_SECONDS"] = "0.5"
+
+        descriptor = voice_turn_server._mobile_fast_runtime_descriptor()
+
+        self.assertTrue(descriptor["mobileFastSessionFallbackEnabled"])
+        self.assertEqual(0.5, descriptor["mobileFastSessionFallbackHardTimeoutSeconds"])
+
+        os.environ["OTOXAN_MOBILE_FAST_SESSION_FALLBACK"] = "off"
+        descriptor = voice_turn_server._mobile_fast_runtime_descriptor()
+
+        self.assertFalse(descriptor["mobileFastSessionFallbackEnabled"])
 
     def test_latest_metrics_skips_corrupt_jsonl_lines(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1120,8 +1135,15 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertIn("reasoning_content", " ".join(contract["adapterParser"]["reasoningEvidenceFields"]))
         self.assertEqual(4, contract["defaultRequestTimeoutSeconds"])
         self.assertEqual(4.0, contract["defaultHardTimeoutSeconds"])
+        self.assertTrue(contract["fallbackPolicy"]["defaultSessionFallbackEnabled"])
+        self.assertEqual(2.5, contract["fallbackPolicy"]["defaultSessionFallbackHardTimeoutSeconds"])
+        self.assertEqual(
+            ["mobile-fast", "bounded-xander-session", "degraded-spoken-response"],
+            contract["fallbackPolicy"]["recoveryOrder"],
+        )
         self.assertFalse(contract["privacy"]["secretMaterialInTelemetry"])
         self.assertIn("mobileFastModel", contract["readbackFields"])
+        self.assertIn("mobileFastSessionFallbackEnabled", contract["readbackFields"])
 
     def test_voice_turn_response_includes_mobile_fast_runtime_contract(self):
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
