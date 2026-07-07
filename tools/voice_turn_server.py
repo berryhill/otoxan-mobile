@@ -1179,6 +1179,7 @@ def handle_voice_turn_metrics(payload: Mapping[str, Any], remote_addr: str = "")
         "receivedAtMs": int(time.time() * 1000),
         "remoteAddr": remote_addr,
         "payload": sanitized_payload,
+        "timingSummary": _metrics_timing_summary(sanitized_payload),
     }
     path = Path(os.environ.get("OTOXAN_VOICE_METRICS_JSONL", METRICS_JSONL_DEFAULT))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1230,6 +1231,7 @@ def recent_voice_turn_metrics(limit: int = 20) -> dict[str, Any]:
             except json.JSONDecodeError:
                 corrupt += 1
                 continue
+            _attach_metrics_timing_summary(record)
             records.append(record)
             if len(records) > bounded_limit:
                 records.pop(0)
@@ -1274,6 +1276,44 @@ def _default_timing_contract() -> dict[str, Any]:
         "clock": TIMING_CONTRACT_CLOCK,
         "targets": dict(TIMING_CONTRACT_TARGETS),
     }
+
+
+def _attach_metrics_timing_summary(record: dict[str, Any]) -> None:
+    if not isinstance(record.get("timingSummary"), dict):
+        payload = record.get("payload")
+        record["timingSummary"] = _metrics_timing_summary(payload if isinstance(payload, Mapping) else {})
+
+
+def _metrics_timing_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    perceived_latency = _mapping_get(payload, "perceivedLatency")
+    breakdown = _mapping_get(perceived_latency, "breakdown")
+    return {
+        "turnTotalMs": _nested_get(payload, "totals", "turnTotalMs"),
+        "backendRoundTripMs": _nested_get(payload, "backend", "roundTripMs"),
+        "ttfaMs": _nested_get(perceived_latency, "ttfaMs"),
+        "postCaptureAckDelayMs": (
+            _nested_get(perceived_latency, "postCaptureAckDelayMs")
+            if _nested_get(perceived_latency, "postCaptureAckDelayMs") is not None
+            else _nested_get(breakdown, "postCaptureDispatchMs")
+        ),
+        "localAckKind": _nested_get(perceived_latency, "localAckKind"),
+        "localAckStartMs": _nested_get(perceived_latency, "localAckStartMs"),
+        "localAckTotalMs": _nested_get(perceived_latency, "localAckTotalMs"),
+        "assistantPlaybackStartMs": _nested_get(perceived_latency, "assistantPlaybackStartMs"),
+        "backendResponseReadyMs": _nested_get(perceived_latency, "backendResponseReadyMs"),
+        "routeSelectMs": _nested_get(breakdown, "routeSelectMs"),
+        "captureReadMs": _nested_get(breakdown, "captureReadMs"),
+        "postCaptureDispatchMs": _nested_get(breakdown, "postCaptureDispatchMs"),
+        "backendWaitAfterReleaseMs": _nested_get(breakdown, "backendWaitAfterReleaseMs"),
+    }
+
+
+def _mapping_get(value: Any, key: str) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        nested = value.get(key)
+        if isinstance(nested, Mapping):
+            return nested
+    return {}
 
 
 def _nested_get(value: Mapping[str, Any], *keys: str) -> Any:
