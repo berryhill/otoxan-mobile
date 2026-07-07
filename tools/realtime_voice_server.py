@@ -207,6 +207,7 @@ class RealtimeSession:
             transport="websocket",
             realtimeEndpoint=REALTIME_WS_ENDPOINT,
             httpFallback=http_fallback_descriptor(),
+            assistantPrepContract=voice_turn_server.assistant_prep_contract(),
             phase="phase2-eventbus-state-machine",
             supportedEvents=[
                 "session.update",

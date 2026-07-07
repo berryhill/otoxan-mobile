@@ -49,6 +49,7 @@ class VoiceTurnServerTest(unittest.TestCase):
                 "OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT",
                 "OTOXAN_MOONSHINE_STREAMING_ADAPTER",
                 "OTOXAN_MOONSHINE_STREAMING_COMMAND",
+                "OTOXAN_ASSISTANT_PREP_DEADLINE_SECONDS",
             )
         }
         os.environ["OTOXAN_VOICE_PROVIDER"] = "proof"
@@ -256,10 +257,43 @@ class VoiceTurnServerTest(unittest.TestCase):
         self.assertEqual("otoxan-mobile-stt-stream-events", descriptor["sttEventSchema"]["name"])
         self.assertEqual(1500, descriptor["sttBudget"]["targetMs"])
         self.assertEqual("latency_budget_readback_not_hardware_proof", descriptor["sttBudget"]["evidenceClass"])
+        self.assertEqual("otoxan-mobile-cancellable-assistant-prep", descriptor["assistantPrepContract"]["name"])
+        self.assertFalse(descriptor["assistantPrepContract"]["enabled"])
+        self.assertFalse(descriptor["assistantPrepContract"]["speculativePrepAllowed"])
+        self.assertEqual("stt.final", descriptor["assistantPrepContract"]["startAfterEvent"])
+        self.assertIn("input_audio.clear", descriptor["assistantPrepContract"]["cancelEvents"])
         self.assertEqual("moonshine-streaming-adapter", descriptor["moonshineStreamingAdapter"]["name"])
         self.assertFalse(descriptor["moonshineStreamingAdapter"]["enabled"])
         self.assertFalse(descriptor["moonshineStreamingAdapter"]["hardDependency"])
         self.assertEqual("no Moonshine package import at server startup", descriptor["moonshineStreamingAdapter"]["importPolicy"])
+
+    def test_assistant_prep_contract_is_explicitly_cancellable_before_future_enablement(self):
+        os.environ["OTOXAN_ASSISTANT_PREP_DEADLINE_SECONDS"] = "2.25"
+
+        contract = voice_turn_server.assistant_prep_contract()
+
+        self.assertEqual("otoxan-mobile-cancellable-assistant-prep", contract["name"])
+        self.assertEqual(1, contract["version"])
+        self.assertFalse(contract["enabled"])
+        self.assertFalse(contract["speculativePrepAllowed"])
+        self.assertTrue(contract["requiresFinalTranscript"])
+        self.assertEqual(2250, contract["deadlineMs"])
+        self.assertEqual(
+            ["input_audio.clear", "session.close", "turn.timeout", "new_turn_started"],
+            contract["cancelEvents"],
+        )
+        self.assertEqual("forbidden_until_cancellable_lane_exists", contract["currentImplementation"]["preSttAssistantWork"])
+        self.assertTrue(contract["privacy"]["explicitSessionOnly"])
+        self.assertFalse(contract["privacy"]["rawAudioPersisted"])
+
+    def test_handle_voice_turn_returns_assistant_prep_contract_readback(self):
+        result = voice_turn_server.handle_voice_turn(self._payload())
+
+        contract = result["assistantPrepContract"]
+        self.assertEqual("otoxan-mobile-cancellable-assistant-prep", contract["name"])
+        self.assertFalse(contract["speculativePrepAllowed"])
+        self.assertEqual("stt.final", contract["startAfterEvent"])
+        self.assertIn("session.close", contract["cancelEvents"])
 
     def test_moonshine_streaming_adapter_descriptor_enables_only_when_command_configured(self):
         os.environ["OTOXAN_MOONSHINE_STREAMING_ADAPTER"] = "command"

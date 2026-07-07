@@ -103,6 +103,9 @@ EXPERIMENTAL_STREAM_TRANSPORT_ENV = "OTOXAN_EXPERIMENTAL_STREAM_TRANSPORT"
 EXPERIMENTAL_STREAM_ENDPOINT = "/voice-stream"
 STREAM_TRANSPORT_PROTOCOL_NAME = "otoxan-mobile-backend-stream"
 STREAM_TRANSPORT_PROTOCOL_VERSION = 1
+ASSISTANT_PREP_CONTRACT_NAME = "otoxan-mobile-cancellable-assistant-prep"
+ASSISTANT_PREP_CONTRACT_VERSION = 1
+ASSISTANT_PREP_DEFAULT_DEADLINE_SECONDS = 12.0
 STT_STREAM_EVENT_SCHEMA_NAME = "otoxan-mobile-stt-stream-events"
 STT_STREAM_EVENT_SCHEMA_VERSION = 1
 REALTIME_VAD_DIAGNOSTIC_PROVIDER = "energy-vad-phase3"
@@ -142,7 +145,53 @@ def stream_transport_descriptor() -> dict[str, Any]:
         },
         "sttEventSchema": stt_stream_event_schema(),
         "sttBudget": stt_budget_model(),
+        "assistantPrepContract": assistant_prep_contract(),
         "moonshineStreamingAdapter": moonshine_streaming_adapter_descriptor(),
+    }
+
+
+def assistant_prep_contract() -> dict[str, Any]:
+    """Return the explicit contract for assistant prep around one voice turn.
+
+    MVP mobile turns must not start speculative assistant work while capture/STT is
+    still mutable unless that work can be cancelled from the same explicit user
+    session. The current repo-local backend only starts Xander/mobile-fast after
+    a final transcript exists, so the contract advertises a safe disabled prep
+    state plus the events a future realtime prep lane must honor before it can be
+    enabled.
+    """
+    deadline_seconds = _bounded_seconds(
+        "OTOXAN_ASSISTANT_PREP_DEADLINE_SECONDS",
+        ASSISTANT_PREP_DEFAULT_DEADLINE_SECONDS,
+        0.5,
+        30.0,
+    )
+    return {
+        "name": ASSISTANT_PREP_CONTRACT_NAME,
+        "version": ASSISTANT_PREP_CONTRACT_VERSION,
+        "enabled": False,
+        "speculativePrepAllowed": False,
+        "requiresFinalTranscript": True,
+        "startAfterEvent": "stt.final",
+        "cancelEvents": [
+            "input_audio.clear",
+            "session.close",
+            "turn.timeout",
+            "new_turn_started",
+        ],
+        "deadlineMs": int(round(deadline_seconds * 1000)),
+        "fallbackOnCancel": "degraded_spoken_response_without_provider_detail",
+        "privacy": {
+            "explicitSessionOnly": True,
+            "rawAudioPersisted": False,
+            "rawTranscriptPersistedByContract": False,
+        },
+        "currentImplementation": {
+            "mobileFast": "post_stt_final_deadline_thread",
+            "xanderSessionFallback": "opt_in_post_stt_final_deadline_thread",
+            "preSttAssistantWork": "forbidden_until_cancellable_lane_exists",
+        },
+        "evidenceClass": "contract_readback_not_hardware_proof",
     }
 
 
@@ -481,6 +530,7 @@ def handle_voice_turn(payload: Mapping[str, Any]) -> dict[str, Any]:
         "sttStatus": turn.stt_status,
         "sttLatencyMs": turn.stt_latency_ms,
         "sttProvider": turn.stt_provider,
+        "assistantPrepContract": assistant_prep_contract(),
         "primarySttStatus": timing.get("primarySttStatus"),
         "primarySttMs": timing.get("primarySttMs"),
         "primarySttProvider": timing.get("primarySttProvider"),

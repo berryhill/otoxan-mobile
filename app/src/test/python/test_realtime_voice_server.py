@@ -80,6 +80,9 @@ class RealtimeVoiceServerUnitTest(unittest.TestCase):
         self.assertEqual("POST", created["httpFallback"]["method"])
         self.assertEqual("pcm16Mono16kBase64", created["httpFallback"]["requestAudioField"])
         self.assertIn("stream_error_before_commit", created["httpFallback"]["useWhen"])
+        self.assertEqual("otoxan-mobile-cancellable-assistant-prep", created["assistantPrepContract"]["name"])
+        self.assertFalse(created["assistantPrepContract"]["speculativePrepAllowed"])
+        self.assertIn("input_audio.clear", created["assistantPrepContract"]["cancelEvents"])
 
         updated = session.update({
             "type": "session.update",
@@ -181,6 +184,8 @@ class RealtimeVoiceServerProtocolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"name": "otoxan-mobile-realtime-stream", "version": 1}, created["protocol"])
         self.assertEqual("/voice-turn", created["httpFallback"]["endpoint"])
         self.assertEqual("phase2-eventbus-state-machine", created["phase"])
+        self.assertEqual("otoxan-mobile-cancellable-assistant-prep", created["assistantPrepContract"]["name"])
+        self.assertEqual("stt.final", created["assistantPrepContract"]["startAfterEvent"])
         self.assertEqual("created", created["state"])
         self.assertEqual(1, created["sequence"])
 
